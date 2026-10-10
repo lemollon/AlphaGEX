@@ -32,13 +32,16 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from .db import bot_table, load_config
-from .strategies import CREDIT_STRATEGIES
+from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
 
 # Debit structures whose liquidation value is bounded below by ZERO (a long
 # fly is worth 0..wing at any price; the pin+drift combo is the fly plus two
 # long calendars, each also >= 0). A computed negative unwind value for these
 # can only be quote noise — clamped in compute_mtm.
-NET_LONG_DEBIT_STRATEGIES = frozenset({"long_butterfly", "pin_drift_combo"})
+NET_LONG_DEBIT_STRATEGIES = frozenset(
+    {"long_butterfly", "delta_butterfly", "pin_drift_combo"}
+    | set(LONG_OPTION_STRATEGIES)
+)
 
 # Default half-spread crossed per leg per side, $/share. 0.02 is a realistic
 # figure for the SPY 0/1DTE options these bots trade (near-ATM shorts sit a
@@ -195,8 +198,14 @@ def close_position(
     close_value: float,
     close_reason: str,
     now: datetime,
+    *,
+    legs_override: list[dict[str, Any]] | None = None,
 ) -> float:
-    """Move position OPEN -> CLOSED. Returns realized_pnl ($)."""
+    """Move position OPEN -> CLOSED. Returns realized_pnl ($).
+
+    ``legs_override`` atomically persists close-time execution evidence (for
+    ASTRA-3, the displayed touch size) into both the position and closed ledger.
+    """
     t_pos = bot_table(bot, "positions")
     t_cls = bot_table(bot, "closed_trades")
     with engine.begin() as conn:
@@ -214,11 +223,15 @@ def close_position(
         else:
             realized = (float(close_value) - entry_price) * contracts * 100.0
 
+        legs_json = (json.dumps(legs_override) if legs_override is not None
+                     else row["legs"])
+
         conn.execute(text(
             f"UPDATE {t_pos} SET status='CLOSED', "
-            "mtm_value=:cv, mtm_pnl=:rp, mtm_updated_at=:n "
+            "mtm_value=:cv, mtm_pnl=:rp, mtm_updated_at=:n, legs=:legs "
             "WHERE position_id=:p"
-        ), {"cv": close_value, "rp": realized, "n": now, "p": position_id})
+        ), {"cv": close_value, "rp": realized, "n": now,
+             "legs": legs_json, "p": position_id})
 
         conn.execute(text(
             f"INSERT INTO {t_cls} ("
@@ -229,7 +242,7 @@ def close_position(
             ")"
         ), {
             "pid": position_id, "cp": close_value, "ct": now, "cr": close_reason,
-            "rp": realized, "con": contracts, "legs": row["legs"],
+            "rp": realized, "con": contracts, "legs": legs_json,
             "ep": entry_price, "et": row["entry_time"],
             "tk": row["ticker"], "st": strategy,
         })
@@ -244,6 +257,31 @@ def list_open_positions(engine: Engine, bot: str) -> list[dict[str, Any]]:
             f"SELECT * FROM {t} WHERE status='OPEN' ORDER BY entry_time"
         )).mappings().all()
     return [dict(r) for r in rows]
+
+
+def update_position_legs(
+    engine: Engine,
+    bot: str,
+    position_id: str,
+    legs: list[dict[str, Any]],
+) -> None:
+    """Persist execution-state metadata on an open paper position.
+
+    ASTRA-3 uses this to make an insufficient-depth exit latch survive across
+    one-minute scan cycles and process restarts. Refuse to update a position
+    that is no longer open so a late scan cannot rewrite closed evidence.
+    """
+    t = bot_table(bot, "positions")
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                f"UPDATE {t} SET legs=:legs "
+                "WHERE position_id=:pid AND status='OPEN'"
+            ),
+            {"legs": json.dumps(legs), "pid": position_id},
+        )
+        if result.rowcount != 1:
+            raise ValueError(f"{position_id} not OPEN (already closed or unknown)")
 
 
 def count_positions_opened_on(engine: Engine, bot: str, now: datetime) -> int:

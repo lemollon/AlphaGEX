@@ -36,6 +36,10 @@ class AgapeEthPerpExecutor:
     def __init__(self, config: AgapeEthPerpConfig, db=None):
         self.config = config
         self.db = db
+        # Last failure reason so the trader can surface WHY a trade was
+        # rejected (margin/free-margin block or execution exception)
+        # in scan activity instead of a bare EXECUTION_FAILED.
+        self.last_failure_reason = None
         self._crypto_provider = None
         self._init_crypto_provider()
 
@@ -57,23 +61,45 @@ class AgapeEthPerpExecutor:
         integration is not yet implemented.
         """
         if not signal.is_valid:
+            self.last_failure_reason = "invalid_signal"
             return None
 
         # Pre-trade margin check - strict only in LIVE mode.
         # Paper mode uses strict=False so trades aren't blocked when the margin
         # monitor can't determine equity from the database.
         from trading.margin.pre_trade_check import check_margin_before_trade
-        is_live = self.config.mode == TradingMode.LIVE
         approved, reason = check_margin_before_trade(
             bot_name="AGAPE_ETH_PERP",
             symbol="ETH-PERP",
             side=signal.side or "long",
             quantity=signal.quantity,
             entry_price=signal.entry_price or signal.spot_price,
-            strict=is_live,
+            # Paper accounts must behave like a real Hyperliquid account: fail
+            # CLOSED (block the trade) on any margin-system error, not just in LIVE.
+            strict=True,
         )
         if not approved:
+            self.last_failure_reason = f"margin_rejected: {reason}"
             logger.warning(f"AGAPE-ETH-PERP: Trade BLOCKED by margin check: {reason}")
+            return None
+
+        # Free-margin + leverage-cap check. Paper accounts must never be able
+        # to open a position they couldn't actually afford on a real cross-margin
+        # Hyperliquid account. Fails CLOSED on any computation error.
+        from trading.margin.pre_trade_check import check_free_margin_for_perp
+        margin_ok, margin_reason = check_free_margin_for_perp(
+            db=self.db,
+            config=self.config,
+            signal_side=signal.side or "long",
+            signal_quantity=signal.quantity,
+            signal_entry_price=signal.entry_price or signal.spot_price,
+            current_price=self.get_current_price(),
+        )
+        if not margin_ok:
+            self.last_failure_reason = f"free_margin_rejected: {margin_reason}"
+            logger.warning(
+                f"AGAPE-ETH-PERP: Trade BLOCKED by free-margin check: {margin_reason}"
+            )
             return None
 
         if self.config.mode == TradingMode.LIVE:
@@ -83,13 +109,43 @@ class AgapeEthPerpExecutor:
     def _execute_paper(self, signal: AgapeEthPerpSignal) -> Optional[AgapeEthPerpPosition]:
         """Execute a paper trade with simulated slippage."""
         try:
-            slippage = signal.spot_price * 0.001
-            fill_price = signal.spot_price + slippage if signal.side == "long" else signal.spot_price - slippage
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import simulate_selective_reference_fill
+
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            fill, reference_market, venue_rules = simulate_selective_reference_fill(
+                self.config.instrument,
+                signal.side,
+                signal.quantity,
+                signal.spot_price,
+                default_leverage=float(spec.get("default_leverage", 5) or 5),
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=float(
+                    spec.get("maintenance_margin_rate", 0.01) or 0.01
+                ),
+                funding_interval_hours=float(
+                    spec.get("funding_interval_hours", 8) or 8
+                ),
+                prefer_maker=getattr(signal, "confidence", "") in ("HIGH", "VERY_HIGH"),
+                seed_key=f"{self.config.instrument}|{getattr(signal, 'side', '')}|{getattr(signal, 'entry_price', 0)}|{getattr(signal, 'spot_price', 0)}|{getattr(signal, 'confidence', '')}",
+            )
+            fill_price = fill.fill_price
+            logger.info(
+                "%s paper fill source=%s style=%s fill_frac=%.2f ref=%.8f fill=%.8f slippage=%.2fbps fee=$%.4f",
+                self.config.instrument,
+                reference_market.quote.source if reference_market else "fallback",
+                fill.execution_style,
+                fill.fill_fraction,
+                fill.reference_price,
+                fill.fill_price,
+                fill.slippage_bps,
+                fill.fee_usd,
+            )
             position_id = f"AGAPE-ETH-PERP-{uuid.uuid4().hex[:8].upper()}"
             return AgapeEthPerpPosition(
                 position_id=position_id,
                 side=PositionSide.LONG if signal.side == "long" else PositionSide.SHORT,
-                quantity=signal.quantity, entry_price=round(fill_price, 2),
+                quantity=signal.quantity * fill.fill_fraction, entry_price=round(fill_price, 2),
                 stop_loss=signal.stop_loss, take_profit=signal.take_profit,
                 max_risk_usd=signal.max_risk_usd,
                 underlying_at_entry=signal.spot_price,
@@ -112,6 +168,7 @@ class AgapeEthPerpExecutor:
                 high_water_mark=fill_price,
             )
         except Exception as e:
+            self.last_failure_reason = f"paper_exception: {type(e).__name__}: {e}"
             logger.error(f"AGAPE-ETH-PERP Executor: Paper execution failed: {e}")
             return None
 
@@ -121,8 +178,8 @@ class AgapeEthPerpExecutor:
         Perpetual contract exchange integration is not yet implemented.
         Falls back to paper execution with a warning.
         """
-        logger.warning("AGAPE-ETH-PERP Executor: Live perpetual contract execution not yet implemented, falling back to paper")
-        return self._execute_paper(signal)
+        logger.error("AGAPE-ETH-PERP Executor: LIVE execution is disabled until a real perpetual venue adapter is configured")
+        return None
 
     def get_current_price(self) -> Optional[float]:
         """Get current ETH price from CryptoDataProvider.

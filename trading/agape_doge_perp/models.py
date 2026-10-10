@@ -59,9 +59,10 @@ class AgapeDogePerpConfig:
 
     # Risk management
     starting_capital: float = 2500.0    # $2.5K starting capital
-    risk_per_trade_pct: float = 5.0     # 5% risk per trade
+    risk_per_trade_pct: float = 2.0     # 5% risk per trade
     max_quantity: float = 50000.0       # Max DOGE per trade
-    max_open_positions: int = 3         # Conservative for meme coin
+    # One position at a time: the weekly-breakout backtest never stacks.
+    max_open_positions: int = 1
 
     # Position sizing - Perpetual contract specs (quantity-based)
     default_quantity: float = 500.0     # 500 DOGE default trade size
@@ -84,12 +85,24 @@ class AgapeDogePerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
+
+    # Entry/exit engine: 168h breakout + ATR stop/trail, Asia/EU session only
+    # (trading/perp_strategies/weekly_breakout.py). DOGE: PF 2.50 (older 2.99 / newer 1.98), 36 trades, +37% summed
+    # per-trade return; untuned transfer of the XRP/SHIB settings.
+    # "combined_signal" = legacy path.
+    strategy_mode: str = "weekly_breakout"
+    wb_lookback_hours: int = 168
+    wb_stop_atr: float = 2.5
+    wb_trail_atr: float = 2.0
+    wb_max_hold_hours: int = 72
+    wb_session_start_utc: int = 22
+    wb_session_hours: int = 12
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -101,7 +114,18 @@ class AgapeDogePerpConfig:
     force_exit: str = ""               # No forced exit - perpetual
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
+    # CoinGlass-outage relief valve: when funding/L-S/OI/taker data is dead
+    # (funding_regime == "UNKNOWN"), the combined signal can still carry a
+    # LOW-confidence LONG/SHORT call from Deribit GEX or price momentum
+    # (see crypto_data_provider._calculate_combined_signal). This flag lets
+    # the PAPER path trade that call instead of WAITing on LOW_CONFIDENCE.
+    # Confidence label is never inflated; reasoning is tagged
+    # DEGRADED_NO_COINGLASS so these scans/positions can be excluded from
+    # live-data stats. Never applies when mode=LIVE, regardless of value.
+    allow_degraded_data_trades: bool = True
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -126,7 +150,7 @@ class AgapeDogePerpConfig:
     def load_from_db(cls, db) -> "AgapeDogePerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours", "wb_session_start_utc", "wb_session_hours"}
         try:
             db_config = db.load_config()
             if db_config:

@@ -263,6 +263,8 @@ export async function closeFlarePosition(
       `UPDATE flare_paper_account
        SET cumulative_pnl = COALESCE(cumulative_pnl, 0) + $1,
            current_balance = starting_capital + COALESCE(cumulative_pnl, 0) + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0),
+                                         starting_capital + COALESCE(cumulative_pnl, 0) + $1),
            updated_at = NOW()
        WHERE is_active = TRUE AND dte_mode = '0DTE' AND COALESCE(account_type, 'sandbox') = 'sandbox'`,
       [args.realized_pnl],

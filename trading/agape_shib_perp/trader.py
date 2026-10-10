@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
+from trading.agape_perp_stats import scored_win_rate
 from trading.agape_shib_perp.models import (
     AgapeShibPerpConfig, AgapeShibPerpSignal, AgapeShibPerpPosition,
     PositionSide, PositionStatus, SignalAction, TradingMode,
@@ -128,6 +129,7 @@ class AgapeShibPerpTrader:
             skip = self._check_entry_conditions(now)
             if skip:
                 result["outcome"] = skip
+                result["error"] = skip
                 self._log_scan(result, scan_ctx)
                 return result
             signal = self.signals.generate_signal(prophet_data=prophet_data)
@@ -136,6 +138,19 @@ class AgapeShibPerpTrader:
                 result["outcome"] = f"NO_SIGNAL_{signal.reasoning if signal else 'NONE'}"
                 self._log_scan(result, scan_ctx, signal=signal)
                 return result
+            try:
+                from trading.perp_regime_filter import is_signal_blocked
+                blocked, reason = is_signal_blocked(
+                    "AGAPE_SHIB_PERP",
+                    signal.action.value,
+                    (market_data or {}).get("funding_regime"),
+                )
+                if blocked:
+                    result["outcome"] = f"REGIME_FILTER_{reason}"
+                    self._log_scan(result, scan_ctx, signal=signal)
+                    return result
+            except ImportError:
+                pass
             position = self.executor.execute_trade(signal)
             if position:
                 # Stamp entry-time regime so the exit path can choose its profile.
@@ -150,7 +165,9 @@ class AgapeShibPerpTrader:
                     f"{signal.side.upper()} {signal.quantity:.0f}x SHIB-PERP @ ${position.entry_price:.8f}",
                     details=signal.to_dict())
             else:
-                result["outcome"] = "EXECUTION_FAILED"
+                failure_reason = getattr(self.executor, "last_failure_reason", None) or "unknown"
+                result["outcome"] = f"EXECUTION_FAILED_{failure_reason}"
+                result["error"] = failure_reason
             self._log_scan(result, scan_ctx, signal=signal)
             return result
         except Exception as e:
@@ -169,26 +186,30 @@ class AgapeShibPerpTrader:
             current_price = market_data.get("spot_price")
         if not current_price:
             return (len(open_positions), 0)
-        # Margin liquidation check - like a real exchange
+        # Funding accrual - Hyperliquid pays hourly; prorate by elapsed time.
+        self._accrue_funding(open_positions, market_data, datetime.now(CENTRAL_TZ))
+        # Real liquidation - Hyperliquid-style account-level cross margin:
+        # liquidate everything once equity can no longer cover the SUM of each
+        # open position's maintenance margin (not a flat % of starting capital).
         equity = self._get_available_balance(open_positions)
-        maintenance_margin = self.config.starting_capital * 0.05
-        if equity <= maintenance_margin:
-            logger.warning(f"AGAPE-SHIB-PERP: MARGIN LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_margin:.2f}")
+        maintenance_required = self._total_maintenance_margin(open_positions, current_price)
+        if equity <= maintenance_required:
+            logger.warning(f"{self.config.bot_name}: LIQUIDATION - equity ${equity:.2f} <= maintenance ${maintenance_required:.2f}")
             liq_closed = 0
             for pos in open_positions:
-                if self._close_position(pos, current_price, "MARGIN_LIQUIDATION"):
+                if self._close_position(pos, current_price, "LIQUIDATION"):
                     liq_closed += 1
             if self.config.mode == TradingMode.PAPER:
                 self._enabled = False
                 self._liquidated = True
                 self._liquidation_recovery_at = datetime.now(CENTRAL_TZ) + timedelta(hours=1)
-                self.db.log("WARNING", "MARGIN_LIQUIDATION_PAPER",
+                self.db.log("WARNING", "LIQUIDATION_PAPER",
                     f"Paper account liquidated at equity ${equity:.2f}. "
                     f"{liq_closed} positions closed. Will auto-recover in 1 hour.")
             else:
                 self._enabled = False
                 self._liquidated = True
-                self.db.log("CRITICAL", "MARGIN_LIQUIDATION",
+                self.db.log("CRITICAL", "LIQUIDATION",
                     f"Account liquidated at equity ${equity:.2f}. {liq_closed} positions closed. Bot disabled.")
             return (len(open_positions), liq_closed)
         # Paper mode liquidation recovery: re-enable after cooldown
@@ -202,11 +223,20 @@ class AgapeShibPerpTrader:
             self._liquidation_recovery_at = None
             self.db.log("INFO", "LIQUIDATION_RECOVERY",
                 "Paper account recovered from liquidation. Bot re-enabled.")
-        closed = 0
+        # Legacy-strategy close + over-cap trim, before the normal exit loop.
+        total_open = len(open_positions)
+        from trading.perp_strategies.legacy_cleanup import close_legacy_and_overcap_positions
+        open_positions, closed = close_legacy_and_overcap_positions(self, open_positions, current_price)
         now = datetime.now(CENTRAL_TZ)
         for pos in open_positions:
             try:
-                if self.config.use_no_loss_trailing:
+                if (getattr(self.config, "strategy_mode", "") == "weekly_breakout"
+                        and pos.get("stop_loss")):
+                    did_close = self._manage_weekly_breakout(pos, current_price, now)
+                elif (getattr(self.config, "strategy_mode", "") == "fade_lock_breaker"
+                        and pos.get("stop_loss")):
+                    did_close = self._manage_fade_lock_breaker(pos, current_price, now)
+                elif self.config.use_no_loss_trailing:
                     did_close = self._manage_no_loss_trailing(pos, current_price, now)
                 else:
                     should_close, reason = self._check_exit(pos, current_price, now)
@@ -217,7 +247,17 @@ class AgapeShibPerpTrader:
                     self._update_hwm(pos, current_price)
             except Exception as e:
                 logger.error(f"AGAPE-SHIB-PERP: Position mgmt error: {e}")
-        return (len(open_positions), closed)
+        return (total_open, closed)
+
+    def _manage_weekly_breakout(self, pos, current_price, now):
+        """ATR stop + ATR trailing stop + time exit for weekly-breakout entries."""
+        from trading.perp_strategies import weekly_breakout as wb
+        return wb.manage_open_position(self, "agape_shib_perp_positions", pos, current_price, now, CENTRAL_TZ)
+
+    def _manage_fade_lock_breaker(self, pos, current_price, now):
+        """Trailing-lock target (6b) + time stop for fade_lock_breaker entries."""
+        from trading.perp_strategies import fade_lock_breaker as flb
+        return flb.manage_open_position(self, "agape_shib_perp_positions", pos, current_price, now, CENTRAL_TZ)
 
     def _manage_no_loss_trailing(self, pos, current_price, now):
         if getattr(self.config, "use_regime_aware_exits", False):
@@ -404,8 +444,13 @@ class AgapeShibPerpTrader:
     def _close_position(self, pos, current_price, reason):
         pid = pos["position_id"]
         direction = 1 if pos["side"] == "long" else -1
-        pnl = round((current_price - pos["entry_price"]) * pos.get("quantity", self.config.default_quantity) * direction, 2)
-        success = self.db.expire_position(pid, pnl, current_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, current_price, pnl, reason)
+        quantity = pos.get("quantity", self.config.default_quantity)
+        # Cross the spread to close - like a real Hyperliquid taker close -
+        # instead of marking the exit at the raw current/mark price.
+        close_price, exit_fee = self._simulate_close_fill(pos["side"], quantity, current_price)
+        accrued_funding = float(pos.get("accrued_funding_usd", 0) or 0)
+        pnl = round((close_price - pos["entry_price"]) * quantity * direction - exit_fee + accrued_funding, 2)
+        success = self.db.expire_position(pid, pnl, close_price) if reason == "MAX_HOLD_TIME" else self.db.close_position(pid, close_price, pnl, reason)
         if success:
             won = pnl > 0
             if won:
@@ -438,9 +483,112 @@ class AgapeShibPerpTrader:
                     d = 1 if p["side"] == "long" else -1
                     qty = p.get("quantity", self.config.default_quantity)
                     unrealized += (cp - p["entry_price"]) * qty * d
+                    unrealized += float(p.get("accrued_funding_usd", 0) or 0)
             return self.config.starting_capital + realized + unrealized
         except Exception:
             return self.config.starting_capital
+
+    def _accrue_funding(self, open_positions, market_data, now):
+        """Accrue funding on open positions since their last accrual.
+
+        Hyperliquid pays funding hourly, so this prorates by elapsed hours
+        since the position's last accrual (or open_time on the very first
+        cycle). Longs pay when the funding rate is positive; shorts
+        receive. Persisted per position via db.accrue_funding so it flows
+        into equity, the liquidation check, and realized P&L at close.
+        """
+        if not open_positions:
+            return
+        funding_rate = (market_data or {}).get("funding_rate")
+        if funding_rate is None:
+            return
+        current_price = self.executor.get_current_price()
+        if not current_price:
+            return
+        from trading.shared.perp_realism import funding_cashflow
+        for pos in open_positions:
+            try:
+                last = pos.get("last_funding_accrual") or pos.get("open_time")
+                if not last:
+                    continue
+                last_dt = datetime.fromisoformat(last) if isinstance(last, str) else last
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=CENTRAL_TZ)
+                elapsed_hours = (now - last_dt).total_seconds() / 3600.0
+                if elapsed_hours <= 0:
+                    continue
+                quantity = pos.get("quantity", self.config.default_quantity)
+                notional = current_price * quantity
+                cashflow = funding_cashflow(
+                    notional=notional, side=pos["side"], funding_rate=funding_rate,
+                    intervals=elapsed_hours,
+                )
+                self.db.accrue_funding(pos["position_id"], cashflow, now)
+            except Exception as e:
+                logger.debug(f"{self.config.bot_name}: funding accrual failed for {pos.get('position_id')}: {e}")
+
+    def _total_maintenance_margin(self, open_positions, mark_price):
+        """Sum of each open position's maintenance margin at the current mark.
+
+        Mirrors Hyperliquid's account-level cross-margin liquidation: the
+        whole account gets liquidated once equity can no longer cover the
+        combined maintenance requirement of every open position, not a
+        flat percentage of starting capital.
+        """
+        if not open_positions or not mark_price:
+            return 0.0
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import estimate_margin, get_rules
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            leverage = float(spec.get("default_leverage", 5) or 5)
+            mmr_fallback = float(spec.get("maintenance_margin_rate", 0.01) or 0.01)
+            rules = get_rules(
+                self.config.instrument,
+                default_leverage=leverage,
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=mmr_fallback,
+                funding_interval_hours=float(spec.get("funding_interval_hours", 8) or 8),
+            )
+            total = 0.0
+            for pos in open_positions:
+                quantity = pos.get("quantity", self.config.default_quantity)
+                try:
+                    est = estimate_margin(
+                        side=pos["side"], entry_price=pos["entry_price"], mark_price=mark_price,
+                        quantity=quantity, leverage=leverage, rules=rules,
+                    )
+                    total += est.maintenance_margin
+                except Exception:
+                    total += mark_price * quantity * mmr_fallback
+            return total
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: maintenance margin calc failed, falling back to 5% of starting capital: {e}")
+            return self.config.starting_capital * 0.05
+
+    def _simulate_close_fill(self, side, quantity, fallback_price):
+        """Cross the spread to close, like a real Hyperliquid taker close.
+
+        Sell-to-close at the bid for a long, buy-to-close at the ask for a
+        short, plus the taker fee - never marks the close at mid/last.
+        Falls back to the raw mark price with zero fee if the fill
+        simulator errors, so a data hiccup never blocks a required exit.
+        """
+        try:
+            from trading.shared.margin_config import PERPETUAL_MARGIN_SPECS
+            from trading.shared.perp_realism import simulate_close_fill
+            spec = PERPETUAL_MARGIN_SPECS.get(self.config.instrument, {})
+            fill, _, _ = simulate_close_fill(
+                self.config.instrument, side, quantity, fallback_price,
+                default_leverage=float(spec.get("default_leverage", 5) or 5),
+                max_leverage=float(spec.get("max_leverage", 20) or 20),
+                fallback_maintenance_margin_rate=float(spec.get("maintenance_margin_rate", 0.01) or 0.01),
+                funding_interval_hours=float(spec.get("funding_interval_hours", 8) or 8),
+            )
+            return fill.fill_price, fill.fee_usd
+        except Exception as e:
+            logger.warning(f"{self.config.bot_name}: close fill simulation failed, using mark price: {e}")
+            return fallback_price, 0.0
 
     def _check_entry_conditions(self, now):
         """Check entry conditions - perpetual contracts trade 24/7.
@@ -452,6 +600,11 @@ class AgapeShibPerpTrader:
         if not self._enabled:
             return "BOT_DISABLED"
         open_pos = self.db.get_open_positions()
+        open_count = len(open_pos)
+        if open_count >= self.config.max_open_positions:
+            logger.warning(f"{self.config.bot_name}: position cap reached {open_count}/{self.config.max_open_positions}")
+            return f"BLOCKED_MAX_POSITIONS_{open_count}/{self.config.max_open_positions}"
+
         balance = self._get_available_balance(open_pos)
         min_required = self.config.starting_capital * (self.config.risk_per_trade_pct / 100)
         if balance <= min_required:
@@ -470,9 +623,7 @@ class AgapeShibPerpTrader:
                 cur_price = self.executor.get_current_price()
             except Exception:
                 cur_price = None
-            closed = self.db.get_closed_trades(limit=10000) or []
-            realized = sum(float(t.get("realized_pnl", 0) or 0) for t in closed)
-            equity = self.config.starting_capital + realized
+            equity = self._get_available_balance(open_pos)
             blocked, usage = is_margin_over_threshold(
                 bot_name="AGAPE_SHIB_PERP",
                 perp_symbol="SHIB-PERP",
@@ -554,7 +705,7 @@ class AgapeShibPerpTrader:
         if ret < -90:
             logger.warning(f"AGAPE-SHIB-PERP: Return is {ret:.1f}% — approaching or past liquidation threshold")
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0] if closed else []
-        wr = round(len(wins) / len(closed) * 100, 1) if closed else None
+        wr, scored_trades, degraded_trades = scored_win_rate(closed)
         status = "LIQUIDATED" if self._liquidated else ("ACTIVE" if self._enabled else "DISABLED")
         return {
             "bot_name": "AGAPE_SHIB_PERP", "status": status,
@@ -571,7 +722,7 @@ class AgapeShibPerpTrader:
                 "starting_capital": self.config.starting_capital,
                 "current_balance": round(balance, 2), "cumulative_pnl": round(total_pnl, 2),
                 "realized_pnl": round(realized, 2), "unrealized_pnl": round(total_unr, 2),
-                "return_pct": round(ret, 2), "total_trades": len(closed) if closed else 0, "win_rate": wr,
+                "return_pct": round(ret, 2), "total_trades": len(closed) if closed else 0, "win_rate": wr, "win_rate_trades": scored_trades, "degraded_trades": degraded_trades,
             },
             "aggressive_features": {
                 "use_no_loss_trailing": self.config.use_no_loss_trailing,
@@ -600,6 +751,7 @@ class AgapeShibPerpTrader:
                     "return_pct": round(ret_pct, 2)}
         wins = [t for t in closed if (t.get("realized_pnl") or 0) > 0]
         losses = [t for t in closed if (t.get("realized_pnl") or 0) <= 0]
+        perf_wr, perf_scored, perf_degraded = scored_win_rate(closed)
         realized = sum(t.get("realized_pnl", 0) for t in closed)
         tw = sum(t.get("realized_pnl", 0) for t in wins) if wins else 0
         tl = abs(sum(t.get("realized_pnl", 0) for t in losses)) if losses else 0
@@ -608,14 +760,14 @@ class AgapeShibPerpTrader:
         return {
             "total_trades": len(closed), "open_positions": len(open_pos),
             "wins": len(wins), "losses": len(losses),
-            "win_rate": round(len(wins) / len(closed) * 100, 1),
+            "win_rate": perf_wr, "win_rate_trades": perf_scored, "degraded_trades": perf_degraded,
             "total_pnl": round(total_pnl, 2), "realized_pnl": round(realized, 2),
             "unrealized_pnl": round(unr, 2),
             "avg_win": round(tw / len(wins), 2) if wins else 0,
             "avg_loss": round(tl / len(losses), 2) if losses else 0,
             "best_trade": max((t.get("realized_pnl", 0) for t in closed), default=0),
             "worst_trade": min((t.get("realized_pnl", 0) for t in closed), default=0),
-            "profit_factor": round(tw / tl, 2) if tl > 0 else float("inf"),
+            "profit_factor": round(tw / tl, 2) if tl > 0 else None,
             "return_pct": round(ret_pct, 2),
         }
 

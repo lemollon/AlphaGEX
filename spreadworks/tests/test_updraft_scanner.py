@@ -11,13 +11,14 @@ DIFFERENT cumulative volumes.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
-from backend.bots.executor import list_open_positions
-from backend.bots.scanner import ChainProvider, run_scan_cycle
+from backend.bots.executor import close_position, list_open_positions
+from backend.bots.scanner import ChainProvider, run_scan_cycle, _position_time_ct
 
 CT = ZoneInfo("America/Chicago")
 
@@ -26,13 +27,16 @@ class FlowChainProvider(ChainProvider):
     """Serves a 0DTE SPY chain whose cumulative volume we control per scan."""
 
     def __init__(self, spot=600.0, call_vol=1000, put_vol=1000,
-                 put_wall=598.0, bid=0.60, ask=0.64):
+                 put_wall=598.0, bid=0.60, ask=0.64,
+                 bid_size=10, ask_size=10):
         self.spot = spot
         self.call_vol = call_vol
         self.put_vol = put_vol
         self.put_wall = put_wall
         self.bid = bid
         self.ask = ask
+        self.bid_size = bid_size
+        self.ask_size = ask_size
 
     def get_chain(self, *, ticker, dte, today):
         strikes = [self.spot + d for d in (-2, -1, 0, 1, 2, 3)]
@@ -41,6 +45,7 @@ class FlowChainProvider(ChainProvider):
             "spot": self.spot, "ticker": ticker, "expiration": today,
             "options": [
                 {"strike": s, "type": t, "bid": self.bid, "ask": self.ask,
+                 "bid_size": self.bid_size, "ask_size": self.ask_size,
                  # split the session total evenly across strikes
                  "volume": (self.call_vol if t == "call" else self.put_vol) // n,
                  "open_interest": 100}
@@ -52,6 +57,18 @@ class FlowChainProvider(ChainProvider):
     def get_leg_mids(self, *, ticker, legs):
         return [leg["entry_price"] for leg in legs]
 
+    def get_leg_exit_prices(self, *, ticker, legs):
+        return [self.ask if leg.get("side") == "short" else self.bid
+                for leg in legs]
+
+    def get_leg_exit_quotes(self, *, ticker, legs):
+        return [
+            {"price": self.ask, "size": self.ask_size}
+            if leg.get("side") == "short" else
+            {"price": self.bid, "size": self.bid_size}
+            for leg in legs
+        ]
+
     def get_daily_history(self, *, ticker, days):
         return []
 
@@ -59,6 +76,213 @@ class FlowChainProvider(ChainProvider):
 def _enable(engine, bot):
     with engine.begin() as conn:
         conn.execute(text(f"UPDATE {bot}_config SET enabled=1"))
+
+
+def _fund_astra3_for_three_lots(engine):
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE astra3_config SET starting_capital=1000, "
+            "max_contracts=3, bp_pct=0.25"
+        ))
+
+
+def test_production_naive_utc_entry_time_is_converted_back_to_central():
+    # Render/Postgres stored 08:35 CT as naive 13:35 UTC. Treating 13:35 as CT
+    # delayed the 30/45-minute timer by five hours.
+    now_ct = datetime(2026, 9, 17, 9, 20, tzinfo=CT)
+    stored = datetime(2026, 9, 17, 13, 35)
+    fixed = _position_time_ct(stored, now_ct, "postgresql")
+    assert fixed == datetime(2026, 9, 17, 8, 35, tzinfo=CT)
+    assert (now_ct - fixed).total_seconds() / 60 == 45
+
+
+def _open_astra3_backdraft(eng, provider):
+    _enable(eng, "astra3")
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 5, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    provider.call_vol, provider.put_vol = 600, 3000
+    return run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 35, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+
+
+def test_astra3_opens_at_ask_plus_fee_and_exits_after_30_minutes(db_session):
+    eng = db_session.get_bind()
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+    )
+    _open_astra3_backdraft(eng, provider)
+    positions = list_open_positions(eng, "astra3")
+    assert len(positions) == 1
+    assert positions[0]["strategy"] == "backdraft"
+    assert json.loads(positions[0]["legs"])[0]["strike"] == 602.0
+    assert float(positions[0]["entry_price"]) == 0.647
+
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 4, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert len(list_open_positions(eng, "astra3")) == 1
+    run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 5, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert len(list_open_positions(eng, "astra3")) == 0
+    closed = eng.connect().execute(text(
+        "SELECT close_reason, realized_pnl, contracts, legs "
+        "FROM astra3_closed_trades"
+    )).mappings().first()
+    assert closed["close_reason"] == "TIME_STOP"
+    # Paid the $0.64 ask plus $0.70 fee; sold at the $0.60 bid.
+    assert round(float(closed["realized_pnl"]), 2) == -4.70
+    leg = json.loads(closed["legs"])[0]
+    assert leg["entry_touch_size"] == 10
+    assert leg["exit_touch_size"] == 10
+    assert leg["exit_depth_ok"] is True
+
+
+def test_astra3_latches_thin_exit_and_caps_rebound_fill(db_session):
+    eng = db_session.get_bind()
+    _fund_astra3_for_three_lots(eng)
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+        bid=0.60, ask=0.64, bid_size=10, ask_size=10,
+    )
+    _open_astra3_backdraft(eng, provider)
+    position = list_open_positions(eng, "astra3")[0]
+    assert int(position["contracts"]) == 3
+
+    provider.bid_size = 1
+    trigger = run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 5, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert trigger["outcome"] == "MONITOR"
+    assert trigger["reason"] == "EXIT_PENDING_DEPTH"
+    held = list_open_positions(eng, "astra3")[0]
+    pending = json.loads(held["legs"])[0]["astra3_exit_pending"]
+    assert pending["reason"] == "TIME_STOP"
+    assert pending["trigger_bid"] == 0.60
+    assert pending["trigger_bid_size"] == 1
+
+    # The fresh book can fill all three, but the favorable rebound is ignored.
+    provider.bid = 0.70
+    provider.bid_size = 10
+    resolved = run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 6, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert resolved["reason"] == "CLOSE_TIME_STOP_DEPTH_LATCH"
+    assert list_open_positions(eng, "astra3") == []
+    closed = eng.connect().execute(text(
+        "SELECT close_price, realized_pnl, contracts, legs "
+        "FROM astra3_closed_trades"
+    )).mappings().first()
+    assert float(closed["close_price"]) == 0.60
+    assert round(float(closed["realized_pnl"]), 2) == -14.10
+    assert int(closed["contracts"]) == 3
+    leg = json.loads(closed["legs"])[0]
+    assert leg["exit_touch_price"] == 0.70
+    assert leg["exit_touch_size"] == 10
+    assert leg["exit_fill_price"] == 0.60
+    assert leg["exit_depth_ok"] is True
+    assert leg["astra3_exit_pending"]["wait_minutes"] == 1.0
+    assert leg["astra3_exit_pending"]["timed_out"] is False
+
+
+def test_astra3_depth_latch_times_out_to_zero_and_fails_depth(db_session):
+    eng = db_session.get_bind()
+    _fund_astra3_for_three_lots(eng)
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+        bid=0.60, ask=0.64, bid_size=10, ask_size=10,
+    )
+    _open_astra3_backdraft(eng, provider)
+    provider.bid_size = 1
+
+    for minute in range(5, 11):
+        result = run_scan_cycle(
+            engine=eng, bot="astra3",
+            now_ct=datetime(2026, 9, 17, 9, minute, tzinfo=CT),
+            chain_provider=provider, event_blackout=False,
+        )
+    assert result["reason"] == "CLOSE_TIME_STOP_DEPTH_TIMEOUT"
+    assert list_open_positions(eng, "astra3") == []
+    closed = eng.connect().execute(text(
+        "SELECT close_price, realized_pnl, legs FROM astra3_closed_trades"
+    )).mappings().first()
+    assert float(closed["close_price"]) == 0.0
+    assert round(float(closed["realized_pnl"]), 2) == -194.10
+    leg = json.loads(closed["legs"])[0]
+    assert leg["exit_depth_ok"] is False
+    assert leg["exit_depth_timeout"] is True
+    assert leg["exit_fill_price"] == 0.0
+    assert leg["astra3_exit_pending"]["wait_minutes"] == 5.0
+    assert leg["astra3_exit_pending"]["timed_out"] is True
+
+
+def test_astra3_depth_latch_accepts_full_size_on_fifth_retry(db_session):
+    eng = db_session.get_bind()
+    _fund_astra3_for_three_lots(eng)
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+        bid=0.60, ask=0.64, bid_size=10, ask_size=10,
+    )
+    _open_astra3_backdraft(eng, provider)
+    provider.bid_size = 1
+    for minute in range(5, 10):
+        result = run_scan_cycle(
+            engine=eng, bot="astra3",
+            now_ct=datetime(2026, 9, 17, 9, minute, tzinfo=CT),
+            chain_provider=provider, event_blackout=False,
+        )
+        assert result["outcome"] == "MONITOR"
+
+    provider.bid = 0.70
+    provider.bid_size = 10
+    result = run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 9, 10, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert result["reason"] == "CLOSE_TIME_STOP_DEPTH_LATCH"
+    closed = eng.connect().execute(text(
+        "SELECT close_price, legs FROM astra3_closed_trades"
+    )).mappings().first()
+    assert float(closed["close_price"]) == 0.60
+    leg = json.loads(closed["legs"])[0]
+    assert leg["exit_depth_ok"] is True
+    assert leg["astra3_exit_pending"]["wait_minutes"] == 5.0
+    assert leg["astra3_exit_pending"]["timed_out"] is False
+
+
+def test_astra3_blocks_reentry_during_frozen_30_minute_cooldown(db_session):
+    eng = db_session.get_bind()
+    provider = FlowChainProvider(
+        spot=600.0, call_vol=0, put_vol=0, put_wall=595.0,
+    )
+    _open_astra3_backdraft(eng, provider)
+    position = list_open_positions(eng, "astra3")[0]
+    close_position(
+        eng, "astra3", position["position_id"], 0.64, "TEST_CLOSE",
+        datetime(2026, 9, 17, 8, 40, tzinfo=CT),
+    )
+    result = run_scan_cycle(
+        engine=eng, bot="astra3",
+        now_ct=datetime(2026, 9, 17, 8, 50, tzinfo=CT),
+        chain_provider=provider, event_blackout=False,
+    )
+    assert result["outcome"] == "BLOCKED_COOLDOWN"
+    assert len(list_open_positions(eng, "astra3")) == 0
 
 
 def test_first_scan_does_not_trade_while_flow_is_warming_up(db_session):

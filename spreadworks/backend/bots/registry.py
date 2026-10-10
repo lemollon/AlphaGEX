@@ -358,28 +358,31 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         # buried in the fleet's own webhook. Honored by
         # discord_alerts._webhook_url() (2026-08-13).
         "discord_webhook_env": "RISK_ADVISOR_DISCORD_WEBHOOK",
-        # RESTRUCTURED 2026-08-15 to match EBB PM: spot-$1 / $2 wing, and the
-        # same VIX decay gate. Was spot-$2 / $5 wing. The two tranches are one
-        # strategy run at two clocks, so they must share a spec — before this
-        # they did not, and the "$2,236/yr two-tranche book" that was quoted
-        # did not actually exist in code. The $2 wing also risks $200/lot
-        # instead of $500, which is what makes it fit a small account.
+        # 🚨 RESTORED 2026-09-02 to SPARK's structure: spot-$2 / $5 wing.
+        # The 2026-08-15 restructure to spot-$1 / $2 ("the two tranches must
+        # share a spec") was wrong: the AM and PM clocks are two DIFFERENT
+        # cells. Walk-forward picked spot-$1/$2 for the PM clock (FLAME) and
+        # spot-$2/$5 for the AM clock (SPARK). Run at 10:05, the $2 wing is
+        # the WORST of the nine AM cells ($5.78/tr, ret/DD 1.18) while
+        # spot-$2/$5 is $11.14/tr, ret/DD 1.87, 5/5 years. The live scanner
+        # fixed the same mix-up on 8/27 (botStructure branches on the bot
+        # name); this paper mirror lagged it until now. Max loss $500/lot.
         "params": {
-            "short_otm_abs": 1.0, "spread_abs": 2.0,
+            "short_otm_abs": 2.0, "spread_abs": 5.0,
             "min_option_price": 0.10, "max_spread_pct": 0.15,
             "min_credit": 0.10,
         },
-        # Bands MEASURED 2026-08-15 off this tranche's own gated stream (n=666,
-        # real NBBO): watch = 5th percentile of the rolling-60 sum, demote =
-        # 1st percentile, credit floor = 5th percentile of the 20-trade average
-        # credit. The old -524/-1216/30.0 were the $5-wing distribution and do
-        # not transfer. DEMOTE RULE unchanged: a breach DISABLES the bot and the
-        # bands are never re-tuned to make a breach go away.
+        # Bands are the $5-wing distribution again: pre-registered 2026-08-13
+        # from registry #23b's own 930-day stream (block bootstrap, false-alarm
+        # 5% / 1% on a healthy edge). The -146/-401/29.0 set measured 8/15 was
+        # the $2-wing stream and does not transfer back. DEMOTE RULE unchanged:
+        # a breach DISABLES the bot and the bands are never re-tuned to make a
+        # breach go away.
         "health_bands": {
-            "watch_roll60": -146.0,     # rolling-60-trade $ per lot
-            "demote_roll60": -401.0,
+            "watch_roll60": -524.0,     # rolling-60-trade $ per lot
+            "demote_roll60": -1216.0,
             "demote_roll120": 0.0,      # rolling-120 total below this = demote
-            "min_credit20": 29.0,       # 20-trade avg credit $ per lot floor
+            "min_credit20": 30.0,       # 20-trade avg credit $ per lot floor
         },
         "defaults": {
             "starting_capital": 3000.0,
@@ -407,6 +410,10 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # only $+2.87/trade at t=+1.25 (no edge), gated it is $+6.23 at
             # t=+2.44. See bots/vix_regime.py for why the lag is not optional.
             "vix_decay_max": 0.90,
+            # Confirmed-direction pivot (2026-08-18). 1 = armed. Closes the
+            # spread when the two-stage watcher confirms a move AGAINST it.
+            # See monitor.decide_exit for the study and the control.
+            "pivot_on_confirm": 1,
             # Unused for settle_at_expiry bots (kept for the config UI).
             "eod_close_ct": "14:45",
             # Opens/settles post to the risk-advisor channel (see
@@ -422,10 +429,15 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
     # spot-$2, long put $5 lower, 0DTE, hold to same-day cash settlement, no
     # stop), just a second entry window later in the day — 13:05 CT lands
     # after the 13:36 re-check alert on purpose, so the entry is informed by
-    # that recheck rather than racing it. $9.57/trade, ret/DD 2.67, 5/5 blind
-    # years. The two-tranche book (ebb + ebb_pm together) runs $21.72/day at
-    # ret/DD 2.77 — this entry is additive to EBB's morning tranche, not a
-    # replacement. Single-ticker, fixed direction (bull_put_spread) — same
+    # that recheck rather than racing it. Restructured 2026-08-15 to a
+    # spot-1/$2 wing (was spot-2/$5) for better return-per-dollar-at-risk on
+    # a $3k account: $4.74/trade, 5/5 blind years (confirmed 2026-10-08 on
+    # real continuous SPY NBBO through 2026-10-07; the old $9.57 figure below
+    # was the pre-restructure number, kept here only as history). The
+    # two-tranche book (ebb + ebb_pm together) runs $16.80/trade-pair — not
+    # the $21.72 once quoted here, which was also pre-restructure — this
+    # entry is additive to EBB's morning tranche, not a replacement.
+    # Single-ticker, fixed direction (bull_put_spread) — same
     # dispatch path as EBB in scanner._build_signal.
     #
     # NO-STOP INVARIANT: same as EBB — do not add one. decide_exit()'s
@@ -508,8 +520,22 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             #   with this gate     $+6.51/tr  ret/DD 7.38   (2026 YTD +$302)
             # Untouched last third: $+1.78 -> $+3.04/tr (t=+0.89 — an
             # improvement, NOT significant on its own). Sits out ~29% of days.
-            # Treat as a modest consistent tilt that also rescues the flat year.
-            "vix_decay_max": 0.90,
+            #
+            # 🚨 OFF since 2026-09-02 (Leron: "remove it from flame"). The
+            # growth backtest on the engine that reproduces FLAME's deployed
+            # numbers (risk_advisor_growth.py, 2022-11 -> 2026-08, NBBO,
+            # $0.70) has the gate COSTING this cell $509/yr with the worst
+            # drawdown getting worse ($490 -> $531); the 284 skipped days made
+            # +$1,942, positive in every year. SPARK keeps it (drawdown halved).
+            # 0 is the explicit off value (db.py backfills only NULL, and the
+            # scanner skips the gate when the ceiling is not > 0). The live
+            # ebb_pm_config row must be set to 0 as well — the backfill will
+            # not overwrite the 0.90 an earlier default put there.
+            "vix_decay_max": 0,
+            # Confirmed-direction pivot (2026-08-18). 1 = armed. Closes the
+            # spread when the two-stage watcher confirms a move AGAINST it.
+            # See monitor.decide_exit for the study and the control.
+            "pivot_on_confirm": 1,
             "discord_alerts": True,
             "delta_skew": 0,
             "use_gex_walls": False,
@@ -551,6 +577,69 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 2,
         },
     },
+    # ASTRA-3 — exact $500 UPDRAFT/BACKDRAFT book frozen 2026-09-18 after
+    # executable-NBBO account-wall validation. A later development/holdout
+    # expression audit selected the +2 call over the original +1: one contract
+    # grew $500 -> $2,112.90, first-20 drawdown was -$58.40, and all 93 funded
+    # historical entries/exits had displayed capacity. Multi-contract sizing
+    # remains PAPER ONLY and cannot be promoted without forward evidence.
+    "astra3": {
+        "display": "ASTRA-3",
+        "strategy": "updraft",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": 0,
+        "defaults": {
+            "starting_capital": 500.0,
+            "enabled": False,          # paper-only; explicitly enable after deploy
+            "max_contracts": 3,
+            # Exact staged-compound rule: floor(25% of current realized equity
+            # / (ask*100 + $0.70)), capped at three whole contracts.
+            "bp_pct": 0.25,
+            "sd_mult": 1.0,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            "mode": "astra3",
+            "flow_max": -0.13376407997558806,
+            "r30_min": 19.982448725892155,
+            "backdraft_flow_max": -0.35,
+            "require_put_wall": True,
+            "strike_offset": 2,
+            "hold_minutes": 30,
+            # If the timer/stop touch cannot display the full 1-3 lot, latch
+            # the exit for at most five one-minute scans. A later fill is
+            # capped at the original bid; timeout values the lot at zero and
+            # fails the forward depth gate.
+            "exit_latch_minutes": 5,
+            "pt_pct": 9.9999,         # no profit target; the right tail is the edge
+            "sl_pct": 0.50,
+            "astra3_fee": True,       # $0.70 round trip embedded in paper P&L
+            # The frozen research imposed no extra price/spread filter beyond
+            # affordability and an observed NBBO on the chosen contract.
+            "min_option_price": 0.0,
+            "max_spread_pct": 999.0,
+            "entry_start_ct": "08:31",
+            "entry_end_ct": "14:01", # research included 15:00 ET / 14:00 CT
+            "eod_close_ct": "14:45", # safety backstop; timer should exit first
+            "allow_stacking": True,
+            "max_concurrent_positions": 1,
+            "cooldown_min": 30,
+            "discord_alerts": False,
+        },
+        # Frozen paper-forward promotion gate. Passing permits a human review;
+        # it never enables broker routing or raises the three-contract cap.
+        "forward_gate": {
+            "start_at": "2026-09-18T00:00:00",
+            "required_trades": 20,
+            "minimum_pnl": 0.0,       # strict greater-than in the evaluator
+            "drawdown_floor": -80.0,  # peak-to-trough dollars, inclusive
+            # Every contract must have been displayed at the entry ask and
+            # exit bid used by the paper ledger. Missing depth permanently
+            # invalidates the forward sample; PASS remains human-review only.
+            "require_touch_depth": True,
+        },
+    },
+
     # UPDRAFT — SPY 0DTE long call on put-heavy flow INTO a rising tape.
     # Research 2026-07-26 (ironforge-data/examples/hf_*.py, ADR 0007):
     # buy the +1 OTM call when the 30-min 0DTE tape is put-heavy AND spot is
@@ -1245,6 +1334,217 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "max_concurrent_positions": 1,
             "cooldown_min": 390,
             "discord_alerts": False,
+        },
+    },
+    # MONARCH-A / MONARCH-B — PAPER-ONLY forward validation of the two
+    # best-available-but-UNCONFIRMED cells from TRIAGE 29
+    # (dev/meltup/triage29_wing_delta_sweep.py, PREREG/RESULT docs in the
+    # same dir). SPY 0DTE symmetric ATM butterfly, calls-only, body at the
+    # nearest-listed strike to spot (NOT a gamma-magnet center), wings
+    # targeted at a FIXED DELTA instead of RIVER/SURGE/RIPPLE's fixed
+    # %-of-straddle distance. monarch_a = 0.05-delta wings, monarch_b =
+    # 0.25-delta wings — same construction otherwise, run side by side on
+    # two SEPARATE $10,000 paper accounts (compare_with overlays them on one
+    # equity chart in the frontend, same pattern as RIPPLE/SPLASH).
+    #
+    # 🚨 BOTH holdout point estimates' bootstrap CIs cross zero (2025-26,
+    # real NBBO fills) — this is explicitly NOT a confirmed edge. The point
+    # of running this live is to find out whether it's real; a paper win
+    # streak alone does not confirm it. NEVER promote either to real money
+    # off a backtest or a short paper run — see the monarch memory notes for
+    # the full placebo/multiplicity history this is meant to resolve.
+    #
+    # FILL CONVENTION: real NBBO, no mid. Wings bought at ASK, body sold x2
+    # at BID (strategies/delta_butterfly.build_delta_butterfly_signal) —
+    # identical to the backtest's build_day_ladder(). The scanner passes
+    # mid_fill=False for this strategy so the executor's simulated
+    # half-spread is never layered on top of a fill that already crossed
+    # the real book.
+    #
+    # VIX GATE: mid-tercile only, cutoffs FROZEN on the 2023-01-01..2024-12-31
+    # fit window (VIX close at 10:30 ET, vix_minute.duckdb) — see
+    # strategies/delta_butterfly.MONARCH_VIX_Q1/Q2. Do not re-tune on live
+    # data.
+    #
+    # ENTRY WINDOW: the backtest's entry is a single 10:30:00 ET print
+    # (09:30:00 CT). The live window below (09:29-09:34 CT) is an ASSUMPTION
+    # — a few minutes of margin for the 1-minute scan cadence and any single
+    # missed/failed cycle — not itself validated. one_entry_per_day=True
+    # caps it to one fill regardless of how many scans land inside it.
+    #
+    # SETTLEMENT: settle_at_expiry=True + pt_ladder=False — no stop, no
+    # profit target, hold to the scanner's same-day cash-settlement pass
+    # (scanner._settlement_value: intrinsic value vs the official close).
+    # This is the live equivalent of the backtest's "reverse direction at
+    # settlement, real intrinsic value at expiry, not a market order."
+    #
+    # SIZING: the research brief did not specify a per-trade sizing rule for
+    # the forward test beyond "$10,000 paper capital per strategy" — ASSUMED
+    # here as a flat 1 contract/day (max_contracts=1, bp_pct=0.20 headroom)
+    # rather than importing the OLDER 15-delta MONARCH memory's half-Kelly
+    # 3.1%-of-equity sizing, which was fit to a different (now-superseded)
+    # cell. Revisit if Leron wants Kelly sizing applied to these two cells
+    # specifically.
+    "monarch_a": {
+        "display": "MONARCH-A",
+        "strategy": "delta_butterfly",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        "pt_ladder": False,
+        "compare_with": "monarch_b",
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
+                                 # flip to True without re-reading the caveat
+                                 # above; this flag never touches a broker.
+            "max_contracts": 1,
+            "bp_pct": 0.20,
+            "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
+            # The one knob that distinguishes monarch_a from monarch_b.
+            # Read directly off this registry entry (see scanner.py /
+            # routes.py comments) — never a live-tunable bot_config column.
+            "wing_delta_target": 0.05,
+            "pt_pct": 1.0,       # unreachable by construction — see strategy
+            "sl_pct": 3.0,       # module docstring; hold is to settlement
+            "entry_start_ct": "09:29",
+            "entry_end_ct": "09:34",
+            "eod_close_ct": "14:45",  # unused for settle_at_expiry bots
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
+    "monarch_b": {
+        "display": "MONARCH-B",
+        "strategy": "delta_butterfly",
+        "ticker": "SPY",
+        "front_dte": 0,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "settle_at_expiry": True,
+        "pt_ladder": False,
+        "compare_with": "monarch_a",
+        "defaults": {
+            "starting_capital": 10000.0,
+            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
+                                 # flip to True without re-reading the caveat
+                                 # above; this flag never touches a broker.
+            "max_contracts": 1,
+            "bp_pct": 0.20,
+            "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
+            "wing_delta_target": 0.25,
+            "pt_pct": 1.0,       # unreachable by construction — see strategy
+            "sl_pct": 3.0,       # module docstring; hold is to settlement
+            "entry_start_ct": "09:29",
+            "entry_end_ct": "09:34",
+            "eod_close_ct": "14:45",  # unused for settle_at_expiry bots
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+        },
+    },
+    # CINDER — SPY 1DTE debit call spread, PAPER mirror of the already-LIVE
+    # `backend/cinder_signal.py` signal module (2026-10-05).
+    #
+    # 🚨 NAMING COLLISION, FLAGGED FOR THE OPERATOR: `backend/cinder_signal.py`
+    # + `backend/routes_cinder.py` already run this exact idea as a scheduled,
+    # ARMED live-signal job (every 5 min, 08:00-15:55 CT) that feeds a
+    # separate real-money Robinhood execution bot via its own
+    # `cinder_signals` table and `/api/spreadworks/cinder/state` route — see
+    # that module's docstring (10 trades, 2024-2026, 90% WR, +12.32 total
+    # units). THIS registry entry is a SEPARATE, independent $500 PAPER bot
+    # that reimplements the same documented rule inside the shared
+    # scanner/executor framework (its own cinder_positions/cinder_config
+    # tables) purely so the strategy shows up on the normal fleet page with
+    # a normal paper equity curve. It shares NO table, NO code path, and NO
+    # position with cinder_signal.py and never touches it. Two things named
+    # CINDER in the product is a real point of operator confusion this
+    # agent cannot resolve unilaterally (it would mean renaming or
+    # restructuring the already-live module) — flagged, not fixed.
+    #
+    # STRATEGY (ported from cinder_signal.py's own frozen rule, read-only —
+    # nothing here imports that module): long the ATM SPY call, short the
+    # call $10 higher, next-session (1DTE) expiry. Entry gated on ALL THREE,
+    # once a day in an 11:25-11:35 ET window (10:25-10:35 CT):
+    #   1. GEX: prior-session net_gex_b (gamma_regime.gamma_state) <= -10bn.
+    #   2. Live VIX ratio (routes_squeeze.live_vix_ratio) < 0.90.
+    #   3. Term structure: live VIX < VIX3M (normal contango), read fresh
+    #      from market_structure.fetch_vol_indices() — a live call, not a
+    #      read of cinder_signal.py's sw_live_vol_indices table.
+    # Cooldown: no new entry within 5 CALENDAR days of this bot's own last
+    # entry (entry_cooldown_days — distinct from cooldown_min's MINUTE-based
+    # gate used by the intraday burst bots). All four gates are new,
+    # bot-agnostic scanner.py fields (see "MACRO ENTRY GATES") that are
+    # no-ops for every bot that leaves them unset.
+    #
+    # EXIT: target = 2.0x entry debit. For a debit spread the sizing math
+    # (strategies/vertical_spread.build_vertical_signal) bases pt_target_pnl
+    # on max_loss_per = the debit paid, so pt_pct=1.0 means "close when the
+    # spread's mark gains 100% of the debit" — i.e. spread value = 2x debit,
+    # exactly cinder_signal.py's TARGET_MULTIPLE. No separate stop: a debit
+    # spread cannot lose more than the debit paid, so sl_pct=1.0 is already
+    # unreachable by construction (the TIDE/SPLASH "can't lose more than the
+    # debit" convention) — matches the spec's "no stop, EOD fallback only".
+    # `bull_call_spread` is in monitor.MULTI_DAY_STRATEGIES, so decide_exit
+    # never same-day-EOD-closes it; it force-closes once the scan date
+    # reaches front_expiration (PRE_EXPIRY) if the 2x target never fired.
+    # ASSUMPTION, flagged: this closes at the FIRST scan on the expiration
+    # day rather than cinder_signal.py's narrow 15:55-16:00 ET fallback
+    # window — the generic multi-day exit has no "wait until near the
+    # close" concept and every other bot on this exit path (UNDERTOW, DELTA,
+    # EBB-style verticals) uses the same first-scan convention. Building a
+    # one-off "only check near the close on the last day" path for this one
+    # bot was judged out of proportion for a 10-trade, PAPER/UNCONFIRMED
+    # strategy; revisit if this bot graduates toward a real backtest.
+    #
+    # SIZING, ASSUMED (not specified by the backtest, which reports "units"
+    # not dollars): max_contracts=1, bp_pct=0.80 of the $500 account. A $10
+    # debit spread with an ATM long leg commonly prices a few dollars to
+    # several tens of dollars; 0.80 x $500 = $400 of headroom sizes to 1
+    # contract for any debit up to $400 and skips the day (sizing_below_one)
+    # on anything pricier, rather than fabricating a tighter number with no
+    # backtest to support it.
+    "cinder": {
+        "display": "CINDER",
+        "strategy": "bull_call_spread",
+        "ticker": "SPY",
+        "front_dte": 1,
+        "back_dte": None,
+        "one_entry_per_day": True,
+        "params": {
+            "spread_abs": 10.0,
+            # Standard quote-quality hygiene (every other vertical in this
+            # registry other than the frozen ASTRA-3 spec applies one) —
+            # not part of cinder_signal.py's own spec, which only requires
+            # a quoted ask/bid; ASSUMED here for consistency.
+            "min_option_price": 0.10,
+            "max_spread_pct": 0.15,
+        },
+        "defaults": {
+            "starting_capital": 500.0,
+            "enabled": True,    # PAPER ONLY — armed to scan/paper-trade 2026-10-05
+            "max_contracts": 1,
+            "bp_pct": 0.80,
+            "sd_mult": 1.0,      # schema-required, unused by vertical_debit
+            "pt_pct": 1.0,       # = 2.0x entry debit, see header above
+            "sl_pct": 1.0,       # unreachable by construction (debit spread)
+            "entry_start_ct": "10:25",
+            "entry_end_ct": "10:35",
+            "eod_close_ct": "14:45",  # unused — MULTI_DAY_STRATEGIES exit path
+            "allow_stacking": False,
+            "max_concurrent_positions": 1,
+            "discord_alerts": False,
+            "delta_skew": 0,
+            "use_gex_walls": False,
+            # Macro entry gates (scanner.py "MACRO ENTRY GATES") — the three
+            # legs of cinder_signal.py's frozen trigger, ported read-only.
+            "gex_ceiling_b": -10.0,
+            "live_vix_ratio_max": 0.90,
+            "require_vix_contango": 1,
+            "entry_cooldown_days": 5,
         },
     },
 }

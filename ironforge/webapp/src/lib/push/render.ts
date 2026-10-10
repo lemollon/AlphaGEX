@@ -11,6 +11,9 @@ import type { NotificationEvent, PushMessage, NotificationCategory } from '@/lib
 
 export interface RenderPrefs {
   showAmountsOnLockscreen: boolean
+  /** "Sound" toggle (Account tab). Defaults true elsewhere so a customer who never
+   * opens settings gets the same experience shipped before this preference existed. */
+  sound?: boolean
 }
 
 /** Android notification channels. Separate channels let a customer mute one class in OS settings. */
@@ -21,6 +24,8 @@ const CHANNEL: Record<NotificationCategory, string> = {
   brokerage_health: 'account',
   billing: 'account',
   community: 'community',
+  big_move: 'trades',
+  daily_summary: 'account',
 }
 
 /** Approvals expire in 5 minutes; a push that outlives the decision is noise. */
@@ -31,6 +36,8 @@ const TTL_SEC: Record<NotificationCategory, number> = {
   brokerage_health: 1800,
   billing: 86400,
   community: 3600,
+  big_move: 1800,
+  daily_summary: 86400,
 }
 
 export function formatAmount(n: number): string {
@@ -45,6 +52,45 @@ export function formatAmount(n: number): string {
  */
 export const CURRENCY_RE = /[$€£]|\d[\d,]*\.\d{2}/
 
+const AGENT_BOTS = new Set(['spark', 'flame'])
+
+/**
+ * The mobile app's notification tap handler (src/notifications/route-for.ts) routes
+ * on three flat `data` keys — `trade_id`, `agent`, `kind` — rather than parsing
+ * `route`/`params`, because `routeParams` is producer-defined free text (an approval
+ * uses `approvalId`, a brokerage alert uses `connectionId`, a trade event uses
+ * whatever key the scanner happened to name it). Deriving these here, once,
+ * server-side, means every producer's naming choice still lands on a deep link the
+ * app actually knows how to open, instead of every future producer having to
+ * remember the exact key the client expects.
+ */
+function deriveNavKeys(event: NotificationEvent): { trade_id?: string; agent?: string; kind?: string } {
+  const params = event.routeParams ?? {}
+  const tradeId = params.tradeId ?? params.trade_id ?? params.positionId ?? params.position_id
+  const agent = params.agent ?? params.bot ?? params.account
+  const nav: { trade_id?: string; agent?: string; kind?: string } = {}
+  if (typeof tradeId === 'string' && tradeId) nav.trade_id = tradeId
+  if (typeof agent === 'string' && AGENT_BOTS.has(agent)) nav.agent = agent
+  if (event.category === 'brokerage_health') nav.kind = 'brokerage'
+  else if (event.category === 'billing') nav.kind = 'billing'
+  return nav
+}
+
+/**
+ * #269: a ready-made in-app href, computed server-side with the EXACT SAME priority
+ * the app's own routeFor() (src/notifications/route-for.ts) applies to trade_id/
+ * agent/kind — trade is more specific than agent, agent more specific than kind.
+ * A newer app build routes on this directly; an older build that has never heard of
+ * `link` still works unchanged, since trade_id/agent/kind keep shipping alongside it
+ * (routeFor() is the fallback, not replaced).
+ */
+function deriveLink(nav: { trade_id?: string; agent?: string; kind?: string }): string | null {
+  if (nav.trade_id) return `/trade/${nav.trade_id}`
+  if (nav.agent) return `/agents/${nav.agent}`
+  if (nav.kind === 'brokerage' || nav.kind === 'billing') return '/account'
+  return null
+}
+
 export function renderNotification(
   event: NotificationEvent,
   prefs: RenderPrefs,
@@ -58,12 +104,15 @@ export function renderNotification(
   const body = mayShowAmount
     ? `${event.body} ${formatAmount(event.amount as number)}`
     : event.body
+  const nav = deriveNavKeys(event)
+  const link = deriveLink(nav)
 
   return {
     to: '', // filled per-device by dispatch
     title: event.title,
+    ...(event.subtitle ? { subtitle: event.subtitle } : {}),
     body,
-    sound: 'default',
+    sound: prefs.sound === false ? null : 'default',
     priority: event.category === 'trade_approval' ? 'high' : 'default',
     channelId: CHANNEL[event.category],
     ttl: TTL_SEC[event.category],
@@ -81,6 +130,10 @@ export function renderNotification(
       // app is behind biometrics, so showing it after unlock is fine. Only the visible
       // title/body are redacted.
       ...(typeof event.amount === 'number' ? { amount: event.amount } : {}),
+      ...nav,
+      // #269: alongside, never instead of, the trade_id/agent/kind fields above —
+      // an app build that only knows those still routes correctly.
+      ...(link ? { link } : {}),
     },
   }
 }

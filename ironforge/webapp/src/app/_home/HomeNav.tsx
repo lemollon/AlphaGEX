@@ -13,6 +13,22 @@ import { MenuIcon, CloseIcon } from './icons'
  * nothing else; the ops console is a separate deployment with its own nav. */
 
 // Public marketing links — shown to everyone, signed in or not.
+//
+// "Join the Waitlist" was removed here on 2026-08-27 to match the approved mock,
+// on the stated basis that /waitlist was "still linked from the places that send
+// people to it". That was wrong: the ONLY other link is EnrollmentGate, which
+// renders exclusively when ENROLLMENT_WAITLIST_MODE === 'true'. Enrollment is
+// open in production, so the gate never renders and the masthead entry was the
+// last route in — /waitlist answered 200 with nothing on the site pointing at
+// it. Restored 2026-08-28 on Leron's report that the waitlist was gone.
+//
+// This masthead entry is now the ONLY link to /waitlist on the public site.
+// #2923 also added one to HomeFooter.COMPANY_LINKS as a second route in, and
+// that was wrong: HomeFooter is imported by exactly one page — /waitlist — so
+// it produced a self-link and protected nothing. The homepage's actual footer
+// is `LegalFooter` in _home/marketing.tsx, a two-item nav labelled "Legal",
+// which is not the place for a marketing CTA. So: delete this line and the
+// waitlist is orphaned again.
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/', label: 'Home' },
   { href: '/how-it-works', label: 'How It Works' },
@@ -20,9 +36,10 @@ const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 ]
 
 // Links that require a MEMBERSHIP — any live subscription, a strategy or Community
-// itself. Community is a $10 product, so advertising it to someone who has bought
-// nothing points at a door they cannot walk through. Discovery is unaffected: the
-// homepage membership section is where Community is actually sold, and it links there.
+// itself. Community is free but still requires joining, so advertising it to someone
+// who hasn't joined anything points at a door they cannot walk through yet. Discovery
+// is unaffected: the homepage membership section is where Community is actually
+// joined, and it links there.
 const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/community', label: 'Community' },
 ]
@@ -43,7 +60,6 @@ const MEMBER_LINKS: ReadonlyArray<{ href: string; label: string }> = [
  */
 const CONSOLE_LINKS: ReadonlyArray<{ href: string; label: string }> = [
   { href: '/spark', label: 'SPARK' },
-  { href: '/spark2', label: 'SPARK2' },
   { href: '/flame', label: 'FLAME' },
   { href: '/inferno', label: 'INFERNO' },
   { href: '/blaze', label: 'BLAZE' },
@@ -111,7 +127,7 @@ export default function HomeNav(
     <header className="sticky top-0 z-50 border-b border-white/5 bg-black">
       <div className={`mx-auto flex max-w-[1200px] items-center justify-between px-5 md:px-8 ${showAll ? 'min-h-16 py-2' : 'h-16'}`}>
         <Link href="/" aria-label="IronForge home">
-          <Wordmark markClass="h-8 w-auto" textClass="text-lg" />
+          <Wordmark markClass="h-8 w-auto" textClass="text-lg" showMark={false} />
         </Link>
 
         {/* Desktop links */}

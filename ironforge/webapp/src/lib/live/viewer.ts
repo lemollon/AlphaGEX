@@ -9,9 +9,9 @@ import { isPublicMode } from '@/lib/auth/access'
  *
  * - Operators (ops session / magic link): every live bot, with the top-right
  *   account toggle.
- * - Customers: exactly the bots mapped to them in ironforge_customer_bots
- *   (e.g. the SPARK2 account owner sees ONLY spark2). No mapping → NO account
- *   (empty state) — a fresh signup must never see the operator's real money.
+ * - Customers: exactly the bots mapped to them in ironforge_customer_bots.
+ *   No mapping → NO account (empty state) — a fresh signup must never see
+ *   the operator's real money.
  * - Anonymous: NO account (empty state) for the same reason.
  *
  * The API routes enforce this server-side; the client toggle merely renders
@@ -68,7 +68,7 @@ export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
 /**
  * Ledger filter for a bot's customer-facing queries.
  *
- * Production bots (SPARK/SPARK2) read only account_type='production' rows.
+ * Production bots (SPARK) read only account_type='production' rows.
  * Paper bots (FLAME) have no production rows by construction — they read the
  * complement, so their pages show the paper ledger instead of rendering empty.
  * NULL account_type is treated as sandbox/paper by the same COALESCE the
@@ -116,6 +116,24 @@ export function personFilter(person: string | null | undefined): string {
  * So a non-operator with no `person` now gets a query that matches nothing and an
  * honest empty state. Callers must pass isOperator explicitly; the default is
  * false, so a caller that forgets cannot leak.
+ *
+ * 🚨 THAT RULE APPLIES TO PRODUCTION ONLY, and applying it to paper broke every
+ * paper bot. `person` partitions real money and nothing else: across every bot,
+ * EVERY sandbox `paper_account` row has person = NULL — the scanner maintains one
+ * house ledger per (bot, dte_mode) and its sandbox writes do not mention person at
+ * all (see scanner.ts, `WHERE COALESCE(account_type,'sandbox') = 'sandbox' AND
+ * dte_mode = $`). So for a paper bot BOTH branches above failed: a customer with a
+ * person got `AND person = 'X'`, which matches no sandbox row, and a customer
+ * without one got `AND FALSE`. Either way `accountLinked` came back false and the
+ * Live page said "isn't connected to your account yet — contact support" about a
+ * bot that was running fine.
+ *
+ * A paper read is therefore unscoped by owner, and that is not the 07-27 leak
+ * repeating: the sandbox ledger is simulated house money that no customer owns,
+ * its single account row already sums every sandbox position regardless of who
+ * traded it, and scoping the positions any more tightly than the balance would
+ * show a Ledger that disagrees with the account value above it. Production
+ * behaviour below is unchanged, byte for byte.
  */
 export function scopeFilter(
   bot: LiveBot,
@@ -128,6 +146,12 @@ export function scopeFilter(
    */
   modeOverride?: LiveAccountMode,
 ): string {
+  // Paper is a house ledger with no owner column populated — see the note above.
+  // Returned before the guard, because there is nothing here to scope OR to leak.
+  if ((modeOverride ?? resolveAccountMode(bot)) !== 'production') {
+    return ledgerFilter(bot, modeOverride)
+  }
+
   if (!isOperator && !person) {
     return `${ledgerFilter(bot, modeOverride)} AND FALSE`
   }

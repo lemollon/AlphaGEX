@@ -31,6 +31,88 @@ def _validate(bot: str) -> None:
         raise HTTPException(404, f"Unknown bot: {bot}")
 
 
+def _forward_gate_status(bot: str, rows: list) -> dict[str, Any] | None:
+    """Evaluate a registry-frozen paper gate from chronological closed trades.
+
+    Drawdown is calculated on cumulative realized P&L from a zero baseline, so
+    it is identical to peak-to-trough account-equity drawdown. A drawdown breach
+    is permanent for this ledger and surfaces immediately, even before the
+    minimum trade count. Passing is review-only and never changes configuration.
+    """
+    gate = BOT_REGISTRY[bot].get("forward_gate")
+    if not gate:
+        return None
+
+    required = int(gate["required_trades"])
+    minimum_pnl = float(gate["minimum_pnl"])
+    drawdown_floor = float(gate["drawdown_floor"])
+    require_touch_depth = bool(gate.get("require_touch_depth"))
+    cumulative = 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    depth_failures: list[dict[str, Any]] = []
+    for row in rows:
+        cumulative += float(row["realized_pnl"] or 0.0)
+        peak = max(peak, cumulative)
+        max_drawdown = min(max_drawdown, cumulative - peak)
+        if require_touch_depth:
+            try:
+                contracts = int(row["contracts"])
+                legs = (json.loads(row["legs"])
+                        if isinstance(row["legs"], str) else row["legs"])
+                depth_ok = bool(legs) and all(
+                    int(leg["entry_touch_size"]) >= contracts
+                    and int(leg["exit_touch_size"]) >= contracts
+                    and leg.get("exit_depth_ok") is True
+                    for leg in legs
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                depth_ok = False
+            if not depth_ok:
+                depth_failures.append({
+                    "position_id": str(row["position_id"]),
+                    "close_time": str(row["close_time"]),
+                })
+
+    count_ok = len(rows) >= required
+    pnl_ok = cumulative > minimum_pnl
+    drawdown_ok = max_drawdown >= drawdown_floor
+    execution_depth_ok = not depth_failures
+    if not execution_depth_ok:
+        state = "FAILED_EXECUTION_DEPTH"
+    elif not drawdown_ok:
+        state = "FAILED_DRAWDOWN"
+    elif not count_ok:
+        state = "IN_PROGRESS"
+    elif not pnl_ok:
+        state = "WAIT_POSITIVE_PNL"
+    else:
+        state = "PASS"
+
+    return {
+        "state": state,
+        "promotion_review_ready": state == "PASS",
+        "paper_only": True,
+        "completed_trades": len(rows),
+        "required_trades": required,
+        "remaining_trades": max(0, required - len(rows)),
+        "cumulative_pnl": round(cumulative, 2),
+        "minimum_pnl_exclusive": minimum_pnl,
+        "max_drawdown": round(max_drawdown, 2),
+        "drawdown_floor": drawdown_floor,
+        "count_ok": count_ok,
+        "pnl_ok": pnl_ok,
+        "drawdown_ok": drawdown_ok,
+        "require_touch_depth": require_touch_depth,
+        "execution_depth_ok": execution_depth_ok,
+        "execution_compliant_trades": len(rows) - len(depth_failures),
+        "depth_failures": depth_failures,
+        "start_at": str(gate["start_at"]),
+        "evaluated_through": str(rows[-1]["close_time"]) if rows else None,
+        "live_money_authorized": False,
+    }
+
+
 @router.get("/{bot}/status")
 def get_status(bot: str):
     _validate(bot)
@@ -72,7 +154,18 @@ def get_status(bot: str):
             "WHERE close_time >= :s AND close_time < :e"
         ), {"s": day_start, "e": day_end}).mappings().first()
 
-    return {
+        gate_cfg = BOT_REGISTRY[bot].get("forward_gate")
+        gate_rows = []
+        if gate_cfg:
+            start_at = datetime.fromisoformat(str(gate_cfg["start_at"]))
+            gate_rows = conn.execute(text(
+                f"SELECT position_id, close_time, realized_pnl, contracts, legs "
+                f"FROM {bot_table(bot, 'closed_trades')} "
+                "WHERE close_time >= :start_at "
+                "ORDER BY close_time, position_id"
+            ), {"start_at": start_at}).mappings().all()
+
+    result = {
         "bot": bot,
         "display": BOT_REGISTRY[bot]["display"],
         "strategy": BOT_REGISTRY[bot]["strategy"],
@@ -85,6 +178,10 @@ def get_status(bot: str):
         "unrealized_pnl": float(unrealized),
         "last_scan_at": str(last["s"]) if last["s"] else None,
     }
+    forward_gate = _forward_gate_status(bot, gate_rows)
+    if forward_gate is not None:
+        result["forward_gate"] = forward_gate
+    return result
 
 
 @router.get("/{bot}/positions")
@@ -489,11 +586,13 @@ def get_position_payoff(bot: str, position_id: str):
             {"exp": exp},
             r, sigma, entry_cost, n,
         )
-    elif strategy == "long_butterfly":
+    elif strategy in ("long_butterfly", "delta_butterfly"):
         # Single-type 1-2-1 long fly. Both wings are the SAME type as the body,
         # so _leg(side, type) can't tell the lower wing from the upper — resolve
         # by strike ordering instead. Reuses the existing "butterfly" payoff
-        # model (buy 1 lower, sell 2 middle, buy 1 upper).
+        # model (buy 1 lower, sell 2 middle, buy 1 upper). delta_butterfly
+        # (MONARCH) emits the identical 4-leg shape as long_butterfly — only
+        # the entry construction differs — so the same payoff model applies.
         opt_type = legs[0].get("type", "call")
         long_strikes = sorted(float(lg["strike"]) for lg in legs if lg.get("side") == "long")
         short_strikes = [float(lg["strike"]) for lg in legs if lg.get("side") == "short"]

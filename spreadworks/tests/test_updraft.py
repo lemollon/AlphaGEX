@@ -11,12 +11,13 @@ from backend.bots.strategies.updraft import (DEFAULT_PARAMS,
 
 
 def _chain(*, spot=600.0, flow_imb=-0.20, r30=25.0, put_wall=598.0,
-           bid=0.60, ask=0.64):
+           bid=0.60, ask=0.64, bid_size=10, ask_size=10):
     strikes = [spot - 2, spot - 1, spot, spot + 1, spot + 2, spot + 3]
     return {
         "spot": spot, "ticker": "SPY", "expiration": date(2026, 7, 27),
         "options": [
-            {"strike": s, "type": t, "bid": bid, "ask": ask, "volume": 100,
+            {"strike": s, "type": t, "bid": bid, "ask": ask,
+             "bid_size": bid_size, "ask_size": ask_size, "volume": 100,
              "open_interest": 500}
             for s in strikes for t in ("call", "put")
         ],
@@ -107,6 +108,139 @@ def test_backdraft_needs_more_extreme_flow_than_updraft():
                                 today=date(2026, 7, 27),
                                 params=DEFAULT_PARAMS,
                                 mode="backdraft") is None
+
+
+def test_astra3_uses_exact_book_rule_ask_fill_fee_and_cap():
+    params = {
+        **DEFAULT_PARAMS,
+        "mode": "astra3",
+        "astra3_fee": True,
+        "min_option_price": 0.0,
+        "max_spread_pct": 999.0,
+    }
+    sig = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50},
+        equity=500.0,
+    )
+    assert sig is not None and sig.mode == "updraft"
+    assert sig.strike == 602.0
+    assert sig.hold_minutes == 30
+    assert sig.entry_ask == 0.64
+    assert sig.entry_touch_size == 10
+    assert sig.debit == 0.647             # ask + $0.70 round trip
+    assert sig.legs()[0]["entry_price"] == 0.64
+    assert sig.legs()[0]["entry_touch_size"] == 10
+    assert sig.sl_target_pnl == 32.70     # 50% premium + commission
+
+    # Same signal is unaffordable when ask + commission breaches 25% equity.
+    expensive = _chain(flow_imb=-0.20, r30=25.0, bid=1.29, ask=1.30)
+    assert build_updraft_signal(
+        chain=expensive, today=date(2026, 9, 18), params=params,
+        mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50}, equity=500.0,
+    ) is None
+
+
+def test_astra3_staged_compounding_sizes_from_current_equity_and_caps_at_three():
+    params = {
+        **DEFAULT_PARAMS,
+        "mode": "astra3",
+        "astra3_fee": True,
+        "min_option_price": 0.0,
+        "max_spread_pct": 999.0,
+    }
+    config = {
+        "bp_pct": 0.25,
+        "max_contracts": 3,
+        "pt_pct": 9.9999,
+        "sl_pct": 0.50,
+    }
+
+    one = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=500.0,
+    )
+    three = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=1000.0,
+    )
+    still_three = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=10000.0,
+    )
+
+    assert one is not None and one.contracts == 1
+    assert three is not None and three.contracts == 3
+    assert still_three is not None and still_three.contracts == 3
+
+    # Capital may call for three, but the order is capped to displayed ask size.
+    depth_capped = build_updraft_signal(
+        chain=_chain(flow_imb=-0.20, r30=25.0, ask_size=2),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config=config, equity=1000.0,
+    )
+    assert depth_capped is not None and depth_capped.contracts == 2
+
+
+def test_astra3_rejects_missing_or_zero_entry_depth():
+    params = {
+        **DEFAULT_PARAMS, "mode": "astra3", "astra3_fee": True,
+        "min_option_price": 0.0, "max_spread_pct": 999.0,
+    }
+    config = {"bp_pct": 0.25, "max_contracts": 3,
+              "pt_pct": 9.9999, "sl_pct": 0.50}
+    for ask_size in (None, 0):
+        diag = []
+        sig = build_updraft_signal(
+            chain=_chain(flow_imb=-0.20, r30=25.0, ask_size=ask_size),
+            today=date(2026, 9, 18), params=params, mode="astra3",
+            config=config, equity=1000.0, diag=diag,
+        )
+        assert sig is None
+        assert "entry_ask_size_unavailable" in diag[0]
+
+
+def test_astra3_falls_through_to_backdraft_mechanism():
+    params = {**DEFAULT_PARAMS, "mode": "astra3", "astra3_fee": True,
+              "min_option_price": 0.0, "max_spread_pct": 999.0}
+    sig = build_updraft_signal(
+        chain=_chain(flow_imb=-0.40, r30=0.0, put_wall=595.0),
+        today=date(2026, 9, 18), params=params, mode="astra3",
+        config={"bp_pct": 0.25, "max_contracts": 1,
+                "pt_pct": 9.9999, "sl_pct": 0.50}, equity=500.0,
+    )
+    assert sig is not None and sig.mode == "backdraft"
+    assert sig.hold_minutes == 30
+
+
+def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
+    bot = get_bot("astra3")
+    d = bot["defaults"]
+    assert d["enabled"] is False
+    assert d["starting_capital"] == 500.0
+    assert d["bp_pct"] == 0.25 and d["max_contracts"] == 3
+    assert d["mode"] == "astra3" and d["hold_minutes"] == 30
+    assert d["strike_offset"] == 2
+    assert d["flow_max"] == -0.13376407997558806
+    assert d["r30_min"] == 19.982448725892155
+    assert d["backdraft_flow_max"] == -0.35
+    assert d["max_concurrent_positions"] == 1
+    assert d["cooldown_min"] == 30
+    gate = bot["forward_gate"]
+    assert gate == {
+        "start_at": "2026-09-18T00:00:00",
+        "required_trades": 20,
+        "minimum_pnl": 0.0,
+        "drawdown_floor": -80.0,
+        "require_touch_depth": True,
+    }
 
 
 # ------------------------------------------------------------- flow_store

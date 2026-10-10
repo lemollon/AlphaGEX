@@ -96,10 +96,26 @@ export interface RiskProfile {
   caution: boolean
 }
 
+/**
+ * Why the quiz recommends this bot. Renders on /onboarding/risk and
+ * /onboarding/complete, so it is customer-facing copy about a real product.
+ *
+ * It said "2-day-to-expiration iron condors" (FLAME) and "1-day" (SPARK) until
+ * 2026-08-27. Both were false from the 2026-08-16 EBB cutover: neither bot has
+ * traded an iron condor or a multi-day expiry since. They run ONE strategy —
+ * a same-day (0DTE) SPY put credit spread, short spot−$1.00, $2 wing, one
+ * contract, held to settlement at the close — at two different clocks.
+ *
+ * The only honest difference is the entry session, and it IS a risk gradient:
+ * on the deployed structure (1 lot, 2022-11 → 2026-08) the 13:05 CT tranche
+ * draws $490 max and the 10:05 CT tranche draws $1,207 — so Conservative→FLAME
+ * / Aggressive→SPARK still sorts correctly, just for a different reason than
+ * the old copy claimed. `risk-scoring.test.ts` pins both strings to dteMode().
+ */
 export const BOT_RATIONALE: Record<RecommendedBot, string> = {
-  FLAME: '2-day-to-expiration iron condors — the slower-paced of the two, with more time for a trade to work.',
+  FLAME: 'Same-day (0DTE) SPY put credit spreads entered at 1:05 PM CT — the afternoon session, with less of the trading day left to move against the position.',
   // Worded to read correctly for BOTH Moderate and Aggressive, which now share it.
-  SPARK: '1-day-to-expiration iron condors — the shorter, faster-moving strategy of the two.',
+  SPARK: 'Same-day (0DTE) SPY put credit spreads entered at 10:05 AM CT — the morning session, carrying the position through the whole trading day.',
 }
 
 /** The capacity answer that forces a caution regardless of total score. */

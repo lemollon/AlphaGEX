@@ -1,5 +1,12 @@
 # IronForge Sandbox
 
+## Spark/Flame strategy baseline
+
+The seeded sandbox fixture and its `production` row labels are test data, not
+live fills or current strategy parameters. Use [September 28 current state](SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the 0DTE EBB definitions. The
+separate staging deployment retains the safety gates described below;
+ONE_STRATEGY must not be used to bypass them.
+
 ## The deploy gate
 
 The sandbox tracks the **`staging`** branch, not `main`. That is the whole point:
@@ -55,7 +62,7 @@ Render deploy, serving zero traffic — if any of these are true:
 
 | Check | Why |
 |---|---|
-| Any of `TRADIER_PROD_*`, `TRADIER_SPARK2/FLAME/KINDLE_API_KEY` is set | Real broker credentials |
+| Any of `TRADIER_PROD_*`, `TRADIER_FLAME/KINDLE_API_KEY` is set | Real broker credentials |
 | `TRADIER_BASE_URL`'s **hostname** is not exactly `sandbox.tradier.com` | Real broker host (exact match — a substring test accepted `api.tradier.com/v1?x=sandbox.tradier.com`) |
 | `TRADIER_API_KEY` is set **without** that sandbox host | It is the quote key, so it is allowed — but `tradier.ts` defaults to PRODUCTION Tradier when the key is set and the base URL is not, so the host must be pinned explicitly |
 | `STRIPE_SECRET_KEY` is not `sk_test_`/`rk_test_` | Would charge real cards |

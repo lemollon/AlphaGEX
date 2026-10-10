@@ -232,6 +232,7 @@ export async function POST(_req: NextRequest) {
               buying_power = ${correctBp},
               total_trades = ${actualTrades},
               high_water_mark = GREATEST(COALESCE(high_water_mark, 0), ${expectedBalance}),
+              high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), ${expectedBalance}),
               updated_at = NOW()
         WHERE is_active = TRUE`,
     )

@@ -55,16 +55,37 @@ export async function GET(
   const includeArchived = req.nextUrl.searchParams.get('include_archived') === '1'
   // Archived rows live under an ARCHIVED_* dte_mode, so the live-mode pin has to
   // widen or they stay invisible even with the status opened up.
-  const curveDteFilter =
-    includeArchived && dte
-      ? `AND (dte_mode = '${escapeSql(dte)}' OR dte_mode LIKE 'ARCHIVED%')`
-      : dteFilter
+  // 🚨 include_archived means EVERY prior era, not just the ones someone
+  // remembered to rename.
+  //
+  // The ARCHIVED_* prefix is applied by hand when a bot's strategy is retired,
+  // and it has only ever been applied PARTIALLY. FLAME on 2026-08-18:
+  //
+  //     0DTE (live)  2      2DTE            70   <- invisible
+  //     ARCHIVED_2DTE   30      7DTE         3   <- invisible
+  //     ARCHIVED_7DTE    9      14DTE        3   <- invisible
+  //     ARCHIVED_14DTE   1      1DTE         1   <- invisible
+  //     ARCHIVED_1DTE    1
+  //
+  // 119 closed trades, of which the curve drew 43. The dashboard already asks
+  // for include_archived=1, so the operator sees a chart that silently omits
+  // most of the bot's life and reads as "gaps". SPARK had the same hole for its
+  // 5DTE/7DTE weeks (6 trades).
+  //
+  // A rename is a bookkeeping act; it must not decide whether a real trade
+  // appears in the history. So when the caller asks for archived, pin nothing.
+  const curveDteFilter = includeArchived ? '' : dteFilter
   const curveStatusFilter = includeArchived
     ? `status IN ('closed', 'expired', 'archived_reset')`
     : `status IN ('closed', 'expired')`
   // Predicate identifying the archived side of the union, used both to total the
   // rebase amount and to mark where the live book begins.
-  const archivedPredicate = `(status = 'archived_reset'${dte ? ` OR dte_mode LIKE 'ARCHIVED%'` : ''})`
+  // Anything that is not the CURRENT live mode is a prior era, whether or not
+  // it was ever renamed — the rebase has to cover exactly the rows the widened
+  // filter just let in, or the baseline and the curve disagree.
+  const archivedPredicate = dte
+    ? `(status = 'archived_reset' OR dte_mode <> '${escapeSql(dte)}')`
+    : `(status = 'archived_reset')`
 
   try {
     // Include the counterfactual cumulative P&L so the chart can render a

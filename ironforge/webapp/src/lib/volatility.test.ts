@@ -42,7 +42,7 @@ describe('stanceLabel', () => {
   it('maps known stances', () => {
     expect(stanceLabel('buy_the_bounce')).toBe('Buy the bounce')
     expect(stanceLabel('lean_calls')).toBe('Lean calls')
-    expect(stanceLabel('lean_puts')).toBe('Lean puts')
+    expect(stanceLabel('lean_puts')).toBe('Go short')
     expect(stanceLabel('reduce_risk')).toBe('Cut risk')
     expect(stanceLabel('neutral')).toBe('Neutral')
   })
@@ -452,7 +452,7 @@ describe('formatVolRegime', () => {
       recommendation: { stance: stance as any, conviction: '', rationale: '' },
     })
     expect(formatVolRegime(mk('lean_calls'))).toBe('Exhaustion — lean calls')
-    expect(formatVolRegime(mk('lean_puts'))).toBe('Exhaustion — lean puts')
+    expect(formatVolRegime(mk('lean_puts'))).toBe('Exhaustion — vol expansion / go short')
     expect(formatVolRegime(mk('neutral'))).toBe('Exhaustion — neutral')
   })
 

@@ -1,0 +1,42 @@
+name: MNQ breakout checks
+on:
+  push:
+    branches: [feature/mnq-cash-breakout-v1]
+  pull_request:
+    paths:
+      - 'trading/valor/mnq_breakout*'
+      - 'tests/valor/test_mnq_breakout*'
+      - '.github/workflows/mnq-breakout-check.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile existing execution modules
+        run: python -m compileall -q trading/valor
+      - name: Test isolated breakout modules when present
+        run: |
+          if test -f tests/valor/test_mnq_breakout.py; then
+            python -m unittest discover -s tests/valor -p 'test_mnq_breakout*.py' -v
+          fi
+      - name: Preserve nonsecret implementation source for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: mnq-implementation-source
+          retention-days: 3
+          path: |
+            trading/valor/*.py
+            trading/market_calendar.py
+            scheduler/trader_scheduler.py
+            backend/main.py
+            backend/api/routes/valor_routes.py
+            frontend/src/app/valor/*.tsx
+            requirements-render.txt
+            tests/valor/test_mnq_breakout*.py
+          if-no-files-found: error

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldAlert, Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, PieChart, Zap } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare, LocateFixed } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
+import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
 import ControlsBar from './components/ControlsBar';
 import PnLTable from './components/PnLTable';
@@ -13,10 +14,13 @@ import PositionsPage from './pages/PositionsPage';
 const GexProfilePage = lazy(() => import('./pages/GexProfilePage'));
 const BotDashboard = lazy(() => import('./pages/BotDashboard'));
 const FleetPage = lazy(() => import('./pages/FleetPage'));
-const RiskAdvisorPage = lazy(() => import('./pages/RiskAdvisorPage'));
 const SqueezePage = lazy(() => import('./pages/SqueezePage'));
-const BookRiskPage = lazy(() => import('./pages/BookRiskPage'));
 const TsunamiPage = lazy(() => import('./pages/TsunamiPage'));
+const SqueezeHuntPage = lazy(() => import('./pages/SqueezeHuntPage'));
+const TalonPage = lazy(() => import('./pages/TalonPage'));
+const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
+const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
+const ReflexPage = lazy(() => import('./pages/ReflexPage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -191,9 +195,12 @@ function NavBar() {
           {/* Lands on the fleet overview; deep links to /bots/<id> keep it
               highlighted too. */}
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
-          <RouteBtn to="/risk"            icon={<ShieldAlert size={14} />} label="Risk" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
-          <RouteBtn to="/book-risk"       icon={<PieChart size={14} />} label="Book Risk" />
+          <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
+          <RouteBtn to="/talon"           icon={<LocateFixed size={14} />} label="Talon" />
+          <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
+          <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
+          <RouteBtn to="/reflex"           icon={<ActivitySquare size={14} />} label="Reflex" />
         </nav>
       </div>
 
@@ -399,6 +406,9 @@ export default function App() {
     <BrowserRouter>
       <div className="flex flex-col h-dvh w-full overflow-hidden">
         <NavBar />
+        {/* Mounted once at the shell so every page inherits it — a stale tab
+            is an app-wide condition, not a per-page one. */}
+        <UpdateBanner />
         <Suspense fallback={
           <div className="flex-1 flex items-center justify-center text-text-tertiary text-sm">
             Loading…
@@ -407,9 +417,11 @@ export default function App() {
           <Routes>
             <Route path="/" element={<BuilderPage />} />
             <Route path="/positions" element={<PositionsPage />} />
-            <Route path="/risk" element={<RiskAdvisorPage />} />
             <Route path="/squeeze" element={<SqueezePage />} />
-            <Route path="/book-risk" element={<BookRiskPage />} />
+            <Route path="/squeeze-hunt" element={<SqueezeHuntPage />} />
+            <Route path="/talon" element={<TalonPage />} />
+            <Route path="/wall-scanner" element={<WallScannerPage />} />
+            <Route path="/opportunity" element={<OpportunityPage />} />
             <Route path="/gex-profile" element={<GexProfilePage />} />
             {/* /bots is the fleet overview — every bot as its own card. It used
                 to redirect straight to /bots/surge, which meant there was no
@@ -418,6 +430,7 @@ export default function App() {
             <Route path="/bots" element={<FleetPage />} />
             <Route path="/bots/:bot" element={<BotDashboard />} />
             <Route path="/tsunami" element={<TsunamiPage />} />
+            <Route path="/reflex" element={<ReflexPage />} />
           </Routes>
         </Suspense>
       </div>

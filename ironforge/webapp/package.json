@@ -13,7 +13,11 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "^3.1.0",
+    "@stripe/react-stripe-js": "^7.0.0",
+    "@stripe/stripe-js": "^10.0.0",
     "bcryptjs": "^3.0.3",
+    "geist": "^1.7.2",
     "iron-session": "^8.0.4",
     "next": "14.2.21",
     "pg": "^8.13.0",

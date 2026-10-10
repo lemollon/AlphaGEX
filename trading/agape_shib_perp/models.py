@@ -60,9 +60,10 @@ class AgapeShibPerpConfig:
 
     # Risk management
     starting_capital: float = 1000.0    # $1K starting capital (meme coin allocation)
-    risk_per_trade_pct: float = 5.0     # 5% risk per trade
+    risk_per_trade_pct: float = 2.0     # 5% risk per trade
     max_quantity: float = 100000000.0   # Max SHIB per trade (100M)
-    max_open_positions: int = 2         # Conservative for meme coin
+    # One position at a time: the weekly-breakout backtest never stacks.
+    max_open_positions: int = 1
 
     # Position sizing - Perpetual contract specs (quantity-based)
     default_quantity: float = 1000000.0  # 1,000,000 SHIB default trade size
@@ -85,12 +86,29 @@ class AgapeShibPerpConfig:
     no_loss_profit_target_pct: float = 0.0
 
     # Stop-and-Reverse (SAR) Strategy
-    use_sar: bool = True
+    use_sar: bool = False
     sar_trigger_pct: float = 1.5
     sar_mfe_threshold_pct: float = 0.3
 
     # Regime-aware exits feature flag (default off — current behaviour preserved).
     use_regime_aware_exits: bool = False
+
+    # Entry/exit engine: H=3 daily fade + trailing-lock target + rally
+    # circuit breaker (trading/perp_strategies/fade_lock_breaker.py), PAPER
+    # research per round9_lock_breaker Test B (PF 2.31/n=97 walk-forward
+    # 2022-07->2026-09; see that module's docstring for the full disclosed
+    # caveats -- post-hoc combination, thin lag margin, doesn't travel to
+    # alts). "weekly_breakout" (168h breakout + ATR stop/trail, Asia/EU
+    # session only) remains available and is still the default for every
+    # other AGAPE perp coin; unfiltered SHIB breakouts were ~flat there.
+    # "combined_signal" = legacy.
+    strategy_mode: str = "fade_lock_breaker"
+    wb_lookback_hours: int = 168
+    wb_stop_atr: float = 2.5
+    wb_trail_atr: float = 2.0
+    wb_max_hold_hours: int = 72
+    wb_session_start_utc: int = 22
+    wb_session_hours: int = 12
     # Optional per-regime profile overrides; stored as JSON strings in
     # autonomous_config and parsed by get_chop_profile/get_trend_profile below.
     exit_profile_chop_json: Optional[str] = None
@@ -102,7 +120,18 @@ class AgapeShibPerpConfig:
     force_exit: str = ""               # No forced exit - perpetual
 
     # Signal thresholds - AGGRESSIVE
-    min_confidence: str = "LOW"
+    min_confidence: str = "MEDIUM"
+    allow_range_bound_entries: bool = False
+    allow_wait_fallback_entries: bool = False
+    # CoinGlass-outage relief valve: when funding/L-S/OI/taker data is dead
+    # (funding_regime == "UNKNOWN"), the combined signal can still carry a
+    # LOW-confidence LONG/SHORT call from Deribit GEX or price momentum
+    # (see crypto_data_provider._calculate_combined_signal). This flag lets
+    # the PAPER path trade that call instead of WAITing on LOW_CONFIDENCE.
+    # Confidence label is never inflated; reasoning is tagged
+    # DEGRADED_NO_COINGLASS so these scans/positions can be excluded from
+    # live-data stats. Never applies when mode=LIVE, regardless of value.
+    allow_degraded_data_trades: bool = True
     min_funding_rate_signal: float = 0.001
     min_ls_ratio_extreme: float = 1.1
     min_liquidation_proximity_pct: float = 5.0
@@ -127,7 +156,7 @@ class AgapeShibPerpConfig:
     def load_from_db(cls, db) -> "AgapeShibPerpConfig":
         """Load config from database, falling back to defaults."""
         config = cls()
-        code_controlled_keys = {"cooldown_minutes", "max_open_positions"}
+        code_controlled_keys = {"cooldown_minutes", "max_open_positions", "risk_per_trade_pct", "min_confidence", "use_sar", "allow_range_bound_entries", "allow_wait_fallback_entries", "allow_degraded_data_trades", "strategy_mode", "wb_lookback_hours", "wb_stop_atr", "wb_trail_atr", "wb_max_hold_hours", "wb_session_start_utc", "wb_session_hours"}
         try:
             db_config = db.load_config()
             if db_config:

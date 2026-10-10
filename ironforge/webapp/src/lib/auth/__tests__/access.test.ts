@@ -14,6 +14,18 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/signup')).toBe(true)
     expect(isPublicPath('/api/auth/signup')).toBe(true)
   })
+  it('treats the Google one-time consent screen and its completion API as public (no session exists yet)', () => {
+    expect(isPublicPath('/signup/google-consent')).toBe(true)
+    expect(isPublicPath('/api/auth/google/complete-signup')).toBe(true)
+    expect(
+      decideAccess({
+        pathname: '/signup/google-consent',
+        isApi: false,
+        hasSession: false,
+        hasServiceToken: false,
+      }),
+    ).toBe('allow')
+  })
   it('treats the pricing page as public', () => {
     expect(isPublicPath('/pricing')).toBe(true)
   })
@@ -22,6 +34,12 @@ describe('isPublicPath', () => {
   })
   it('treats the resend-verification endpoint as public', () => {
     expect(isPublicPath('/api/auth/resend-verification')).toBe(true)
+  })
+  it('treats the page-view tracking beacon as public (anonymous visitors have no session)', () => {
+    expect(isPublicPath('/api/track')).toBe(true)
+    expect(decideAccess({ pathname: '/api/track', isApi: true, hasSession: false, hasServiceToken: false })).toBe(
+      'allow',
+    )
   })
   it('treats operator pages and bot routes as non-public', () => {
     // NB: '/' IS public — it is the marketing homepage. This assertion used to
@@ -62,6 +80,13 @@ describe('isCustomerPath', () => {
 })
 
 describe('decideAccess', () => {
+  it('lets an anonymous visitor reach enrollment step 1 (/enroll/account) but not later steps', () => {
+    const base = { isApi: false, hasSession: false, hasCustomerSession: false, hasServiceToken: false }
+    expect(decideAccess({ ...base, pathname: '/enroll/account' })).toBe('allow')
+    expect(decideAccess({ ...base, pathname: '/enroll/legal' })).toBe('redirect-customer-login')
+    expect(decideAccess({ ...base, pathname: '/enroll' })).toBe('redirect-customer-login')
+  })
+
   const base = { pathname: '/spark', isApi: false, hasSession: false, hasServiceToken: false }
   it('allows when a valid service token is present', () => {
     expect(decideAccess({ ...base, isApi: true, pathname: '/api/spark/status', hasServiceToken: true })).toBe('allow')
@@ -157,7 +182,10 @@ describe('mobile bearer access', () => {
 
   it('does NOT open the operator surface', () => {
     // The failure mode this pins: a customer token reaching bot control or account CRUD.
-    for (const p of ['/api/spark/status', '/api/accounts/manage', '/api/scanner/status']) {
+    // /api/scanner/status is deliberately excluded here — it was made PUBLIC_EXACT
+    // (see access.ts) so Render's unauthenticated health check can reach it, so a
+    // bearer token reaching it is no longer a meaningful test of this guard.
+    for (const p of ['/api/spark/status', '/api/accounts/manage']) {
       expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('unauthorized')
     }
     expect(decideAccess({ ...base, isApi: false, pathname: '/spark', hasBearerCustomer: true }))

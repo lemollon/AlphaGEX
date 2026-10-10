@@ -7,7 +7,9 @@
  */
 import { knowledgeContext } from './knowledge'
 
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'support@ironforge.trade'
+import { supportEmail } from '@/lib/support-address'
+
+const SUPPORT_EMAIL = supportEmail()
 
 export function buildSparkySystemPrompt(opts: { loggedIn: boolean; firstName?: string | null }): string {
   const who = opts.firstName ? `The signed-in customer's name is ${opts.firstName}.` : ''

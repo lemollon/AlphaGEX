@@ -64,6 +64,22 @@ describe('POST /api/auth/resend-verification', () => {
     expect((sendVerificationEmail as any).mock.calls[0][0].to).toBe('ada@b.com')
   })
 
+  it('rotates both the link token and the 6-digit code on resend', async () => {
+    ;(customerQuery as any).mockResolvedValue([
+      { id: 'u1', first_name: 'Ada', email_verified: false },
+    ])
+    const res = await POST(post({ email: 'ada@b.com' }))
+    expect(res.status).toBe(200)
+    const tokenInsert = (customerExecute as any).mock.calls.find((c: any[]) =>
+      /INSERT INTO email_verification_tokens/i.test(String(c[0])),
+    )
+    expect(tokenInsert).toBeTruthy()
+    expect(String(tokenInsert[0])).toContain('code_hash')
+    expect(String(tokenInsert[0])).toContain('code_expires_at')
+    const emailCall = (sendVerificationEmail as any).mock.calls[0][0]
+    expect(emailCall.code).toMatch(/^\d{6}$/)
+  })
+
   it('does nothing for an already-verified user but still returns ok', async () => {
     ;(customerQuery as any).mockResolvedValue([
       { id: 'u1', first_name: 'Ada', email_verified: true },

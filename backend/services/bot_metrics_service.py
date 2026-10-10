@@ -333,6 +333,36 @@ class BotMetricsService:
             tradier_balance = tradier_data.get('total_equity', 0)
             # Note: tradier_balance is current equity (starting + P&L), not starting capital
 
+        # 2.5 VALOR-specific: DEFAULT_CAPITAL[VALOR] is a stale single-instrument
+        # figure (100000) left over from before VALOR traded multiple futures
+        # tickers. VALOR's own valor_paper_account table is the real source of
+        # truth for its (multi-instrument) starting capital - e.g. $600,000 for
+        # 6 tickers x $100k each. Without this, /api/metrics/valor/summary
+        # reports starting_capital=$100,000 next to an equity/return that are
+        # both correctly computed off the real $600,000 base elsewhere (VALOR's
+        # own /status endpoint), producing an inconsistent "equity $596,484
+        # from $100,000" display on the frontend.
+        if starting_capital is None and bot == BotName.VALOR:
+            conn = self._get_connection()
+            if conn:
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT starting_capital FROM valor_paper_account "
+                        "WHERE is_active = TRUE ORDER BY id DESC LIMIT 1"
+                    )
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        valor_capital = float(row[0])
+                        if valor_capital > 0:
+                            starting_capital = valor_capital
+                            capital_source = 'valor_paper_account'
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"VALOR paper account capital lookup failed: {e}")
+                    if conn:
+                        conn.close()
+
         # 3. Fall back to default
         if starting_capital is None:
             starting_capital = self.DEFAULT_CAPITAL[bot]

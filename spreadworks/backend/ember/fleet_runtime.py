@@ -1,0 +1,691 @@
+"""Durable Render scheduler for EMBER's non-XSP strategy fleet.
+
+Every strategy keeps its original decision logic.  This layer supplies a
+Render clock, persistent state hydration/mirroring, cross-process locking,
+and a fail-closed live gate.  A migrated state snapshot is required before a
+strategy may place orders; an empty first boot is never treated as proof that
+the broker is flat.
+"""
+
+from __future__ import annotations
+
+import base64
+import gzip
+import hashlib
+import json
+import logging
+import os
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable
+from zoneinfo import ZoneInfo
+
+from sqlalchemy import text as sa_text
+
+from ..db import SessionLocal
+from . import runtime as xsp_runtime
+from . import xsp_flow_live
+from .legacy import call_diag, divhike, night_shift, spike, tv_book
+
+
+logger = logging.getLogger("spreadworks.ember.fleet")
+CT = ZoneInfo("America/Chicago")
+# 2026-09-28 root-cause note: night_shift, astra3-live, call_diag, and the
+# XSP flow are each scheduled roughly once a minute during market hours and
+# all serialize on the single "ember-fleet:agent-runtime" advisory lock
+# (tv_book's scanner subprocess runs BEFORE it takes this lock, so it was
+# ruled out). Each of those cycles' own Claude/MCP broker call is allowed to
+# run up to 540-600s (xsp_flow_live.AGENT_TIMEOUT_SECONDS, call_diag/
+# night_shift's own subprocess timeout=600) before it releases the lock. A
+# 600s wait budget is not enough headroom if two of those cycles stack
+# back-to-back (up to ~1200s) during a slow patch (MCP/broker latency),
+# which is what produced the "shared broker runner busy; lock wait expired"
+# cluster on 9/25 13:42Z. Raised to give a two-deep queue room to clear
+# without weakening fail-closed behavior -- a genuine extended outage still
+# times out and reports BLOCKED, just after longer, more realistic patience.
+BROKER_LOCK_WAIT_SECONDS = 25 * 60
+
+
+@dataclass(frozen=True)
+class StrategySpec:
+    name: str
+    env_prefix: str
+    state_path: Path
+    log_path: Path
+    default_state: dict[str, Any]
+    runner: Callable[[datetime, Any, str | None], int]
+    config_loader: Callable[[], Any]
+    required_any: tuple[tuple[str, ...], ...] = ()
+    aliases: tuple[str, ...] = ()
+
+    @property
+    def state_key(self) -> str:
+        return f"ember.{self.name}.state"
+
+    @property
+    def status_key(self) -> str:
+        return f"ember.{self.name}.status"
+
+    @property
+    def enabled_env(self) -> str:
+        return f"EMBER_{self.env_prefix}_ENABLED"
+
+    @property
+    def live_env(self) -> str:
+        return f"EMBER_{self.env_prefix}_LIVE"
+
+    @property
+    def seed_env(self) -> str:
+        return f"EMBER_{self.env_prefix}_STATE_B64"
+
+    @property
+    def seed_key(self) -> str:
+        return f"ember.{self.name}.seed_applied"
+
+    @property
+    def preflight_key(self) -> str:
+        return f"ember.{self.name}.preflight"
+
+
+def _tick_runner(module: Any) -> Callable[[datetime, Any, str | None], int]:
+    def run(now: datetime, cfg: Any, mode: str | None) -> int:
+        return int(module.tick(
+            now,
+            cfg,
+            forced_mode=mode,
+            force_rerun=bool(mode == "RECONCILE" and cfg.dry_run),
+        ))
+    return run
+
+
+def _spike_runner(now: datetime, cfg: Any, mode: str | None) -> int:
+    if mode == "PREFLIGHT":
+        return _broker_preflight("spike", spike.ACCOUNT, spike.HERE / "preflight.log")
+    if mode == "MANAGE":
+        return int(spike.run_manage(now, cfg))
+    return int(spike.run_enter(now, cfg))
+
+
+SPECS: dict[str, StrategySpec] = {
+    "call_diag": StrategySpec(
+        "call_diag", "CALLDIAG", call_diag.ORDER_STATE, call_diag.LOG_TXT,
+        {"positions": [], "legs": {}}, _tick_runner(call_diag), call_diag.load_cfg,
+    ),
+    "night_shift": StrategySpec(
+        "night_shift", "NIGHT", night_shift.ORDER_STATE, night_shift.LOG_TXT,
+        {"position": None}, _tick_runner(night_shift), night_shift.load_cfg,
+    ),
+    "divhike": StrategySpec(
+        "divhike", "DIVHIKE", divhike.ORDER_STATE, divhike.LOG_TXT,
+        {"positions": {}}, _tick_runner(divhike), divhike.load_cfg,
+        required_any=(("POLYGON_API_KEY",),),
+    ),
+    "tv_book": StrategySpec(
+        "tv_book", "TVBOOK", tv_book.ORDER_STATE, tv_book.LOG_TXT,
+        {"positions": [], "in_flight": {}}, _tick_runner(tv_book), tv_book.load_cfg,
+        required_any=(("TV_API_KEY", "TRADING_VOLATILITY_API_KEY"),
+                      ("THETADATA_BASE_URL", "TRADIER_TOKEN")),
+        aliases=("rr", "bounce"),
+    ),
+    "spike": StrategySpec(
+        "spike", "SPIKE", spike.STATE_FILE, spike.LOG_TXT,
+        {"positions": [], "seen": {}, "shadow": [], "tape_prev": {}},
+        _spike_runner, spike.load_cfg,
+        # ThetaData is SPIKE's ONLY live market-data source (2026-09-28 --
+        # Polygon's fallback dropped entirely, see spike-data-fix-result-9-28.md:
+        # this account's plan 403s on live snapshot/current-minute data, so it
+        # could never actually cover a ThetaData gap). POLYGON_API_KEY is no
+        # longer a substitute here -- do not add it back to this tuple.
+        required_any=(("THETADATA_BASE_URL",), ("SPIKE_UNIVERSE",)),
+    ),
+}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _acquire_lock(name: str, *, wait_seconds: float = 0) -> Any | None:
+    if SessionLocal is None:
+        raise xsp_runtime.EmberRuntimeError("DATABASE_URL is unavailable")
+    db = SessionLocal()
+    deadline = time.monotonic() + max(0, wait_seconds)
+    try:
+        while True:
+            acquired = db.execute(
+                sa_text("SELECT pg_try_advisory_lock(hashtext(:name))"),
+                {"name": f"ember-fleet:{name}"},
+            ).scalar_one()
+            if acquired:
+                return db
+            if time.monotonic() >= deadline:
+                db.close()
+                return None
+            time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
+    except Exception:
+        db.close()
+        raise
+
+
+def _release_lock(db: Any, name: str) -> None:
+    try:
+        db.execute(
+            sa_text("SELECT pg_advisory_unlock(hashtext(:name))"),
+            {"name": f"ember-fleet:{name}"},
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("[EMBER:%s] advisory unlock failed", name)
+    finally:
+        db.close()
+
+
+def _decode_seed(value: str, spec: StrategySpec) -> dict[str, Any]:
+    try:
+        raw = base64.b64decode(value, validate=True)
+        if raw[:2] == b"\x1f\x8b":
+            raw = gzip.decompress(raw)
+        payload = json.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise xsp_runtime.EmberRuntimeError(
+            f"{spec.seed_env} is malformed"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise xsp_runtime.EmberRuntimeError(f"{spec.seed_env} must contain a JSON object")
+    return payload
+
+
+def _is_empty_state_value(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == {}
+
+
+def _merge_seed_state(
+    spec: StrategySpec,
+    seed: dict[str, Any],
+    existing: dict[str, Any] | None,
+    source_name: str,
+) -> dict[str, Any]:
+    """Merge harmless post-boot metadata without losing migrated ownership."""
+    if existing is None or existing == spec.default_state:
+        return dict(seed)
+    merged = dict(seed)
+    for key, current in existing.items():
+        if key not in merged:
+            merged[key] = current
+            continue
+        migrated = merged[key]
+        if current == migrated:
+            continue
+        default = spec.default_state.get(key)
+        if current == default or _is_empty_state_value(current):
+            continue
+        if migrated == default or _is_empty_state_value(migrated):
+            merged[key] = current
+            continue
+        raise xsp_runtime.EmberRuntimeError(
+            f"{spec.name} {source_name} state conflicts with migration seed"
+        )
+    return merged
+
+
+def _hydrate(spec: StrategySpec) -> str:
+    disk_state: dict[str, Any] | None = None
+    if spec.state_path.exists():
+        try:
+            loaded = json.loads(spec.state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} disk state is malformed"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} disk state must contain a JSON object"
+            )
+        disk_state = loaded
+
+    raw = xsp_runtime._config_get(spec.state_key)
+    database_state: dict[str, Any] | None = None
+    if raw:
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} database state is malformed"
+            ) from exc
+        if not isinstance(loaded, dict):
+            raise xsp_runtime.EmberRuntimeError(
+                f"{spec.name} database state must contain a JSON object"
+            )
+        database_state = loaded
+
+    seed_text = os.getenv(spec.seed_env, "").strip()
+    if seed_text:
+        seed = _decode_seed(seed_text, spec)
+        digest = hashlib.sha256(
+            json.dumps(seed, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        ).hexdigest()
+        applied = xsp_runtime._config_get(spec.seed_key)
+        if applied != digest:
+            state = _merge_seed_state(spec, seed, disk_state, "disk")
+            state = _merge_seed_state(spec, state, database_state, "database")
+            xsp_runtime._atomic_json(spec.state_path, state)
+            xsp_runtime._config_put(
+                spec.state_key,
+                json.dumps(state, separators=(",", ":"), default=str),
+            )
+            xsp_runtime._config_put(spec.seed_key, digest)
+            return "seed"
+
+    if disk_state is not None:
+        return "disk"
+    if database_state is not None:
+        state = database_state
+        source = "database"
+    else:
+        state = spec.default_state
+        source = "fresh_empty"
+    xsp_runtime._atomic_json(spec.state_path, state)
+    return source
+
+
+def _last_line(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    return lines[-1] if lines else ""
+
+
+def _redact(text: str) -> str:
+    text = re.sub(r"account[=: ]+\d+", "account=***2331", text, flags=re.I)
+    text = re.sub(r"(?i)(?:order_id|long_order|short_order|entry_order_id)=\S+", "order=[redacted]", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key|token)=([^&\s]+)",
+        r"\1=[redacted]",
+        text,
+    )
+    return text[-800:]
+
+
+def _dependency_gaps(spec: StrategySpec) -> list[str]:
+    gaps = []
+    for alternatives in spec.required_any:
+        if not any(os.getenv(name, "").strip() for name in alternatives):
+            gaps.append("|".join(alternatives))
+    return gaps
+
+
+def _validate_live(spec: StrategySpec, live: bool, hydrate_source: str) -> None:
+    xsp_runtime._validate_runtime(live)
+    gaps = _dependency_gaps(spec)
+    if gaps:
+        raise xsp_runtime.EmberRuntimeError(
+            f"missing required cloud data environment: {', '.join(gaps)}"
+        )
+    if live and hydrate_source == "fresh_empty":
+        raise xsp_runtime.EmberRuntimeError(
+            "live blocked: no migrated strategy-owned state snapshot"
+        )
+
+
+def _forced_cfg(spec: StrategySpec, live: bool) -> Any:
+    cfg = spec.config_loader()
+    return replace(cfg, armed=live, dry_run=not live)
+
+
+def _mirror(spec: StrategySpec, mode: str, rc: int, source: str) -> None:
+    state = spec.state_path.read_text(encoding="utf-8")
+    parsed = json.loads(state)
+    xsp_runtime._config_put(spec.state_key, json.dumps(parsed, separators=(",", ":"), default=str))
+    xsp_runtime._config_put(
+        spec.status_key,
+        json.dumps({
+            "strategy": spec.name,
+            "configured_live": _env_bool(spec.live_env),
+            "mode": mode,
+            "return_code": rc,
+            "updated_at": datetime.now(CT).isoformat(),
+            "last_log": _redact(_last_line(spec.log_path)),
+            "hydrate_source": source,
+            "dependency_gaps": _dependency_gaps(spec),
+        }, separators=(",", ":")),
+    )
+
+
+def _record_blocked(spec: StrategySpec, mode: str, exc: Exception) -> None:
+    try:
+        xsp_runtime._config_put(
+            spec.status_key,
+            json.dumps({
+                "strategy": spec.name,
+                "configured_live": _env_bool(spec.live_env),
+                "mode": mode,
+                "return_code": 2,
+                "updated_at": datetime.now(CT).isoformat(),
+                "last_log": _redact(f"BLOCKED {type(exc).__name__}: {exc}"),
+                "dependency_gaps": _dependency_gaps(spec),
+            }, separators=(",", ":")),
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("[EMBER:%s] failed to persist blocked status", spec.name)
+
+
+def _run(
+    name: str,
+    mode: str | None = None,
+    *,
+    scan_tv: bool = False,
+    agent_wait_seconds: float = 0,
+) -> None:
+    spec = SPECS[name]
+    if not _env_bool(spec.enabled_env):
+        return
+    lock_db = _acquire_lock(name)
+    if lock_db is None:
+        logger.info("[EMBER:%s] skipped overlapping cycle", name)
+        return
+    label = mode or "AUTO"
+    try:
+        source = _hydrate(spec)
+        live = _env_bool(spec.live_env)
+        _validate_live(spec, live, source)
+        cfg = _forced_cfg(spec, live)
+        if scan_tv:
+            _run_tv_scanner()
+        agent_lock = _acquire_lock("agent-runtime", wait_seconds=agent_wait_seconds)
+        if agent_lock is None:
+            raise xsp_runtime.EmberRuntimeError(
+                "shared broker runner busy; lock wait expired"
+            )
+        try:
+            rc = spec.runner(datetime.now(CT), cfg, mode)
+        finally:
+            _release_lock(agent_lock, "agent-runtime")
+        _mirror(spec, label, rc, source)
+        logger.info("[EMBER:%s] mode=%s live=%s rc=%s", name, label, int(live), rc)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[EMBER:%s] cycle blocked: %s: %s",
+            name,
+            type(exc).__name__,
+            _redact(str(exc)),
+        )
+        _record_blocked(spec, label, exc)
+    finally:
+        _release_lock(lock_db, name)
+
+
+def _run_tv_scanner() -> None:
+    output = tv_book.HERE / "scanner-output.log"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [sys.executable, "-m", "backend.ember.legacy.tv_scanner", "--live"]
+    with output.open("a", encoding="utf-8") as stream:
+        result = subprocess.run(
+            cmd,
+            cwd=str(Path(__file__).resolve().parents[2]),
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=25 * 60,
+            check=False,
+        )
+    if result.returncode:
+        raise xsp_runtime.EmberRuntimeError(
+            f"TradingVolatility scanner exited {result.returncode}"
+        )
+
+
+def _broker_preflight(name: str, account: str, output: Path) -> int:
+    """Verify Claude+Robinhood connectivity without supplying any order tool."""
+    home = xsp_runtime._prepare_claude_home()
+    del home
+    output.parent.mkdir(parents=True, exist_ok=True)
+    bundled = Path(__file__).resolve().parents[2] / "frontend" / "node_modules" / ".bin" / "claude"
+    prompt = (
+        f"Read-only preflight for EMBER {name}. Call get_accounts and confirm account "
+        f"{account} is present, then call get_equity_positions and get_option_positions. "
+        "Do not place, cancel, import, or modify anything. Print one line beginning PREFLIGHT OK "
+        "or PREFLIGHT BLOCKED and never print full account or order identifiers."
+    )
+    tools = [
+        "mcp__robinhood-trading__get_accounts",
+        "mcp__robinhood-trading__get_equity_positions",
+        "mcp__robinhood-trading__get_option_positions",
+    ]
+    result = subprocess.run(
+        xsp_flow_live.build_claude_command(bundled, tools),
+        cwd=str(output.parent), input=prompt, stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT, text=True, timeout=180,
+        env=xsp_flow_live.read_secret_environment(), check=False,
+    )
+    transcript = result.stdout or ""
+    claude_ok = int(result.returncode) == 0
+    broker_ok = bool(re.search(r"(?im)^PREFLIGHT OK\b", transcript))
+    rc = 0 if claude_ok and broker_ok else 2
+    verdict = "PREFLIGHT OK" if rc == 0 else "PREFLIGHT BLOCKED"
+    with output.open("a", encoding="utf-8") as stream:
+        stream.write(transcript)
+        if transcript and not transcript.endswith("\n"):
+            stream.write("\n")
+        stream.write(f"{datetime.now(CT).isoformat()} | {name} | {verdict}\n")
+    return rc
+
+
+def _record_preflight(spec: StrategySpec, rc: int, result: str) -> None:
+    xsp_runtime._config_put(
+        spec.preflight_key,
+        json.dumps({
+            "strategy": spec.name,
+            "return_code": int(rc),
+            "checked_at": datetime.now(CT).isoformat(),
+            "result": _redact(result),
+        }, separators=(",", ":")),
+    )
+
+
+def run_preflight(name: str) -> None:
+    """Run a read-only broker check without replaying or replacing bot status."""
+    spec = SPECS[name]
+    if not _env_bool(spec.enabled_env):
+        return
+    lock_db = _acquire_lock(name)
+    if lock_db is None:
+        _record_preflight(spec, 2, "PREFLIGHT BLOCKED strategy cycle already running")
+        return
+    try:
+        agent_lock = _acquire_lock("agent-runtime", wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+        if agent_lock is None:
+            raise xsp_runtime.EmberRuntimeError(
+                "shared broker runner busy; preflight lock wait expired"
+            )
+        output = spec.log_path.parent / "preflight.log"
+        accounts = {
+            "call_diag": call_diag.ACCOUNT,
+            "night_shift": night_shift.ACCOUNT,
+            "divhike": divhike.ACCOUNT,
+            "tv_book": tv_book.ACCOUNT,
+            "spike": spike.ACCOUNT,
+        }
+        try:
+            rc = _broker_preflight(name, accounts[name], output)
+        finally:
+            _release_lock(agent_lock, "agent-runtime")
+        _record_preflight(spec, rc, _last_line(output))
+    except Exception as exc:  # noqa: BLE001
+        logger.error(
+            "[EMBER:%s] broker preflight blocked: %s: %s",
+            name,
+            type(exc).__name__,
+            _redact(str(exc)),
+        )
+        _record_preflight(spec, 2, f"PREFLIGHT BLOCKED {type(exc).__name__}: {exc}")
+    finally:
+        _release_lock(lock_db, name)
+
+
+def run_fleet_preflights() -> None:
+    """Run one startup broker check and publish it to every enabled strategy."""
+    enabled = [spec for spec in SPECS.values() if _env_bool(spec.enabled_env)]
+    if not enabled:
+        return
+    agent_lock = _acquire_lock("agent-runtime", wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+    if agent_lock is None:
+        for spec in enabled:
+            _record_preflight(spec, 2, "PREFLIGHT BLOCKED shared broker runner busy")
+        return
+    output = enabled[0].log_path.parent / "fleet-preflight.log"
+    try:
+        try:
+            rc = _broker_preflight("fleet", call_diag.ACCOUNT, output)
+            result = _last_line(output)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[EMBER:fleet] broker preflight blocked: %s: %s",
+                type(exc).__name__,
+                _redact(str(exc)),
+            )
+            rc = 2
+            result = f"PREFLIGHT BLOCKED {type(exc).__name__}: {exc}"
+        for spec in enabled:
+            _record_preflight(spec, rc, result)
+    finally:
+        _release_lock(agent_lock, "agent-runtime")
+
+
+def run_call_diag() -> None:
+    _run("call_diag", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+
+
+def run_night_shift() -> None:
+    _run("night_shift", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+
+
+def run_divhike() -> None:
+    _run("divhike", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+
+
+def run_tv_book() -> None:
+    _run(
+        "tv_book",
+        scan_tv=True,
+        agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS,
+    )
+
+
+def run_spike_enter() -> None:
+    _run("spike", "ENTER", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+
+
+def run_spike_manage() -> None:
+    _run("spike", "MANAGE", agent_wait_seconds=BROKER_LOCK_WAIT_SECONDS)
+
+
+def _state_count(name: str, state: Any) -> int:
+    if not isinstance(state, dict):
+        return 0
+    if name == "night_shift":
+        return int(bool(state.get("position")))
+    positions = state.get("position") if name == "night_shift" else state.get("positions")
+    if isinstance(positions, dict):
+        return len(positions)
+    if isinstance(positions, list):
+        return sum(1 for p in positions if isinstance(p, dict) and p.get("state") != "closed")
+    return int(bool(positions))
+
+
+def read_status() -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for name, spec in SPECS.items():
+        raw = xsp_runtime._config_get(spec.status_key)
+        state_raw = xsp_runtime._config_get(spec.state_key)
+        preflight_raw = xsp_runtime._config_get(spec.preflight_key)
+        try:
+            status = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            status = {"last_log": "BLOCKED malformed status row", "return_code": 2}
+        try:
+            state = json.loads(state_raw) if state_raw else {}
+        except json.JSONDecodeError:
+            state = {}
+        try:
+            preflight = json.loads(preflight_raw) if preflight_raw else {}
+        except json.JSONDecodeError:
+            preflight = {
+                "return_code": 2,
+                "result": "PREFLIGHT BLOCKED malformed preflight row",
+            }
+        dependency_gaps = status.get("dependency_gaps", _dependency_gaps(spec))
+        configured_live = _env_bool(spec.live_env)
+        last_return_code = status.get("return_code")
+        preflight_return_code = preflight.get("return_code")
+        base = {
+            "enabled": _env_bool(spec.enabled_env),
+            "configured_live": configured_live,
+            "runtime": "render",
+            "last_run_at": status.get("updated_at"),
+            "last_mode": status.get("mode"),
+            "last_return_code": last_return_code,
+            "last_result": _redact(str(status.get("last_log", "not run"))),
+            "state_source": status.get("hydrate_source"),
+            "dependency_gaps": dependency_gaps,
+            "open_position_count": _state_count(name, state),
+            "broker_preflight_at": preflight.get("checked_at"),
+            "broker_preflight_return_code": preflight_return_code,
+            "broker_preflight_result": _redact(str(preflight.get("result", "not run"))),
+            "ready_to_trade": bool(
+                _env_bool(spec.enabled_env)
+                and configured_live
+                and not dependency_gaps
+                and last_return_code == 0
+                and preflight_return_code == 0
+            ),
+        }
+        names = spec.aliases or (name,)
+        result.extend([{"strategy": alias, **base} for alias in names])
+    return result
+
+
+def register(scheduler: Any) -> None:
+    """Register enabled fleet jobs on the existing single Render service."""
+    enabled = [name for name, spec in SPECS.items() if _env_bool(spec.enabled_env)]
+    for name, spec in SPECS.items():
+        if not _env_bool(spec.enabled_env):
+            logger.info("[EMBER:%s] module disabled", name)
+    if enabled:
+        scheduler.add_job(
+            run_fleet_preflights, "date",
+            run_date=datetime.now(CT) + timedelta(seconds=75),
+            id="ember_fleet_preflight", replace_existing=True, max_instances=1,
+            misfire_grace_time=15 * 60,
+        )
+
+    jobs = [
+        ("night_shift", run_night_shift, {"hour": "8-9,14-15", "minute": "*", "second": "0"}),
+        ("spike_enter", run_spike_enter, {"hour": "8-15", "minute": "0,15,30,45", "second": "10"}),
+        ("spike_manage", run_spike_manage, {"hour": "14", "minute": "45", "second": "10"}),
+        ("call_diag", run_call_diag, {"hour": "8-15", "minute": "*", "second": "20"}),
+        ("divhike", run_divhike, {"hour": "8,15", "minute": "10,33,55-59", "second": "30"}),
+        ("tv_book", run_tv_book, {"hour": "8-16", "minute": "5,35", "second": "40"}),
+    ]
+    for job_name, func, cron in jobs:
+        spec_name = "spike" if job_name.startswith("spike_") else job_name
+        if not _env_bool(SPECS[spec_name].enabled_env):
+            continue
+        scheduler.add_job(
+            func, "cron", day_of_week="mon-fri", timezone="America/Chicago",
+            id=f"ember_{job_name}_cycle", replace_existing=True, max_instances=1,
+            coalesce=True, misfire_grace_time=60, **cron,
+        )
+        logger.warning(
+            "[EMBER:%s] registered configured_live=%s",
+            job_name, int(_env_bool(SPECS[spec_name].live_env)),
+        )

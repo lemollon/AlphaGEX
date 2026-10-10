@@ -68,10 +68,14 @@ export default function CheckoutNotice({ labels }: { labels?: Record<string, str
         </p>
         <p className="mt-0.5 text-xs leading-relaxed text-gray-400">
           {isWelcome
-            ? // Named explicitly because the webhook may not have landed yet, and a
+            ? notice.what === 'community'
+              // Community is free (2026-10-05) — there is no payment, no webhook lag to
+              // cover here, just the entitlement row this page just wrote.
+              ? "You're in — Community is free, no payment needed."
+              // Named explicitly because the webhook may not have landed yet, and a
               // customer reading "you own nothing" right after paying will assume the
               // payment failed.
-              'Payment received. If this page has not caught up yet, give it a few seconds and refresh.'
+              : 'Payment received. If this page has not caught up yet, give it a few seconds and refresh.'
             : 'No payment was taken and nothing changed. You can pick up where you left off whenever you like.'}
         </p>
       </div>

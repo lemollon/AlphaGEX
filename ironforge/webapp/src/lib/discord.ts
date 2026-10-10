@@ -36,6 +36,11 @@ const COLOR_STATS = 0x1f2937 // slate
 const WEBHOOK_USERNAME = 'FLAME · IronForge'
 const WEBHOOK_AVATAR = 'https://em-content.zobj.net/source/microsoft-teams/337/fire_1f525.png'
 
+// Actual IronForge brand mark (public/forge-logo-mark.png), served from the
+// production customer domain so Discord can fetch it. Used for ops-identity
+// posts (postOpsAlert) instead of an emoji character in the author name.
+const IRONFORGE_ICON_URL = 'https://ironforge.trade/forge-logo-mark.png'
+
 function nowIso(): string {
   return new Date().toISOString()
 }
@@ -480,6 +485,59 @@ export async function postFlameTest(): Promise<boolean> {
   const statsEmbed = buildStatsEmbed(stats, true)
   statsEmbed.author = { name: '📊 FLAME · Current Performance' }
   return postEmbeds([banner, statsEmbed])
+}
+
+/* ------------------------------------------------------------------ */
+/*  Ops alerts — the watchdog and the "has not traded" heartbeat        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 🚨 `@here` DOES NOT PUSH TO A PHONE. Only a direct `<@USER_ID>` mention does.
+ *
+ * That is why a whole family of alerts landed in a channel nobody was looking at.
+ * `DISCORD_ALERT_USER_ID` carries the id (Discord -> Settings -> Advanced ->
+ * Developer Mode -> right-click your name -> Copy User ID). When it is unset a
+ * `critical` post still goes out, but it goes out SILENTLY, so this logs the fact
+ * rather than pretending someone was reached.
+ */
+function alertMention(severity: 'info' | 'critical'): string {
+  if (severity !== 'critical') return ''
+  const id = process.env.DISCORD_ALERT_USER_ID
+  if (!id) {
+    console.warn(
+      '[discord] DISCORD_ALERT_USER_ID not set — a CRITICAL ops alert is going out ' +
+      'with no phone push. It will sit unread until someone opens the channel.',
+    )
+    return ''
+  }
+  return `<@${id}> `
+}
+
+/**
+ * Post an operational message about a bot: what a self-healing fixer did (info), or
+ * what it tried and could not do (critical).
+ *
+ * Best-effort like every other post here — a Discord outage must never take a scan
+ * cycle down. Returns whether the message actually reached Discord, so the caller can
+ * record honestly that it did not.
+ */
+export async function postOpsAlert(args: {
+  botName: string
+  title: string
+  body: string
+  severity: 'info' | 'critical'
+  fields?: Array<{ name: string; value: string; inline?: boolean }>
+}): Promise<boolean> {
+  const embed: DiscordEmbed = {
+    author: { name: `${args.botName.toUpperCase()} · IronForge Ops`, icon_url: IRONFORGE_ICON_URL },
+    title: args.title,
+    description: args.body.slice(0, 3800),
+    color: args.severity === 'critical' ? COLOR_LOSS : COLOR_OPEN,
+    fields: args.fields,
+    footer: { text: `IronForge · ${args.botName.toUpperCase()} · ${ctNow()}` },
+    timestamp: nowIso(),
+  }
+  return postEmbeds([embed], { content: alertMention(args.severity) || undefined })
 }
 
 export function isDiscordConfigured(): boolean {

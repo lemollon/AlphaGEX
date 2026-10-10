@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { Wordmark } from '@/components/Brand'
 import HomeLink from '@/components/HomeLink'
+import ContinueWithGoogle from '@/components/ContinueWithGoogle'
 
 export default function CustomerLoginPage() {
   const [email, setEmail] = useState('')
@@ -100,7 +101,16 @@ export default function CustomerLoginPage() {
               </button>
             </div>
           ) : (
-            <form onSubmit={onSubmit} noValidate className="mt-6 space-y-4">
+            <>
+              <div className="mt-6">
+                <ContinueWithGoogle next="/enroll" />
+              </div>
+              <div className="my-4 flex items-center gap-3 text-xs text-gray-500">
+                <span className="h-px flex-1 bg-white/10" />
+                or sign in with email
+                <span className="h-px flex-1 bg-white/10" />
+              </div>
+            <form onSubmit={onSubmit} noValidate className="space-y-4">
               <div>
                 <label htmlFor="email" className="block text-xs text-gray-400">Email</label>
                 <input
@@ -130,6 +140,7 @@ export default function CustomerLoginPage() {
                 {busy ? 'Signing in…' : 'Sign in'}
               </button>
             </form>
+            </>
           )}
 
           <p className="mt-6 text-center text-xs text-gray-500">

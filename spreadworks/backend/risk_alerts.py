@@ -53,15 +53,53 @@ Safety rails:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 CT = ZoneInfo("America/Chicago")
 SQRT252 = 15.874507866387544
+
+# Hold the scheduler so the API can PROVE these jobs are armed and say when
+# they next fire. Same pattern gamma_alerts already uses; /risk needed it once
+# its charts started publishing a "next update" — a chart that guesses its own
+# cadence from a hardcoded string stays confidently wrong after the job dies.
+_SCHEDULER: dict = {"ref": None}
+
+# Only the jobs a chart or a card on /risk actually waits for. Deliberately
+# not every job in this module: a next-update cell listing fifteen crons tells
+# the reader nothing about the number in front of them.
+RISK_JOB_IDS = (
+    "risk_flow_spike",        # 10:06 CT — the snapshot the flow-z chart plots
+    "risk_morning_verdict",   # 08:05:30 CT — the headline
+    "risk_flow_rolling",      # */10 in-session — the intraday watcher
+    "risk_confirm_close",     # 15:05 CT — closes the session
+)
+
+
+def scheduled_jobs() -> dict:
+    """Are the risk cron jobs armed, and when do they next fire?
+
+    Never raises — apscheduler internals are not worth a 500.
+    """
+    sched = _SCHEDULER.get("ref")
+    if sched is None:
+        return {"registered": False, "jobs": {},
+                "reason": "Risk jobs are not armed — no scheduler was attached."}
+    out: dict = {"registered": True, "jobs": {}, "reason": None}
+    for jid in RISK_JOB_IDS:
+        try:
+            job = sched.get_job(jid)
+            nxt = getattr(job, "next_run_time", None) if job else None
+            out["jobs"][jid] = nxt.isoformat() if nxt else None
+        except Exception as e:  # noqa: BLE001
+            out["jobs"][jid] = None
+            out["reason"] = f"job lookup failed: {e}"
+    return out
 
 RED = 0xF87171
 GREEN = 0x34D399
@@ -73,6 +111,126 @@ def _webhook_url() -> str:
             or os.getenv("DISCORD_WEBHOOK_URL", ""))
 
 
+# Last delivery outcome, in memory, for the diagnostics endpoint. Deliberately
+# NOT persisted: the question it answers is "is the webhook working right now",
+# and a value that survives a restart would answer a staler question.
+_LAST_DELIVERY: dict = {"at": None, "key": None, "ok": None, "detail": None}
+
+
+def _record_delivery(key: str, ok: bool, detail: str) -> None:
+    _LAST_DELIVERY.update({"at": datetime.now(CT).isoformat(), "key": key,
+                           "ok": ok, "detail": detail})
+
+
+# Grace after the window opens: the first poll has to land before its absence
+# means anything. Two missed polls (>25 min on a */10 cron) is a fault; one is
+# a blip and must not page anyone.
+WATCHDOG_GRACE_MIN = 25
+WATCHDOG_STALE_MIN = 25
+
+
+def _watchdog_verdict(now_min: int, last_min: int | None,
+                      win_open: int, win_close: int) -> str | None:
+    """Should the watchdog fire? Returns a reason, or None to stay silent.
+
+    Pure and module-level ON PURPOSE — the job itself is a closure inside
+    register(), which is untestable, and a test that cannot reach the logic is
+    not coverage. Every branch below is a decision someone could get wrong.
+    """
+    if now_min < win_open + WATCHDOG_GRACE_MIN:
+        return None                      # too early to conclude anything
+    if now_min > win_close:
+        return None                      # window over; a quiet tape is correct
+    if last_min is None:
+        return "no reading at all today"
+    age = now_min - last_min
+    if age <= WATCHDOG_STALE_MIN:
+        return None                      # one skipped poll is a blip
+    return f"{age} min since the last reading"
+
+
+def _action_suffix(now: datetime, hit: dict, paper: dict | None) -> str:
+    """The one-line PAPER action sentence appended to the confirm alert's
+    description — the same verdict build_action() gives the /hunt action
+    box, so the push and the page can never disagree. Module-level (not a
+    closure) so it is unit-testable on its own.
+
+    🚨 NEVER LETS A FORMATTING BUG BLOCK THE ALERT. build_action/
+    action_sentence are pure and shouldn't raise, but the confirm push
+    already exists and works without this line — a broken addendum must
+    degrade to no addendum, not to no alert.
+    """
+    try:
+        from .routes_risk import (build_action, action_sentence,
+                                  CONFIRM_ARM_Z, CONFIRM_MOVE_PCT)
+        confirm = {
+            "fired_dir": hit.get("dir"), "fired_at": now,
+            "fired_spot": hit.get("spot"), "armed": True,
+            "putcall_z": hit.get("putcall_z"), "ref_spot": hit.get("ref"),
+            "arm_z": CONFIRM_ARM_Z, "move_pct": CONFIRM_MOVE_PCT,
+        }
+        action = build_action(now, confirm, None, {}, {}, paper)
+        return "\n\n**Action (PAPER):** " + action_sentence(action)
+    except Exception as e:                                       # noqa: BLE001
+        logger.warning("[RiskAlerts] _action_suffix failed: %r", e)
+        return ""
+
+
+def _post(key: str, fire_date, embed: dict, ping: bool = False) -> bool:
+    """Claim the day's slot, post, and HAND THE SLOT BACK IF THE POST FAILED.
+
+    🚨 THIS IS THE FIX FOR SILENT NON-DELIVERY. Every job used to do:
+
+        if not _claim_post_slot_db(key, today): return
+        _send({...})                     # <- return value discarded
+
+    so an unset, revoked, rate-limited or unreachable webhook was
+    indistinguishable from a successful post. The slot was already taken, the
+    page reported `fired: true`, and the alert could never fire again that day.
+    A dropped packet cost the whole day's alert, silently.
+
+    Now: a failed send releases the slot so the next poll retries, and the
+    outcome is recorded so /risk-advisor/delivery can say what actually
+    happened rather than what was attempted.
+    """
+    # 🚨 IMPORTED HERE, NOT AT MODULE SCOPE — and this line is load-bearing.
+    # These helpers live in backend/__init__, which imports THIS module, so a
+    # top-level import is a cycle. Without this line `_post` raises NameError
+    # on every single call, each job swallows it into a log warning, and every
+    # alert dies silently — which is exactly what shipped in #2863 and what
+    # this fix restores. Verified by test_post_does_not_NameError.
+    from . import _claim_post_slot_db, _release_post_slot_db
+
+    if not _claim_post_slot_db(key, fire_date):
+        return False                      # someone else owns it today
+    ok = _send(embed, ping=ping)
+    if ok:
+        _record_delivery(key, True, "delivered")
+    else:
+        _release_post_slot_db(key, fire_date)
+        _record_delivery(key, False, "send failed — slot released for retry")
+        logger.warning("[RiskAlerts] %s NOT delivered; slot released", key)
+    return ok
+
+
+def _mention() -> str:
+    """What to put in `content` when an alert is time-critical.
+
+    🚨 `@here` IS NOT A PHONE ALERT. Discord suppresses @here in a muted
+    channel and only notifies members currently online — so the one alert you
+    most need on your phone is the one most likely to be swallowed. A DIRECT
+    user mention (`<@id>`) pushes to iOS even when the channel is muted, which
+    is the whole point.
+
+    RISK_DISCORD_USER_ID is a Discord snowflake, not a secret — enabling it
+    costs one env var and needs no new webhook. Falls back to the old @here
+    behaviour when unset so nothing regresses.
+    """
+    import os
+    uid = os.getenv("RISK_DISCORD_USER_ID", "").strip()
+    return f"<@{uid}>" if uid.isdigit() else "@here"
+
+
 def _send(embed: dict, ping: bool = False) -> bool:
     import requests as req
     url = _webhook_url()
@@ -81,13 +239,48 @@ def _send(embed: dict, ping: bool = False) -> bool:
         return False
     payload: dict = {"embeds": [embed]}
     if ping:
-        payload["content"] = "@here"
+        payload["content"] = _mention()
     try:
         r = req.post(url, json=payload, timeout=15)
         return r.status_code in (200, 204)
     except Exception as e:  # noqa: BLE001
         logger.warning("[RiskAlerts] send failed: %r", e)
         return False
+
+
+def _push_phone(title: str, body: str) -> None:
+    """Second channel for the alerts that are time-critical — i.e. the ones
+    where reading it an hour later is worth nothing.
+
+    Two independent sinks, both optional, both env-driven, neither fatal:
+      * RISK_PHONE_WEBHOOK — a Discord webhook pointed at a personal channel.
+        This is the one that actually reaches Leron's phone.
+      * RISK_NTFY_TOPIC    — ntfy.sh topic.
+
+    🚨 ntfy is the SECONDARY here on purpose. Per the 2026-07-30 finding, ntfy
+    iOS notifications do not surface in his Notification Center (app-side; the
+    settings were verified) — he had to open the app to see them, which defeats
+    the point. Discord iOS pushes work. So ntfy is kept as a redundant sink,
+    not relied on as "the phone channel".
+    """
+    import os
+    import requests as req
+    hook = os.getenv("RISK_PHONE_WEBHOOK", "")
+    if hook:
+        try:
+            # `content` is what renders in the phone notification itself —
+            # an embed alone shows as an empty message on mobile.
+            req.post(hook, json={"content": f"**{title}**\n{body}"}, timeout=15)
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] phone webhook failed: %r", e)
+    topic = os.getenv("RISK_NTFY_TOPIC", "")
+    if topic:
+        try:
+            req.post(f"https://ntfy.sh/{topic}",
+                     data=body.encode("utf-8"),
+                     headers={"Title": title, "Priority": "high"}, timeout=15)
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] ntfy failed: %r", e)
 
 
 def _already_posted(key: str, fire_date) -> bool:
@@ -112,12 +305,69 @@ def _already_posted(key: str, fire_date) -> bool:
         db.close()
 
 
+async def run_flow_capture(app, now: datetime) -> None:
+    """STANDALONE FLOW CAPTURE — the 2026-09-03 blind spot.
+
+    🚨 confirm_check only polls 10:10-14:00 CT. On 2026-09-03 SPY ran +1%
+    starting at 10:10 CT, and there was no risk_flow_intraday record at all
+    before that — the very first row, written AT 10:10, had nothing earlier
+    to diff against and read as NULL. This function exists purely to widen
+    the RECORD, not to change what fires: it never imports or touches
+    confirm_step, CONFIRM_ARM_Z, CONFIRM_WINDOW_CT, the alert path, or the
+    paper book. Module-level (not a closure) so it is directly testable
+    without a fake scheduler — see test_flow_tape.py.
+
+    Runs every 10 minutes, 08:40-14:00 CT weekdays (FLOW_CAPTURE_WINDOW_CT),
+    offset :50 after confirm_check's own :00 tick so the two jobs never race
+    the same slot. If confirm_check already wrote this slot
+    (flow_slot_has_rows), this is a no-op — the goal is to fill the gap
+    confirm_check's 10:10 start leaves, not to double-capture. One retry on a
+    failed capture (Tradier hiccups happen); a warning if both attempts fail.
+    Spot for the tape is best-effort and captured AFTER the flow write, in
+    its own try/except, so a quote-fetch failure never blocks the capture.
+    """
+    try:
+        if now.weekday() >= 5:
+            return
+        from .routes_risk import (FLOW_CAPTURE_WINDOW_CT, flow_slot_has_rows,
+                                  capture_flow_intraday, session_log_write,
+                                  _rolling_flow_now)
+        start, end = FLOW_CAPTURE_WINDOW_CT
+        t = (now.hour, now.minute)
+        if t < start or t > end:
+            return
+        today = now.date()
+        slot = (now.hour * 60 + now.minute) // 10 * 10
+        if flow_slot_has_rows(today, slot):
+            return          # confirm_check already has this slot
+
+        shim = SimpleNamespace(app=app)
+        ok = await capture_flow_intraday(shim, now)
+        if not ok:
+            await asyncio.sleep(5)
+            ok = await capture_flow_intraday(shim, now)
+        if not ok:
+            h, m = divmod(slot, 60)
+            logger.warning("[RiskAlerts] risk_flow_capture: capture failed "
+                           "twice for the %02d:%02d CT slot", h, m)
+
+        try:
+            live = await _rolling_flow_now(shim)
+            if live and live.get("spot"):
+                session_log_write(today, now, spot=float(live["spot"]))
+        except Exception as e:                                 # noqa: BLE001
+            logger.warning("[RiskAlerts] risk_flow_capture: spot fetch "
+                           "failed: %r", e)
+    except Exception as e:                                     # noqa: BLE001
+        logger.warning("[RiskAlerts] risk_flow_capture failed: %r", e)
+
+
 def register_risk_alerts(scheduler, app) -> None:
     """Attach the two alert jobs to the existing APScheduler instance."""
     if scheduler is None:
         logger.warning("[RiskAlerts] no scheduler — alerts disabled")
         return
-    from . import _claim_post_slot_db          # existing dedupe
+    from . import _claim_post_slot_db, _release_post_slot_db
 
     async def morning_verdict():
         try:
@@ -142,9 +392,27 @@ def register_risk_alerts(scheduler, app) -> None:
                 macro = macro_today(today)
             except Exception:
                 macro = None
+
+            # 🚨 A ROW MUST EXIST EVEN IF NOBODY LOADS THE PAGE. /state only
+            # logs a call when someone requests it; this job runs on a cron
+            # whether or not that happens, so it is the one guaranteed write
+            # per session. Same whitelist action rule /state uses (routes_risk
+            # ~1521-1522), scoped to what a morning verdict actually knows —
+            # the flow/intraday legs have not captured yet at this hour.
+            action = ("stand_down" if (backw and flag) else
+                      "skip_entry" if (backw or flag) else "normal")
+            try:
+                from .call_log import record_call
+                record_call("risk", action,
+                            detail={"backwardation": backw, "flag_vix1d": flag,
+                                    "double_floor": floor,
+                                    "vix": vix_c, "vix1d": v1_c},
+                            # The VIX close this rests on, not the moment we ran.
+                            data_ts=datetime.combine(d, time(15, 15)))
+            except Exception:
+                pass
+
             if backw or flag:
-                if not _claim_post_slot_db("risk_morning_riskoff", today):
-                    return
                 actions = []
                 if macro:
                     actions.append(f"• 📅 **{macro} today** — announcement days "
@@ -156,7 +424,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     actions.append(f"• **VIX1D flag** — implied 1-day move "
                                    f"{v1_c / SQRT252:.2f}% > 1%: reduce size or skip "
                                    f"(42.8% of flagged days move ≥1%)")
-                _send({
+                _post("risk_morning_riskoff", today, {
                     "title": "🛑 RISK-OFF — morning verdict",
                     "description": "\n".join(actions),
                     "color": RED,
@@ -168,9 +436,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     "footer": {"text": f"closes of {d} · advisory only · /risk for detail"},
                 }, ping=True)
             elif floor:
-                if not _claim_post_slot_db("risk_morning_calm", today):
-                    return
-                _send({
+                _post("risk_morning_calm", today, {
                     "title": "🟢 Calm floor",
                     "description": "VVIX < 85 and VIX < 14 — statistically the safest "
                                    "measured state to sell premium at normal size "
@@ -187,7 +453,8 @@ def register_risk_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            from .routes_risk import (_capture_snapshot, _flow_history, _z)
+            from .routes_risk import (_capture_snapshot, _flow_history, _z,
+                                      _pc_z)
             shim = SimpleNamespace(app=app)     # capture helpers expect request.app
             snap = await _capture_snapshot(shim)
             if snap is None:
@@ -198,11 +465,25 @@ def register_risk_alerts(scheduler, app) -> None:
             pz = _z(snap["putv"], [r["putv"] for r in prior])
             tz = _z(snap["totv"], [r["totv"] for r in prior])
             oz = _z(snap["otm_call_0dte"], [r["otm_call_0dte"] for r in prior])
-            if (pz or 0) > 2 or (tz or 0) > 2:
-                if not _claim_post_slot_db("risk_flow_spike", now.date()):
-                    return
+            # 🚨 THE MIX LEG (added 2026-08-18). On 2026-08-17 both level legs
+            # were correctly quiet (put +0.58, total -0.45) and this one was at
+            # +2.72 — the highest of the trailing 63 — 90 minutes before SPY
+            # slid 775.50 -> 772.51. Without it this alert stays silent on
+            # exactly the mornings where the composition, not the size, of the
+            # flow is the outlier. See routes_risk._pc_z for the evidence.
+            cz = _pc_z(snap, prior)
+            if (pz or 0) > 2 or (tz or 0) > 2 or (cz or 0) > 2:
                 # which side is driving it — plain-speech composition line
-                if (pz or 0) > 2 and (oz or 0) <= 1:
+                if (cz or 0) > 2 and (pz or 0) <= 2 and (tz or 0) <= 2:
+                    driver = (
+                        f"Driven by the **MIX, not the size** — total volume is "
+                        f"ordinary (z {(tz or 0):.1f}) but the put/call ratio is "
+                        f"{(cz or 0):.1f}σ, the highest in ~3 months. In plain "
+                        f"English: puts are normal and **call buying has gone "
+                        f"missing**. This is the shape that was present on the "
+                        f"morning of 2026-08-17 and that this alert used to miss "
+                        f"entirely.")
+                elif (pz or 0) > 2 and (oz or 0) <= 1:
                     driver = ("Driven by **PUT volume** — someone is paying up "
                               "for downside protection.")
                 elif (oz or 0) > 1 and (pz or 0) <= 1:
@@ -212,14 +493,15 @@ def register_risk_alerts(scheduler, app) -> None:
                               "signal).")
                 else:
                     driver = "Both sides are heavy — broad bracing, no lean."
-                _send({
+                _post("risk_flow_spike", now.date(), {
                     "title": "⚠️ Unusual option volume this morning — bigger "
                              "rest-of-day move than normal is ~2.4× more likely",
                     "description": (
                         f"In plain English: this morning's SPY option volume is a "
                         f"top-2% outlier vs the last 3 months at the same clock "
                         f"(put z {(pz or 0):.1f} · total z {(tz or 0):.1f} · "
-                        f"0DTE call z {(oz or 0):.1f}).\n"
+                        f"put/call MIX z {(cz or 0):.1f} · 0DTE call z "
+                        f"{(oz or 0):.1f}).\n"
                         f"{driver}\n\n"
                         "**DO:** no new same-day (0DTE) premium selling today; "
                         "tighten exits on anything expiring today. Multi-day "
@@ -271,8 +553,6 @@ def register_risk_alerts(scheduler, app) -> None:
             hi, lo = PM_BASE_RATES[clock]
 
             if (pz or 0) > 2 or (tz or 0) > 2:
-                if not _claim_post_slot_db(spike_slot, today):
-                    return
                 # continuation vs fresh: did an earlier clock today already
                 # alert on a spike? (morning 10:06 push, or the 12:00
                 # re-check for the 13:30 job)
@@ -282,7 +562,7 @@ def register_risk_alerts(scheduler, app) -> None:
                         "the afternoon." if continuation else
                         "This is a **fresh** afternoon spike — no earlier alert "
                         "fired today.")
-                _send({
+                _post(spike_slot, today, {
                     "title": f"⚠️ Afternoon re-check — unusual option volume "
                              f"at {clock} CT",
                     "description": (
@@ -313,10 +593,8 @@ def register_risk_alerts(scheduler, app) -> None:
                 }, ping=True)
             elif _already_posted("risk_flow_spike", today) and \
                     (pz or 0) < 1 and (tz or 0) < 1:
-                if not _claim_post_slot_db(fade_slot, today):
-                    return
                 z_now = max(pz or 0, tz or 0)
-                _send({
+                _post(fade_slot, today, {
                     "title": f"🟢 All-clear update — {clock} CT",
                     "description": (
                         f"All-clear update: the morning volume spike did not "
@@ -329,9 +607,297 @@ def register_risk_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[RiskAlerts] pm_recheck(%s) failed: %r", clock, e)
 
+    async def confirm_check():
+        """STAGE 2. Every 10 min, 10:10-14:00 CT weekdays.
+
+        The 10:00 snapshot can tell you a big move is coming but NOT which way
+        — measured, P(down) 45.8% vs a 45.4% base. So this job does not
+        predict direction. It waits for the market to commit, and only then
+        speaks. Validated 2026-08-18 over 904 sessions:
+
+            price break alone, unflagged day   n=916   49.8% continue
+            FLAGGED day, then the same break   n= 95   63.2% continue  z=+2.61
+
+        Neither leg works alone. Robust across 0.10-0.30% break thresholds,
+        positive 4/4 years, and symmetric on up and down breaks (disjoint
+        samples, same effect) — which is the reason to believe it over the
+        book's long-standing "intraday continuation is dead" prior: that prior
+        is confirmed here, and only broken when the flow flag is present.
+
+        🚨 Replayed on 2026-08-17 this confirms DOWN at 11:55 CT / 774.68 with
+        $2.00 of the $3.00 slide still to come. That session is the reason the
+        job exists: the 10:00 alert alone had nothing to say, and every page
+        went on quoting a put sale while SPY walked down.
+
+        Advisory. No bot reads it — EBB is warn-only by decision, because the
+        breach lift that would justify a veto is not significant (n=37).
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import (CONFIRM_WINDOW_CT, CONFIRM_MOVE_PCT,
+                                      CONFIRM_ARM_Z, PAPER_BOOK_START,
+                                      _rolling_flow_now,
+                                      _flow_history, _pc_z, _latest_snapshot,
+                                      confirm_step, session_log_write,
+                                      undelivered_firing, mark_alerted,
+                                      capture_flow_intraday, paper_record_fire,
+                                      flow_record_at_fire, latest_paper_dict)
+            start, end = CONFIRM_WINDOW_CT
+            t = (now.hour, now.minute)
+            if t < start or t > end:
+                return
+            today = now.date()
+            # stage 1 — is today flagged? Read the stored 10:00 snapshot; do
+            # NOT capture here, or this job would race the validated window.
+            snap = _latest_snapshot(today)
+            pcz = None
+            if snap is not None:
+                prior = [r for r in _flow_history() if r["d"] < today]
+                pcz = _pc_z(snap, prior)
+            armed = bool((pcz or 0) > CONFIRM_ARM_Z)
+
+            shim = SimpleNamespace(app=app)
+            live = await _rolling_flow_now(shim)
+            if live is None or not live.get("spot"):
+                return
+            # tape first, so the price point survives even if the step below
+            # throws — a gap in the tape is what made the 08-17 post-mortem
+            # hard, and this poll is the only place spot is sampled.
+            session_log_write(today, now, spot=float(live["spot"]))
+            # Paper-book stage 4: every-10-min chain snapshot by tenor,
+            # forward-only (nothing before PAPER_BOOK_START is written).
+            # Never blocks the confirm alert below — capture_flow_intraday
+            # catches and logs its own failures.
+            await capture_flow_intraday(shim, now)
+            hit = confirm_step(today, now, float(live["spot"]), armed, pcz)
+            if hit is not None and today >= PAPER_BOOK_START:
+                # A brand-new fire (not a recovered/undelivered one below) —
+                # price the paper trade and snapshot the flow-at-fire ledger
+                # once, at the moment it happened. Both helpers never raise.
+                await paper_record_fire(shim, today, hit)
+                flow_record_at_fire(today, hit)
+            if hit is None:
+                # 🚨 RECOVER A FIRING WHOSE ALERT NEVER WENT OUT. confirm_step
+                # fires once and every later poll skips on `fired_dir is None`,
+                # so before 2026-08-20 an alert lost to a dead webhook was lost
+                # permanently — the fire was recorded, nobody was told, and
+                # nothing ever looked again. That is exactly what happened to
+                # the 10:40 CT DOWN confirmation. `alerted_at` separates the
+                # two events; this retries only while the call is still worth
+                # making, and undelivered_firing() enforces that.
+                hit = undelivered_firing(today, now)
+                if hit is None:
+                    return
+
+            d = hit["dir"]
+            arrow = "🔻" if d == "DOWN" else "🔺"
+            # ⛔ A RECOVERED ALERT MUST SAY IT IS LATE. Presenting a 40-minute-old
+            # firing as if it just happened would have the reader sizing off a
+            # price that has already moved.
+            late = hit.get("delayed")
+            title = (f"{arrow} {d} CONFIRMED — SPY {hit['spot']:.2f} · "
+                     + (f"DELAYED {hit.get('age_min', 0)} MIN — alert failed earlier"
+                        if late else
+                        "this one has legs more often than not"))
+            plain = (
+                f"This morning's option MIX was a {hit['putcall_z']:.1f}σ outlier "
+                f"(put/call ratio, top of the last 63 sessions). That said a big "
+                f"move was coming but not which way.\n\n"
+                f"SPY has now broken **{d}** through {hit['move_pct']:+.2f}% off "
+                f"the 10:00 level ({hit['ref']:.2f} → {hit['spot']:.2f}) and is at "
+                f"a session {'low' if d == 'DOWN' else 'high'}. **On flagged days "
+                f"that break keeps going 63% of the time** vs a 50% coin flip on "
+                f"normal days. Median further run: {'-' if d == 'DOWN' else '+'}0.19%.\n\n"
+                f"**In plain English:** the market has picked a side and it tends "
+                f"to stay picked today. If you are short {'put' if d == 'DOWN' else 'call'} "
+                f"premium into this, you are on the wrong side of it — that is the "
+                f"position to reduce or close. Do not add.")
+            # ── ADD-ONLY: one PAPER action line, never touches what fired ───
+            # Wrapped so a formatting bug in the addendum can never cost the
+            # alert itself — see _action_suffix's own try/except too.
+            try:
+                paper = latest_paper_dict(today)
+                plain += _action_suffix(now, hit, paper)
+            except Exception as e:                               # noqa: BLE001
+                logger.warning("[RiskAlerts] action suffix append failed: %r", e)
+            delivered = _post("risk_confirm", today, {
+                "title": title,
+                "description": plain,
+                "color": RED if d == "DOWN" else GREEN,
+                "fields": [
+                    {"name": "continues", "value": "63.2% vs 49.8% base",
+                     "inline": True},
+                    {"name": "evidence", "value": "n=95, z=+2.6, 4/4 yrs",
+                     "inline": True},
+                    {"name": "fires on", "value": "~2.5% of days", "inline": True},
+                ],
+                "footer": {"text": "two-stage flow+confirmation · advisory only, "
+                                   "no bot acts on this · /risk"},
+            }, ping=True)
+            # ⛔ ONLY ON A SUCCESSFUL SEND. Stamping unconditionally would
+            # recreate the exact bug this path exists to fix - a firing marked
+            # as told when nobody was told. _post already releases the dedup
+            # slot on failure, so leaving alerted_at NULL lets the next poll
+            # try again.
+            if delivered:
+                mark_alerted(today, now)
+            _push_phone(
+                f"{arrow} SPY {d} confirmed {hit['spot']:.2f}",
+                f"{hit['move_pct']:+.2f}% off the 10:00 level on a flagged day. "
+                f"Keeps going 63% of the time (vs 50% normal). Reduce short "
+                f"{'put' if d == 'DOWN' else 'call'} premium; don't add.")
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] confirm_check failed: %r", e)
+
+    async def risk_flow_capture():
+        """Thin scheduler wrapper — see the module-level run_flow_capture()
+        docstring for what this job does and why (2026-09-03 blind spot)."""
+        await run_flow_capture(app, datetime.now(CT))
+
+    async def watchdog_check():
+        """THE ALERT THAT WAS MISSING: nobody is told when the watchers STOP.
+
+        Every alert here fires on something HAPPENING. Not one fires on the
+        machinery going quiet, and a dead watcher is indistinguishable from a
+        calm day — silence means both. That is precisely the 2026-08-17 shape:
+        the watchers were running and nothing surfaced, so the slide was
+        invisible in real time. A watcher that has DIED is strictly worse,
+        because the page keeps rendering its last reading and the freshness bar
+        is the only thing that would say so, and only if someone looks.
+
+        ⛔ Deliberately does NOT alert on "no signal today". Quiet days are the
+        normal case (~91% of sessions) and an alert that fires on the normal
+        case is one you learn to ignore.
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import CONFIRM_WINDOW_CT, session_log_read
+            now_min = now.hour * 60 + now.minute
+            win_open = CONFIRM_WINDOW_CT[0][0] * 60 + CONFIRM_WINDOW_CT[0][1]
+            win_close = CONFIRM_WINDOW_CT[1][0] * 60 + CONFIRM_WINDOW_CT[1][1]
+
+            tape = session_log_read(now.date())
+            last = tape[-1]["minute_ct"] if tape else None
+            if _watchdog_verdict(now_min, last, win_open, win_close) is None:
+                return
+            age = (now_min - last) if last is not None else None
+            when = f"{last // 60:02d}:{last % 60:02d} CT" if last is not None else "never today"
+
+            _post("risk_watchdog", now.date(), {
+                "title": "🔇 The intraday watchers have gone quiet",
+                "description": (
+                    f"No tape reading since **{when}**"
+                    f"{f' ({age} min ago)' if age is not None else ''}, inside the "
+                    f"{win_open // 60:02d}:{win_open % 60:02d}-"
+                    f"{win_close // 60:02d}:{win_close % 60:02d} CT watch window "
+                    "where a poll runs every 10 minutes. "
+                    "**This is not a quiet market, it is a quiet SYSTEM.** The "
+                    "flow mix and the confirmation trigger are not being "
+                    "evaluated, so an armed day could break either way and "
+                    "nothing would say so. /session shows the last reading."),
+                "color": RED,
+                "fields": [
+                    {"name": "last reading", "value": when, "inline": True},
+                    {"name": "age", "value": f"{age} min" if age is not None
+                     else "no reading today", "inline": True},
+                ],
+                "footer": {"text": "watchdog - once a day - advisory"},
+            }, ping=True)
+            _push_phone("Intraday watchers have gone quiet",
+                        f"No tape reading since {when}. The flow signal is not "
+                        "being evaluated.")
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[RiskAlerts] watchdog_check failed: %r", e)
+
+    async def confirm_close():
+        """15:05 CT — staple the session close onto today's watcher row so
+        every live firing carries its own outcome. The backtest is n=95; this
+        is how that number grows into live evidence instead of a claim that
+        has to be re-argued from a log that overwrote itself."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .routes_risk import _rolling_flow_now, confirm_record_close
+            shim = SimpleNamespace(app=app)
+            live = await _rolling_flow_now(shim)
+            if live and live.get("spot"):
+                confirm_record_close(now.date(), float(live["spot"]))
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] confirm_close failed: %r", e)
+
+    async def calibration_score():
+        """15:40 CT — append today's completed session to the evaluation
+        record. Runs after settlement so the close is real. This is what keeps
+        the decay monitor from going stale: the sample grows every session,
+        not only when the signal fires."""
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            from .signal_calibration import score_session
+            score_session(now.date())
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] calibration_score failed: %r", e)
+
+    async def calibration_report():
+        """First Monday, 08:15 CT — post the scorecard against the
+        pre-registered lines, and DISARM the pivot if it has breached.
+
+        Posts on every verdict INCLUDING PASS. A monitor that only speaks when
+        something is wrong cannot be distinguished from a monitor that has
+        stopped running — the failure this whole body of work exists to catch.
+        """
+        try:
+            now = datetime.now(CT)
+            from .signal_calibration import report, enforce
+            rep = report(now.date())
+            disarmed = enforce(rep)
+            v = rep.get("verdict")
+            colour = {"PASS": GREEN, "WARN": AMBER, "DISARM": RED,
+                      "UNDERPOWERED": AMBER}.get(v, AMBER)
+            cont = rep.get("continuation")
+            base = rep.get("base_continuation")
+            lcb = rep.get("continuation_lcb")
+            body = [
+                f"**{v}** — {rep.get('n_armed_fired', 0)} flagged firings in the "
+                f"trailing {rep.get('window_months')} months "
+                f"({rep.get('live_sessions', 0)} live sessions so far).",
+            ]
+            if cont is not None and base is not None:
+                body.append(
+                    f"\nWhen the flag fires and price then breaks, it keeps going "
+                    f"**{cont:.1%}** of the time (worst-case {lcb:.1%}) against "
+                    f"**{base:.1%}** on unflagged days. The gap is the edge; if it "
+                    f"closes, the pivot stops earning its keep.")
+            for r in rep.get("reasons", []):
+                body.append(f"\n• {r}")
+            if disarmed:
+                body.append(f"\n\n🚨 **PIVOT DISARMED on {', '.join(disarmed)}.** "
+                            "EBB is back to holding every trade to settlement. "
+                            "Re-arming is a manual decision, on purpose.")
+            elif v == "PASS":
+                body.append("\n\nNothing to do — the pivot stays armed.")
+            _post("risk_calibration", now.date(), {
+                "title": f"📐 Signal calibration — {v}",
+                "description": "".join(body),
+                "color": colour,
+                "footer": {"text": "thresholds pre-registered 2026-08-18, before "
+                                   "any live firing · /api/spreadworks/"
+                                   "risk-advisor/calibration"},
+            }, ping=(v == "DISARM"))
+        except Exception as e:      # noqa: BLE001
+            logger.warning("[RiskAlerts] calibration_report failed: %r", e)
+
     async def rolling_flow_check():
-        """Every 10 min, 10:36-14:00 CT weekdays: catch a flow spike the
-        fixed 10:00/12:00/13:30 clocks miss (registry #39, validated
+        """Every 10 min: records the flow tape across the whole session
+        (08:31-14:59 CT) and alerts only inside 10:36-14:00 CT weekdays —
+        catching a flow spike the fixed 10:00/12:00/13:30 clocks miss
+        (registry #39, validated
         2026-08-13: P(|move to close| >= 0.5%) 34.2% on alert days vs 22.4%
         minute-matched base, 1.53x lift, 4/4 years, ~23 alerts/yr).
 
@@ -341,13 +907,19 @@ def register_risk_alerts(scheduler, app) -> None:
             now = datetime.now(CT)
             if now.weekday() >= 5:
                 return
-            from .routes_risk import (ROLLING_WINDOW_CT, _rolling_flow_now,
+            from .routes_risk import (ROLLING_WINDOW_CT, ROLLING_LOG_WINDOW_CT,
+                                      _rolling_flow_now,
                                       _rolling_baseline_at, _rolling_z,
-                                      _save_rolling_state)
-            start, end = ROLLING_WINDOW_CT
+                                      _save_rolling_state, session_log_write,
+                                      _pc)
+            # Poll across the WHOLE session so the tape is complete…
+            log_start, log_end = ROLLING_LOG_WINDOW_CT
             t = (now.hour, now.minute)
-            if t < start or t > end:
+            if t < log_start or t > log_end:
                 return
+            # …but only ALERT inside the window registry #39 was measured on.
+            start, end = ROLLING_WINDOW_CT
+            can_alert = start <= t <= end
             shim = SimpleNamespace(app=app)     # capture helper expects request.app
             snap = await _rolling_flow_now(shim)
             if snap is None:
@@ -359,12 +931,38 @@ def register_risk_alerts(scheduler, app) -> None:
                 return
             pz = _rolling_z(snap["putv"], baseline["put_mean"], baseline["put_sd"])
             tz = _rolling_z(snap["totv"], baseline["tot_mean"], baseline["tot_sd"])
+            # 🚨 THE MIX, every 10 minutes — not just at the three fixed clocks.
+            # pz/tz are LEVELS, and levels are the pair that were both quiet on
+            # 2026-08-17 while the ratio was the outlier of the trailing 63.
+            # Grading the ratio here costs nothing (both numbers are already in
+            # `snap`) and is the only way the tape can show the signal moving
+            # between 10:00 and 12:00 instead of jumping between snapshots.
+            # ADVISORY ONLY — this does not fire an alert of its own; the arming
+            # decision stays with the 10:00 clock so the rule that was measured
+            # is the rule that runs.
+            czr = None
+            if baseline.get("pc_sd"):
+                cur_pc = _pc(snap)
+                if cur_pc is not None:
+                    czr = _rolling_z(cur_pc, baseline["pc_mean"], baseline["pc_sd"])
             today = now.date()
             # refresh the live reading on EVERY successful poll — whether or
             # not it crosses the alert threshold — so /state's flow_rolling
             # block always shows the current z, not just the fired moment.
             _save_rolling_state(today, now.replace(tzinfo=None), pz, tz)
+            # …and APPEND it, because the line above overwrites. That single
+            # overwritten row is the reason the 2026-08-17 slide has no
+            # surviving intraday z history at all.
+            session_log_write(today, now, spot=snap.get("spot"),
+                              roll_putv_z=pz, roll_totv_z=tz, roll_pc_z=czr)
 
+            # 🚨 Everything above is RECORDING and runs all session. Everything
+            # below is the alert, and it fires only where it was validated —
+            # a morning or late-afternoon spike is now visible on /session but
+            # deliberately does not push, because nobody has measured what a
+            # 09:10 CT crossing is worth.
+            if not can_alert:
+                return
             if (pz or 0) <= 2 and (tz or 0) <= 2:
                 return
             # the fixed clocks own their windows — a spike they already
@@ -373,9 +971,7 @@ def register_risk_alerts(scheduler, app) -> None:
                     or _already_posted("risk_pm_1200", today)
                     or _already_posted("risk_pm_1330", today)):
                 return
-            if not _claim_post_slot_db("risk_flow_rolling", today):
-                return
-            _send({
+            _post("risk_flow_rolling", today, {
                 "title": "⚠️ Rolling flow check — unusual option volume "
                          "just crossed the line",
                 "description": (
@@ -397,7 +993,8 @@ def register_risk_alerts(scheduler, app) -> None:
                     {"name": "checked at", "value": f"{now.strftime('%H:%M')} CT",
                      "inline": True},
                 ],
-                "footer": {"text": "polled every 10 min, 10:36-14:00 CT · "
+                "footer": {"text": "alerts 10:36-14:00 CT (tape records all "
+                                   "session) · "
                                    "registry #39 · advisory only · /risk "
                                    "for the playbook"},
             }, ping=True)
@@ -420,8 +1017,6 @@ def register_risk_alerts(scheduler, app) -> None:
             # claim the once-per-day slot only AFTER the data fetch succeeded —
             # claiming first burned the slot on a transient fetch failure and
             # silently killed that day's note
-            if not _claim_post_slot_db("risk_em_note", now.date()):
-                return
             shim = SimpleNamespace(app=app)
             q = await _live_quote(shim)
             prev = (q or {}).get("prev_close")
@@ -429,7 +1024,7 @@ def register_risk_alerts(scheduler, app) -> None:
             if prev:
                 lo, hi = prev * (1 - em / 100), prev * (1 + em / 100)
                 band = f"\nPrice band: **${lo:,.2f} — ${hi:,.2f}** (prev close ${prev:,.2f})"
-            _send({
+            _post("risk_em_note", now.date(), {
                 "title": f"📏 Today's SPY expected move: ±{em:.2f}%",
                 "description": (
                     f"The options market has priced a ±{em:.2f}% day "
@@ -464,10 +1059,8 @@ def register_risk_alerts(scheduler, app) -> None:
             chg = q.get("chg_pct")
             if chg is None or abs(chg) < em:
                 return
-            if not _claim_post_slot_db("risk_em_breach", now.date()):
-                return
             side = "ABOVE" if chg > 0 else "BELOW"
-            _send({
+            _post("risk_em_breach", now.date(), {
                 "title": f"🚨 SPY is outside today's expected move "
                          f"({chg:+.2f}% vs ±{em:.2f}% priced)",
                 "description": (
@@ -562,8 +1155,6 @@ def register_risk_alerts(scheduler, app) -> None:
             if now.weekday() != 4:      # belt-and-braces; cron already gates fri
                 return
             today = now.date()
-            if not _claim_post_slot_db("risk_friday_digest", today):
-                return
 
             from .routes_risk import scorecard
             try:
@@ -639,7 +1230,7 @@ def register_risk_alerts(scheduler, app) -> None:
             have = promo.get("quiet_sessions_have", "?")
             needed = promo.get("quiet_sessions_needed", "?")
 
-            _send({
+            _post("risk_friday_digest", today, {
                 "title": "\U0001f4d2 Week in review — Risk Advisor & EBB",
                 "fields": [
                     {"name": "Scorecard (last 5 sessions)",
@@ -672,9 +1263,7 @@ def register_risk_alerts(scheduler, app) -> None:
             if os.getenv("SQUEEZE_TELL_PROMOTED", "").strip().lower() != "true":
                 return
             sentinel = date(2000, 1, 1)   # claim once, EVER — not per-day
-            if not _claim_post_slot_db("risk_promotion_squeeze", sentinel):
-                return
-            _send({
+            _post("risk_promotion_squeeze", sentinel, {
                 "title": "\U0001f393 New validated signal: the quiet-day squeeze tell",
                 "description": (
                     "cleared its pre-registered promotion gate (≥100 quiet "
@@ -718,9 +1307,7 @@ def register_risk_alerts(scheduler, app) -> None:
                 # The window is open and we cannot price the ticket. Say so
                 # quietly rather than staying silent — silence here reads as
                 # "no trade today", which is a different and wrong message.
-                if not _claim_post_slot_db(f"{slot_key}_unavailable", today):
-                    return
-                _send({
+                _post(f"{slot_key}_unavailable", today, {
                     "title": f"⚠️ {session} window open — ticket unavailable",
                     "description": (
                         f"Could not price today's SPY 0DTE put spread "
@@ -731,11 +1318,28 @@ def register_risk_alerts(scheduler, app) -> None:
                 }, ping=False)
                 return
 
-            if not _claim_post_slot_db(slot_key, today):
-                return
 
-            short_k, long_k = r["short_strike"], r["long_strike"]
-            credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
+            # 🚨 ONE TICKET PER CLOCK. AM = SPARK (spot-2 / $5 wing), PM = FLAME
+            # (spot-1 / $2 wing). The top-level short_strike/long_strike are
+            # SPARK's, so reading them here for BOTH clocks posted SPARK's
+            # wider ticket at FLAME's clock — the same bug the live scanner
+            # fixed on 8/27. tickets[] is the per-clock truth; the top-level
+            # keys are only a fallback for a payload that predates it.
+            want = "SPARK" if session == "AM" else "FLAME"
+            tk = next((t for t in (r.get("tickets") or [])
+                       if t.get("bot") == want), None)
+            if tk:
+                short_k, long_k = tk["short"], tk["long"]
+                credit, floor_ok = tk.get("credit_now"), tk.get("meets_floor")
+                wing = int(tk.get("wing") or (5 if want == "SPARK" else 2))
+            else:
+                short_k, long_k = r["short_strike"], r["long_strike"]
+                credit, floor_ok = r.get("credit_now"), r.get("meets_floor")
+                wing = 5 if want == "SPARK" else 2
+            # Backtest 2022-11 -> 2026-08, 1 lot, NBBO fills, $0.70/lot
+            # (ironforge-data/risk_advisor/risk_advisor_growth_report.md).
+            tested = ({"acct": "$5,000", "worst": "−$485", "dd": "$1,468"} if want == "SPARK"
+                      else {"acct": "$2,000", "worst": "−$187", "dd": "$490"})
             if credit is None:
                 credit_line = ("credit: no live quote right now — check the "
                                "book before sending")
@@ -750,20 +1354,22 @@ def register_risk_alerts(scheduler, app) -> None:
                                "**SKIP** if it is still below when you send it.")
                 colour = RED
 
-            _send({
-                "title": f"\U0001f4c4 {session} ticket — SPY 0DTE put spread",
+            _post(slot_key, today, {
+                "title": f"📄 {session} ticket — {want} SPY 0DTE put spread",
                 "description": (
-                    f"**SELL SPY {short_k}P / BUY SPY {long_k}P**\n"
+                    f"**SELL SPY {short_k}P / BUY SPY {long_k}P** (${wing} wing, "
+                    f"max loss ${wing * 100}/lot)\n"
                     f"**expires TODAY ({r['expiration']})**\n\n"
                     f"spot ${r['spot']:.2f} · {credit_line}\n\n"
-                    "• Size 1 contract per $2,500–3,000 allocated. "
-                    "Worst observed day −$484/lot.\n"
+                    f"• Tested at 1 contract on a {tested['acct']} account. "
+                    f"Worst tested day {tested['worst']}/lot, worst drawdown "
+                    f"{tested['dd']}.\n"
                     "• **NO stop-loss and NO profit-target** — every exit "
                     "tested collapses the edge to ~$0. Settling at the close "
                     "IS the trade.\n"
-                    "• **Do NOT skip flagged days on this ticket** — its "
-                    "backtest includes them; the calm-day gate cut it from "
-                    "$12.19 to $6.00/trade. The morning verdict governs your "
+                    "• **Do NOT skip flagged days on this ticket** — skipping "
+                    "STAND DOWN days cost FLAME money in the test and is "
+                    "unproven for SPARK. The morning verdict governs your "
                     "OTHER trading, not this."),
                 "color": colour,
                 "footer": {"text": "registry #23b/#41 · advisory only · "
@@ -804,6 +1410,22 @@ def register_risk_alerts(scheduler, app) -> None:
                       args=["13:30", "risk_pm_1330", "risk_pm_fade_1330"])
     scheduler.add_job(rolling_flow_check, "cron", minute="*/10", timezone=CT,
                       id="risk_flow_rolling")
+    scheduler.add_job(confirm_check, "cron", minute="*/10", timezone=CT,
+                      id="risk_confirm")
+    # second=50 so this lands after confirm_check's second=0 tick (its chain
+    # fetches can take 30s+) — the two never race the same 10-minute slot.
+    scheduler.add_job(risk_flow_capture, "cron", minute="*/10", second=50,
+                      timezone=CT, id="risk_flow_capture")
+    scheduler.add_job(confirm_close, "cron", hour=15, minute=5, timezone=CT,
+                      id="risk_confirm_close")
+    # Offset from the */10 pollers so it never grades a row being written in
+    # the same minute.
+    scheduler.add_job(watchdog_check, "cron", minute="5,25,45", timezone=CT,
+                      id="risk_watchdog")
+    scheduler.add_job(calibration_score, "cron", hour=15, minute=40,
+                      day_of_week="mon-fri", timezone=CT, id="risk_calib_score")
+    scheduler.add_job(calibration_report, "cron", day="1-7", day_of_week="mon",
+                      hour=8, minute=15, timezone=CT, id="risk_calib_report")
     scheduler.add_job(em_breach_check, "cron", minute="*/10", timezone=CT,
                       id="risk_em_breach")
     scheduler.add_job(health_flip_check, "cron", hour=15, minute=50,
@@ -812,9 +1434,15 @@ def register_risk_alerts(scheduler, app) -> None:
                       minute=55, timezone=CT, id="risk_friday_digest")
     scheduler.add_job(promotion_announce, "cron", hour=16, minute=5,
                       timezone=CT, id="risk_promotion_announce")
+    # See _SCHEDULER at the top of this module: an unset ref is itself the
+    # signal that registration never completed, so this is the last statement
+    # before the log line.
+    _SCHEDULER["ref"] = scheduler
     logger.info("[RiskAlerts] registered: morning verdict 08:05:30, EM note "
                 "08:06:30, ticket %02d:%02d & %02d:%02d, flow spike 10:06, "
                 "PM re-checks 12:06 & 13:36, rolling flow watcher */10 "
-                "10:36-14:00, EM-breach watch */10 in-session, health flip "
-                "15:50, Friday digest 15:55, promotion announce 16:05 "
-                "(all CT)", _am_h, _am_m, _pm_h, _pm_m)
+                "10:36-14:00, CONFIRMATION watcher */10 10:10-14:00, flow "
+                "capture */10+50s 08:40-14:00, close record 15:05, EM-breach "
+                "watch */10 in-session, health flip 15:50, Friday digest "
+                "15:55, promotion announce 16:05 (all CT)",
+                _am_h, _am_m, _pm_h, _pm_m)

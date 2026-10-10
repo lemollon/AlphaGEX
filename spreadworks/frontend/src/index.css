@@ -10,6 +10,23 @@
 
 @import "tailwindcss";
 
+/* 🚨 DO NOT LET TAILWIND SCAN THE BUILD OUTPUT.
+   Tailwind v4 auto-detects sources from the project directory and honours
+   .gitignore - and dist/ is NOT ignored here, because it is committed as the
+   deploy artifact. Without this line the build READS ITS OWN PREVIOUS OUTPUT
+   and emits theme variables for class-like strings found in the last bundle.
+
+   The build is then self-referential: building over an existing dist and
+   building from nothing produce DIFFERENT CSS from identical source
+   (index-BbNaCTQG.css vs index-CSlFfUDf.css, 2,512 bytes apart, and every
+   page chunk hash moves with it). That cost most of 2026-08-19 - two honest
+   Linux builds of the same commit disagreed, and the CI hash guard could
+   never be satisfied from a machine that cleaned dist first.
+
+   With dist excluded the output depends only on src/, so a clean build and an
+   incremental one agree, on any machine. */
+@source not "../dist";
+
 @theme {
   /* ── Surfaces ─────────────────────────────────────────────────────── */
   /* Page itself is transparent so the body aurora shows through. Cards
@@ -99,12 +116,22 @@
 
 /* ── Base ─────────────────────────────────────────────────────────── */
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* This reset MUST stay inside @layer base.
+   Tailwind v4 emits its utilities into @layer utilities, and an UNLAYERED
+   rule beats any layered one in the cascade. Unlayered, this block silently
+   zeroed every p-* and m-* class in the entire app — table headers collided,
+   cards had no padding, and nobody noticed for months because gap-* is not
+   reset here, so flex gaps kept layouts standing while the padding vanished.
+   Layered, it does what a reset is supposed to do: provide the default that
+   a utility then overrides. Do not lift it out. */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 html, body, #root {

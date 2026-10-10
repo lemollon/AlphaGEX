@@ -4,22 +4,23 @@ Enable once per clone:
 
     git config core.hooksPath .githooks
 
-## `pre-commit` — rebuilds the SpreadWorks bundle
+## `post-merge` — installs new frontend deps after a pull
 
-`spreadworks/frontend/dist` is a **tracked deploy artifact**. The live Render
-service (`srv-d6mv30f5gffc73bog9a0`) builds with:
+Runs `npm install` when `frontend/package.json` changed, and reminds you to
+`pip install` when the root `requirements.txt` changed.
 
-    pip install --upgrade pip && pip install -r requirements.txt
+## Removed: `pre-commit` (rebuilt the SpreadWorks bundle)
 
-There is no npm step, so **whatever is committed under `dist/` is exactly what
-production serves**. Render's API cannot change a service's build command, so
-this is enforced here instead.
+`spreadworks/frontend/dist` used to be a **tracked deploy artifact**, because
+the live Render service built pip-only and served whatever was committed. A
+`pre-commit` hook here rebuilt and staged `dist/` on every source commit, and
+a CI job policed the ones that slipped past it.
 
-The hook rebuilds and stages `dist/` automatically whenever anything under
-`spreadworks/frontend/src/` is committed. It is a build, not a warning: there
-is no step for anyone to remember, and no way to commit source without the
-bundle following it.
+As of 2026-08-19 the service's Build Command runs the frontend build itself:
 
-CI (`spreadworks-dist`) is the backstop for commits made without the hook —
-e.g. `--no-verify`, the GitHub web UI, or a clone that never ran the config
-line above.
+    pip install --upgrade pip && pip install -r requirements.txt \
+      && cd frontend && npm ci && npm run build
+
+`dist/` is untracked and gitignored, so there is nothing left to keep fresh.
+Keeping the hook would have been actively wrong — it would recreate the very
+files the deploy now generates.

@@ -67,7 +67,7 @@ describe('customer surface', () => {
       '/api/spark/eod-close',
       '/api/spark/toggle',
       '/api/spark/config',
-      '/api/spark2/force-trade',
+      '/api/inferno/force-trade',
       '/api/flame/force-close',
     ]) {
       expect(servesPath('customer', p), `customer must NOT serve ${p}`).toBe(false)
@@ -215,7 +215,7 @@ describe('operator sign-in is reachable on BOTH deployments', () => {
 describe('customer pages never render the operator nav', () => {
   // THE REGRESSION THIS EXISTS FOR: Shell.tsx decided chrome from a second list of
   // pathnames kept in sync with CUSTOMER_PAGES by hand. It drifted three times. The
-  // last drift shipped the operator bot-console nav — SPARK, SPARK2, INFERNO, BLAZE,
+  // last drift shipped the operator bot-console nav — SPARK, INFERNO, BLAZE,
   // FLARE, Compare — onto /support and /account/billing for signed-in customers, where
   // every one of those links 404s and the internal-only bot names must never appear.
   //

@@ -5,8 +5,19 @@ import { acceptedVersionsFor } from './service'
 import type { MembershipState } from './states'
 import { getProductionPauseState } from '@/lib/tradier'
 import { hasUsablePaymentMethod } from '@/lib/billing/stripe'
+import { decryptSecret } from '@/lib/crypto/secret-box'
 import type { ActivationInput } from './activation'
 import { isUuid } from './ids'
+
+/** A legacy/foreign ciphertext must never crash the activation read — treat it as "no match". */
+function safeDecryptAccountRef(ciphertext: string | null | undefined): string | null {
+  if (!ciphertext) return null
+  try {
+    return decryptSecret(ciphertext)
+  } catch {
+    return null
+  }
+}
 
 /**
  * Gather every input the activation predicate judges (spec §4).
@@ -33,6 +44,13 @@ export interface ActivationContext {
   config: ConfigRow
   account?: { id: string; eligibility: string; ineligible_reason: string | null; display_mask: string }
   stripeCustomerId: string | null
+  /** Needed to offer "resend the verification email" right on the review screen (§4). */
+  email: string
+  /** Most recent legal acceptance timestamp, ISO — the Review step's "Agreements"
+   *  row (en-6 #128: "Agreements (signer + timestamp)"). Display-only: deliberately
+   *  NOT part of `snapshot` below, since that object is what the consent hash binds
+   *  to and a clock value has no business changing what a customer is authorizing. */
+  legalSignedAt: string | null
   snapshot: ActivationSnapshot
   hash: string
   /** Everything except the two acknowledgments and the client's preview hash, which are per-request. */
@@ -95,18 +113,93 @@ export async function loadActivationContext(
     }
   }
 
-  const user = (await customerQuery<{ stripe_customer_id: string | null }>(
-    `SELECT stripe_customer_id FROM users WHERE id = $1 LIMIT 1`,
+  const user = (await customerQuery<{ stripe_customer_id: string | null; email: string; email_verified: boolean }>(
+    `SELECT stripe_customer_id, email, email_verified FROM users WHERE id = $1 LIMIT 1`,
     [userId],
   ))[0]
+
+  // Ember one-per-person (design spec §3, §5 step 3): matched on VERIFIED IDENTITY
+  // signals the system already has — email, verified phone, and the Google account
+  // (auth_user_id when auth_provider='google') — not just the email on this one row,
+  // so a second signup with a different email can't open a second free Ember account
+  // by reusing the same verified phone or the same Google sign-in. No new PII is ever
+  // collected for this check; every column read here is already captured at signup.
+  // Only ever queried for Ember — Spark/Flame always get an explicit `false` below,
+  // never left unset.
+  let emberConflict =
+    config.agent_code === 'ember'
+      ? Boolean(
+          (
+            await customerQuery<{ conflict: boolean }>(
+              `SELECT EXISTS (
+                 SELECT 1
+                   FROM customer_bot_subscriptions cbs
+                   JOIN users other ON other.id = cbs.user_id
+                   JOIN users me ON me.id = $1
+                  WHERE cbs.bot = 'ember'
+                    AND cbs.status IN ('active', 'trialing')
+                    AND other.id <> me.id
+                    AND (
+                      lower(other.email) = lower(me.email)
+                      OR (other.phone_verified AND me.phone_verified AND other.phone = me.phone)
+                      OR (
+                        other.auth_provider = 'google' AND me.auth_provider = 'google'
+                        AND other.auth_user_id = me.auth_user_id
+                      )
+                    )
+               ) AS conflict`,
+              [userId],
+            )
+          )[0]?.conflict,
+        )
+      : false
+
+  // A fourth verified signal the email/phone/Google query can't reach: the funded
+  // brokerage account itself. Someone can sign up with a new email, a new phone, and
+  // no Google account, and still be connecting the SAME account Tradier/SnapTrade
+  // already told us about for their first Ember enrollment. `external_account_ref_ciphertext`
+  // is already stored for order execution (customer-executor/executor.ts) — this reads
+  // it, never collects it fresh — so decrypt-and-compare the real account number
+  // against every OTHER person's active/trialing Ember account before clearing this gate.
+  if (!emberConflict && config.agent_code === 'ember' && account?.id) {
+    const mine = (
+      await customerQuery<{ ref: string | null }>(
+        `SELECT external_account_ref_ciphertext AS ref FROM broker_accounts WHERE id = $1 LIMIT 1`,
+        [account.id],
+      )
+    )[0]
+    const myAccountNumber = mine?.ref ? safeDecryptAccountRef(mine.ref) : null
+    if (myAccountNumber) {
+      const others = await customerQuery<{ ref: string | null }>(
+        `SELECT ba.external_account_ref_ciphertext AS ref
+           FROM customer_bot_subscriptions cbs
+           JOIN brokerage_connections bc ON bc.user_id = cbs.user_id
+           JOIN broker_accounts ba ON ba.connection_id = bc.id
+          WHERE cbs.bot = 'ember'
+            AND cbs.status IN ('active', 'trialing')
+            AND cbs.user_id <> $1`,
+        [userId],
+      )
+      emberConflict = others.some(
+        (o) => o.ref != null && safeDecryptAccountRef(o.ref) === myAccountNumber,
+      )
+    }
+  }
 
   // Kill-switch read FAILS CLOSED: an unreadable pause state counts as engaged. The same
   // rule as the live page — an error must never read as permission to trade.
   const pause = await getProductionPauseState(config.agent_code).catch(() => ({ paused: true }))
   const accepted = await acceptedVersionsFor(userId)
-  const paymentMethodValid = user?.stripe_customer_id
-    ? await hasUsablePaymentMethod(user.stripe_customer_id)
-    : false
+  // Ember is free — no card is ever collected (enrollment skips billing entirely, see
+  // service.ts recordAcceptances), so there is no Stripe payment method to check. The
+  // generic PAYMENT_METHOD_INVALID gate would otherwise permanently block activation
+  // for every Ember customer.
+  const paymentMethodValid =
+    config.agent_code === 'ember'
+      ? true
+      : user?.stripe_customer_id
+        ? await hasUsablePaymentMethod(user.stripe_customer_id)
+        : false
 
   const snapshot: ActivationSnapshot = {
     userId,
@@ -119,10 +212,17 @@ export async function loadActivationContext(
     legalVersions: accepted.map((a) => `${a.code}@${a.version}`),
   }
 
+  const acceptedTimestamps = accepted.map((a) => a.acceptedAt).filter((d): d is Date => d != null)
+  const legalSignedAt = acceptedTimestamps.length
+    ? new Date(Math.max(...acceptedTimestamps.map((d) => d.getTime()))).toISOString()
+    : null
+
   return {
     config,
     account,
     stripeCustomerId: user?.stripe_customer_id ?? null,
+    email: user?.email ?? '',
+    legalSignedAt,
     snapshot,
     hash: previewHash(snapshot),
     inputs: {
@@ -134,6 +234,11 @@ export async function loadActivationContext(
       accountIneligibleReason: account?.ineligible_reason ?? undefined,
       agentConfig: config.status as never,
       killSwitchEngaged: pause.paused === true,
+      emberConflict,
+      // Fail-closed like every other gate here: no row / unreadable email_verified
+      // reads as NOT verified, never as permission to go live (en-1 "require it
+      // before go-live").
+      emailVerified: user?.email_verified === true,
     },
   }
 }

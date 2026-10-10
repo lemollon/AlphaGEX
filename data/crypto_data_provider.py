@@ -23,6 +23,8 @@ from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
 
+from data.free_funding import get_free_funding_rate
+
 logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -375,44 +377,94 @@ class CoinGlassClient:
     def get_funding_rate(self, symbol: str = "ETH") -> Optional[FundingRate]:
         """Get current funding rate across exchanges.
 
-        Uses v2 /funding endpoint which returns an array of exchange data.
-        We compute a simple average across exchanges for the target symbol.
+        Source order (first one that returns data wins):
+          1. v4 futures/funding-rate/exchange-list - per-exchange current rates.
+          2. v4 futures/funding-rate/oi-weight-history - latest OI-weighted close
+             (same endpoint the charts already use, so it works on our plan).
+          3. legacy v2 /funding - kept as a last resort only. v2 is retired and
+             rejects v4 keys ("API key missing"), which left funding_regime
+             UNKNOWN on every perp bot.
+        All sources report the rate in the same percent-per-interval units.
         """
+        rates = self._funding_rates_v4_exchange_list(symbol)
+        if not rates:
+            rates = self._funding_rates_v4_oi_weighted(symbol)
+        if not rates:
+            rates = self._funding_rates_v2(symbol)
+        if not rates:
+            logger.debug(f"CoinGlass: No funding rates found for {symbol}")
+            return None
+
+        rate = sum(rates) / len(rates)
+        # Annualize: 3 funding periods/day * 365 days
+        annualized = rate * 3 * 365
+
+        return FundingRate(
+            symbol=symbol,
+            rate=rate,
+            predicted_rate=rate,  # no predicted rate on these endpoints; use current
+            exchange="aggregate",
+            interval_hours=8,
+            annualized_rate=annualized,
+            timestamp=datetime.now(CENTRAL_TZ),
+        )
+
+    def _funding_rates_v4_exchange_list(self, symbol: str) -> List[float]:
+        data = self._request(
+            "futures/funding-rate/exchange-list", {"symbol": symbol}, version="v4"
+        )
+        if not data or not isinstance(data, list):
+            return []
+        rates: List[float] = []
+        for entry in data:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("symbol", "")).upper() != symbol.upper():
+                continue
+            for ex in entry.get("stablecoin_margin_list") or []:
+                try:
+                    r = ex.get("funding_rate")
+                    if r is None:
+                        continue
+                    # Normalize non-8h intervals (e.g. 1h/4h venues) to 8h.
+                    interval = float(ex.get("funding_rate_interval") or 8)
+                    rates.append(float(r) * (8.0 / interval if interval > 0 else 1.0))
+                except (TypeError, ValueError, AttributeError):
+                    continue
+            break  # found our symbol
+        return rates
+
+    def _funding_rates_v4_oi_weighted(self, symbol: str) -> List[float]:
+        data = self._request(
+            "futures/funding-rate/oi-weight-history",
+            {"symbol": symbol, "interval": "h8", "limit": 1},
+            version="v4",
+        )
+        if not data or not isinstance(data, list):
+            return []
+        try:
+            close = data[-1].get("close")
+            return [float(close)] if close is not None else []
+        except (TypeError, ValueError, AttributeError):
+            return []
+
+    def _funding_rates_v2(self, symbol: str) -> List[float]:
         data = self._request("funding", {"symbol": symbol, "time_type": "all"}, version="v2")
         if not data or not isinstance(data, list):
-            return None
+            return []
+        rates: List[float] = []
         try:
-            # v2 returns list of exchanges. Find our symbol and average the rates.
-            rates = []
             for entry in data:
                 if entry.get("symbol", "").upper() == symbol.upper():
-                    margin_list = entry.get("uMarginList", [])
-                    for ex in margin_list:
+                    for ex in entry.get("uMarginList", []):
                         r = ex.get("rate")
                         if r is not None:
                             rates.append(float(r))
                     break  # found our symbol
-
-            if not rates:
-                logger.debug(f"CoinGlass: No funding rates found for {symbol}")
-                return None
-
-            rate = sum(rates) / len(rates)
-            # Annualize: 3 funding periods/day * 365 days
-            annualized = rate * 3 * 365
-
-            return FundingRate(
-                symbol=symbol,
-                rate=rate,
-                predicted_rate=rate,  # v2 doesn't provide predicted; use current
-                exchange="aggregate",
-                interval_hours=8,
-                annualized_rate=annualized,
-                timestamp=datetime.now(CENTRAL_TZ),
-            )
-        except (KeyError, TypeError, ValueError) as e:
-            logger.error(f"Failed to parse funding rate: {e}")
-            return None
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            logger.error(f"Failed to parse v2 funding rate: {e}")
+            return []
+        return rates
 
     def get_funding_rate_history(
         self, symbol: str = "ETH", interval: str = "h4", limit: int = 180
@@ -992,6 +1044,12 @@ class CryptoDataProvider:
                         shorts_above, key=lambda x: x.short_liquidation_usd
                     ).price_level
 
+        if snapshot.funding_rate is None:
+            # CoinGlass unavailable (plan lapsed / key missing): funding is
+            # public on every perp venue, so read it free rather than trading
+            # blind on funding_regime UNKNOWN.
+            snapshot.funding_rate = get_free_funding_rate(symbol)
+
         # Only query Deribit options for currencies Deribit actually lists.
         # Calling get_options_chain_data on unsupported symbols (XRP, DOGE,
         # SHIB, AVAX, LINK, LTC, BCH) returns HTTP 400 and spams logs; the
@@ -1029,10 +1087,12 @@ class CryptoDataProvider:
         return snapshot
 
     def get_funding_rate(self, symbol: str = "ETH") -> Optional[FundingRate]:
-        """Get current funding rate."""
+        """Get current funding rate (CoinGlass, else free exchange APIs)."""
         if self._coinglass:
-            return self._coinglass.get_funding_rate(symbol)
-        return None
+            rate = self._coinglass.get_funding_rate(symbol)
+            if rate is not None:
+                return rate
+        return get_free_funding_rate(symbol)
 
     def get_liquidations(self, symbol: str = "ETH") -> List[LiquidationCluster]:
         """Get liquidation cluster data."""

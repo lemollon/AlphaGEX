@@ -72,7 +72,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(e, { status: statusFor(e.code) })
   }
   const agent = typeof body.agent === 'string' ? body.agent.toLowerCase() : null
-  if (agent !== null && agent !== 'spark' && agent !== 'flame') {
+  // Ember included (handoff #178 — Ember had no Pause control anywhere). This only
+  // flips the customer's own `activations.status` flag; it does not touch Ember's
+  // execution path (REFLEX, dev/meltup/ember/run_reflex.py) at all — REFLEX reads
+  // nothing from this table today, so this is deliberately a flag-only extension
+  // until/unless REFLEX is wired to respect it.
+  if (agent !== null && agent !== 'spark' && agent !== 'flame' && agent !== 'ember') {
     const e = errorEnvelope('VALIDATION_FAILED', 'Unknown agent.', { field: 'agent' })
     return NextResponse.json(e, { status: statusFor(e.code) })
   }

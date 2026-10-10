@@ -40,7 +40,9 @@ type Transitions<S extends string> = Readonly<Record<S, readonly S[]>>
 
 export const ENROLLMENT_TRANSITIONS: Transitions<EnrollmentState> = {
   draft: ['legal_pending', 'abandoned'],
-  legal_pending: ['billing_pending', 'draft', 'abandoned'],
+  // Ember (free, no card ever) skips billing_pending entirely — legal -> setup_required
+  // direct, written by service.ts recordAcceptances when selected_plan === 'ember'.
+  legal_pending: ['billing_pending', 'setup_required', 'draft', 'abandoned'],
   // Community completes at billing; Automate lands in setup_required. Both are reachable
   // from billing, which is exactly the plan-specific branch in §1.
   billing_pending: ['setup_required', 'complete', 'legal_pending', 'abandoned'],

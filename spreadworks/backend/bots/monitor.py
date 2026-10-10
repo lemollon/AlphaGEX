@@ -78,6 +78,7 @@ def decide_exit(
     hold_days: int | None = None,
     hold_minutes: int | None = None,
     settle_at_expiry: bool = False,
+    pivot_confirmed: bool = False,
 ) -> ExitDecision:
     if event_blackout:
         return ExitDecision(True, "EVENT_HALT")
@@ -92,6 +93,28 @@ def decide_exit(
     # already unaffected in practice (their pt_pct/sl_pct were documented as
     # unreachable), so this is a no-op for them and a real guarantee for EBB.
     if settle_at_expiry:
+        # ONE exception, added 2026-08-18: the CONFIRMED-DIRECTION pivot.
+        #
+        # "No stop by design" is correct and stays correct — every previous
+        # stop test on this stream failed. Re-measured on 892 sessions of real
+        # expiry-day NBBO, the control is unambiguous: closing on a 0.10%
+        # down-break UNCONDITIONALLY fires on 45.7% of days and LOSES $1,050.
+        # That is the finding that made "never buy it back" the rule.
+        #
+        # The same exit gated on the morning put/call MIX being extreme is a
+        # different animal — it fires on 3.7% of days and adds +$952
+        # (t=+1.95), lifting EBB from $3.13 to $4.20/trade and ret/DD from
+        # 2.98 to 5.55 with the worst month improving -$581 -> -$350. Positive
+        # in all four years and in every offset/wing variant tried (+$778 to
+        # +$1,517). It wins on only 42% of its firings: this truncates the
+        # tail, it does not improve the median.
+        #
+        # 🚨 So the gate is the whole edge. `pivot_confirmed` must NEVER be
+        # set from price alone — it requires stage 1 (flow mix) AND stage 2
+        # (price commitment). Loosening it back toward a plain stop walks
+        # straight into the control's -$1,050.
+        if pivot_confirmed:
+            return ExitDecision(True, "PIVOT")
         return ExitDecision(False, None)
 
     if mtm_pnl >= pt_target_pnl:

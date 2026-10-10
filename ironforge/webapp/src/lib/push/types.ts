@@ -14,6 +14,11 @@ export type NotificationCategory =
   | 'brokerage_health'
   | 'billing'
   | 'community'
+  // db-controls #202: the two Settings alert toggles ("big moves on an open
+  // trade", "daily summary") had UI rows and DB columns but no category here
+  // and no sender — switching either on did nothing. See push/alert-events.ts.
+  | 'big_move'
+  | 'daily_summary'
 
 /** Maps a category to the boolean column in notification_prefs that gates it. */
 export const CATEGORY_PREF_COLUMN: Record<NotificationCategory, string> = {
@@ -23,6 +28,8 @@ export const CATEGORY_PREF_COLUMN: Record<NotificationCategory, string> = {
   brokerage_health: 'brokerage_health',
   billing: 'billing',
   community: 'community',
+  big_move: 'big_move',
+  daily_summary: 'daily_summary',
 }
 
 /**
@@ -42,6 +49,12 @@ export const STALE_AFTER_SEC: Record<NotificationCategory, number> = {
   brokerage_health: 1800,
   billing: 86400,
   community: 3600,
+  // A swing worth flagging is still worth flagging a half hour later — the
+  // position is (by definition) still open and still moved.
+  big_move: 1800,
+  // Fires once, after close; same generous window as billing so a late-running
+  // scan cycle can't silently drop the day's recap.
+  daily_summary: 86400,
 }
 
 export interface NotificationEvent {
@@ -58,6 +71,9 @@ export interface NotificationEvent {
   routeParams?: Record<string, string>
   /** Human-facing copy fragments. Amounts travel separately — see `amount`. */
   title: string
+  /** Second line on platforms that render one (iOS notification subtitle). Optional —
+   * most categories never set it; render.ts only forwards it when present. */
+  subtitle?: string
   body: string
   /**
    * Money. NEVER interpolated into title/body by the caller; render.ts decides whether
@@ -74,6 +90,7 @@ export interface NotificationEvent {
 export interface PushMessage {
   to: string
   title: string
+  subtitle?: string
   body: string
   sound: 'default' | null
   priority: 'default' | 'high'

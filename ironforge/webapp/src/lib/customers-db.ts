@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS community_messages (
   channel_id UUID NOT NULL REFERENCES community_channels(id),
   user_id UUID REFERENCES users(id),
   sender_name TEXT NOT NULL,
-  sender_type VARCHAR(25) NOT NULL DEFAULT 'USER',   -- USER | FORGE | SYSTEM
+  sender_type VARCHAR(25) NOT NULL DEFAULT 'member', -- member | sparky | flame_ai (legacy rows: USER | FORGE | SYSTEM)
   message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -237,15 +237,91 @@ CREATE TABLE IF NOT EXISTS community_moderation_events (
   message_excerpt TEXT,
   category TEXT NOT NULL,
   score NUMERIC,
-  action TEXT NOT NULL,                              -- REJECTED | WARNING
+  action TEXT NOT NULL,                              -- REJECTED | WARNING | PENDING
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- #218: moderation fails CLOSED. When the AI scorer itself errors (outage, a
+-- non-2xx, or an unparseable response), the post is held here instead of
+-- publishing unchecked to community_messages — the content is never lost,
+-- just not live until a human (or a later retry) clears it. No reviewer UI
+-- ships with this table yet; it exists so "never silently publish" has
+-- somewhere real to hold the message rather than discarding it.
+CREATE TABLE IF NOT EXISTS community_pending_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id UUID NOT NULL REFERENCES community_channels(id),
+  user_id UUID REFERENCES users(id),
+  sender_name TEXT NOT NULL,
+  message TEXT NOT NULL,
+  parent_id UUID REFERENCES community_messages(id),
+  reason TEXT NOT NULL,                              -- moderateMessage()'s category, e.g. MODERATION_UNAVAILABLE
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Sparky conversation memory (#264). POST /api/sparky/chat is stateful — the
+-- client sends only {message, conversationId}, not the whole transcript, so
+-- the history has to live somewhere server-side. /api/support/chat (the
+-- older, stateless, client-resends-history route) is untouched and keeps
+-- working for app builds that still call it.
+CREATE TABLE IF NOT EXISTS sparky_conversations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_conversations_user ON sparky_conversations(user_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS sparky_messages (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id UUID NOT NULL REFERENCES sparky_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,                                -- user | assistant
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sparky_messages_conversation ON sparky_messages(conversation_id, created_at);
 
 -- Dedupe ledger for Forge's scheduled community posts (one row per slot).
 CREATE TABLE IF NOT EXISTS community_forge_posts (
   slot_key TEXT PRIMARY KEY,                         -- e.g. 2026-07-09-premarket
   message_id UUID REFERENCES community_messages(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- User-generated-content safety controls. Google Play's UGC policy requires an
+-- in-app way to REPORT objectionable content and to BLOCK another user; without
+-- both, a community feature is a review/takedown risk regardless of moderation.
+-- Reporting is open to anyone with a session (reading the feed does not need a
+-- membership, so neither does flagging something in it).
+CREATE TABLE IF NOT EXISTS community_message_reports (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  message_id UUID NOT NULL REFERENCES community_messages(id) ON DELETE CASCADE,
+  reporter_id UUID NOT NULL REFERENCES users(id),
+  reported_user_id UUID REFERENCES users(id),        -- author at report time; NULL for FORGE/SYSTEM
+  reason TEXT NOT NULL,                              -- SPAM | HARASSMENT | HATE | ADVICE | OTHER
+  message_excerpt TEXT,                              -- frozen copy: the post may be deleted
+  status TEXT NOT NULL DEFAULT 'OPEN',               -- OPEN | REVIEWED | ACTIONED | DISMISSED
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (message_id, reporter_id)                   -- one report per person per post
+);
+CREATE INDEX IF NOT EXISTS idx_community_reports_open
+  ON community_message_reports(status, created_at);
+
+-- A block is one-directional and viewer-scoped: it hides the blocked author from
+-- the blocker's feed only. Nothing is deleted, so the blocked user sees no change.
+CREATE TABLE IF NOT EXISTS community_blocks (
+  blocker_id UUID NOT NULL REFERENCES users(id),
+  blocked_id UUID NOT NULL REFERENCES users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+);
+
+-- Per-viewer "last seen the community feed" marker (mobile fidelity #229, the
+-- Community tab's unread badge). One row per user: everything posted after
+-- last_read_at, by someone else, counts as unread — see GET /api/community/unread.
+CREATE TABLE IF NOT EXISTS community_reads (
+  user_id UUID PRIMARY KEY REFERENCES users(id),
+  last_read_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Billing (Stripe subscriptions; see lib/billing/*). A customer subscribes to a
@@ -266,6 +342,16 @@ CREATE TABLE IF NOT EXISTS customer_bot_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_user ON customer_bot_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_sub ON customer_bot_subscriptions(stripe_subscription_id);
+
+-- Apple In-App Purchase (iOS, Guideline 3.1.1). StoreKit 2 is a SECOND billing rail
+-- alongside Stripe — provider distinguishes which one wrote a row so the membership
+-- view and the CRM sync can render/route correctly. apple_original_transaction_id is
+-- StoreKit's originalTransactionId, the stable identifier across renewals for one
+-- subscription purchase (see lib/billing/apple/*). ADD COLUMN IF NOT EXISTS so this
+-- runs safely against a DB that already has the table from before Apple existed.
+ALTER TABLE customer_bot_subscriptions ADD COLUMN IF NOT EXISTS provider TEXT NOT NULL DEFAULT 'stripe';
+ALTER TABLE customer_bot_subscriptions ADD COLUMN IF NOT EXISTS apple_original_transaction_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_customer_bot_subs_apple ON customer_bot_subscriptions(apple_original_transaction_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Enrollment / activation (Enrollment spec §5). The rule these exist to enforce:
@@ -549,6 +635,66 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_customer_positions_source_user
 CREATE INDEX IF NOT EXISTS idx_customer_positions_user ON customer_positions(user_id);
 CREATE INDEX IF NOT EXISTS idx_customer_positions_status ON customer_positions(status);
 
+-- CUSTOMER_FLINT (2026-09-28): explicit leg-shape tag, so CLOSE never has to re-infer
+-- structure from strikes (ambiguous once a call-only row exists — see the OpenCustomerPosition
+-- doc comment in lib/customer-executor/executor.ts). 'strategy' distinguishes FLINT's
+-- profits-only sleeve from the main FLAME/SPARK mirror for customer-facing labeling — NULL/old
+-- rows default to 'main', which is correct for every row that predates FLINT mirroring.
+ALTER TABLE customer_positions ADD COLUMN IF NOT EXISTS leg_kind TEXT;
+ALTER TABLE customer_positions ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'main';
+
+-- CUSTOMER_FLINT decision log (spec step 5): one row per customer per bot per trading
+-- day, overwritten in place as the evaluation progresses (gate skip -> cushion skip ->
+-- placed), so the LATEST state is always what's queried. Kept separate from
+-- customer_positions because a SKIPPED customer never gets a customer_positions row at
+-- all today (skip_reason only exists post-claim) — this table is the complete daily
+-- record, eligible or not, independent of whether an order was ever placed.
+CREATE TABLE IF NOT EXISTS flint_customer_decisions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trade_date DATE NOT NULL,
+  user_id UUID NOT NULL REFERENCES users(id),
+  agent_code TEXT NOT NULL,                          -- flame | spark
+  source_position_id TEXT NOT NULL,                  -- the day's FLINT master position_id
+  eligible BOOLEAN NOT NULL,
+  reason TEXT NOT NULL,
+  equity_cents BIGINT,
+  deposit_cents BIGINT,
+  cushion_cents BIGINT,
+  flint_max_loss_cents BIGINT NOT NULL,
+  margin_cents BIGINT NOT NULL,
+  contracts INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_flint_customer_decisions_day
+  ON flint_customer_decisions (trade_date, user_id, agent_code);
+CREATE INDEX IF NOT EXISTS idx_flint_customer_decisions_user ON flint_customer_decisions(user_id);
+
+-- CUSTOMER_DEPOSIT_FLOOR (2026-09-28, ROUND 8 rule: K=0.1/N=3/variant G, see
+-- contracts.ts evaluateDepositFloorCap) — sticky per-customer-per-bot state for the
+-- profit-protection floor. Keyed per (user_id, agent_code) because FLAME and SPARK
+-- are separate books/deposits in the sim (and can be separate broker_account_id's per
+-- agent_config here) — a customer enrolled in both gets independent state for each.
+-- 'triggered' is one-way: once true, NEVER reset back to false by this app.
+-- 'peak_equity_cents' is the running max of ACTUAL equity ever observed, ratcheted
+-- once per day (the one trade-decision point) from a live broker read — ROUND 8's
+-- floor level (deposit + K*peak_profit) is derived from this, never persisted
+-- separately, since deposit + K*max(peak_equity-deposit,0) is already monotonically
+-- non-decreasing as long as peak_equity itself only grows.
+CREATE TABLE IF NOT EXISTS customer_deposit_floor_state (
+  user_id UUID NOT NULL REFERENCES users(id),
+  agent_code TEXT NOT NULL,                          -- flame | spark
+  deposit_cents BIGINT NOT NULL,                      -- fixed baseline, set once, never rewritten
+  triggered BOOLEAN NOT NULL DEFAULT FALSE,
+  trigger_date DATE,
+  peak_equity_cents BIGINT,
+  last_equity_cents BIGINT,
+  last_equity_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, agent_code)
+);
+-- Additive for DBs where this table already existed pre-ROUND-8 (K=0/S rows have no peak yet).
+ALTER TABLE customer_deposit_floor_state ADD COLUMN IF NOT EXISTS peak_equity_cents BIGINT;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- CRM outbox (lib/crm). Every lifecycle event destined for Attio lands here first
 -- and is delivered by a background drain, instead of each call site doing an
@@ -673,6 +819,12 @@ CREATE TABLE IF NOT EXISTS push_devices (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_push_devices_user ON push_devices(user_id) WHERE enabled;
+-- locale/tz (mobile fidelity #270) — the device's own IETF locale ("en-US") and
+-- IANA zone ("America/Chicago"), sent at registration. Nothing reads these yet; they
+-- exist so a future send-time/localization feature has real per-device data instead
+-- of having to backfill it from nothing.
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS locale TEXT;
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS tz TEXT;
 
 -- Per-customer category switches. show_amounts_on_lockscreen defaults FALSE so a
 -- customer who never opens settings does not get their P&L on a locked screen in
@@ -688,6 +840,23 @@ CREATE TABLE IF NOT EXISTS notification_prefs (
   show_amounts_on_lockscreen BOOLEAN NOT NULL DEFAULT FALSE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Additive on already-created DBs (UAT #7): a "Sound" toggle (defaults ON — every
+-- push already plays a sound today, so this must not silently change existing
+-- behavior) and a "Weekly summary" toggle (defaults OFF — no sender exists yet,
+-- this column only exists so the Account-tab row has something real to write to).
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS sound BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS weekly_summary BOOLEAN NOT NULL DEFAULT FALSE;
+-- db-controls #202: the dev-handoff spec's Alerts section lists "big moves on an open
+-- trade" and "daily summary" alongside trade opened/closed — same additive pattern and
+-- same reasoning as weekly_summary above (no sender exists yet; defaults OFF).
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS big_move BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE notification_prefs ADD COLUMN IF NOT EXISTS daily_summary BOOLEAN NOT NULL DEFAULT FALSE;
+-- #255: the mobile app now offers "Daily summary" where it used to offer "Weekly
+-- summary" — existing weekly opt-ins are migrated forward to daily rather than
+-- silently going quiet. Narrowed to rows not already on daily, so this is a no-op
+-- on every boot after the first; web's own Settings screen still offers both
+-- toggles independently and is untouched by this.
+UPDATE notification_prefs SET daily_summary = TRUE WHERE weekly_summary = TRUE AND daily_summary = FALSE;
 
 -- Dedupe + state ledger. The PK makes "once per eligible event" an atomic
 -- INSERT ... ON CONFLICT DO NOTHING RETURNING — the same idiom already proven by
@@ -742,6 +911,200 @@ CREATE TABLE IF NOT EXISTS account_deletion_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_deletion_req_one_open
   ON account_deletion_requests(user_id) WHERE status = 'requested';
 CREATE INDEX IF NOT EXISTS idx_deletion_req_status ON account_deletion_requests(status, requested_at);
+
+-- Community category chips (APP-054). Renames display names IN PLACE — slugs stay
+-- stable because messages already reference them (news-events, all-chat); renaming a
+-- slug would orphan every post already tagged with it for zero UI benefit.
+UPDATE community_channels SET name = 'All' WHERE slug = 'all-chat' AND name <> 'All';
+UPDATE community_channels SET name = 'News' WHERE slug = 'news-events' AND name <> 'News';
+-- Defensive re-seed: a deploy that only ever ran an earlier version of this blob
+-- could be missing one of the five default channels. ON CONFLICT DO NOTHING makes
+-- this a no-op everywhere the row already exists.
+INSERT INTO community_channels (slug, name, sort_order) VALUES
+  ('all-chat', 'All', 0),
+  ('market-talk', 'Market Talk', 1),
+  ('trade-ideas', 'Trade Ideas', 2),
+  ('news-events', 'News', 3),
+  ('general', 'General', 4)
+ON CONFLICT (slug) DO NOTHING;
+
+-- Threaded replies (APP-055 / APP-031). A reply is an ordinary message with a
+-- parent; NULL means top-level. Self-referencing FK, added as a column rather than
+-- folded into the CREATE TABLE above (which predates threads).
+ALTER TABLE community_messages ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES community_messages(id);
+CREATE INDEX IF NOT EXISTS idx_community_messages_parent ON community_messages(parent_id) WHERE parent_id IS NOT NULL;
+
+-- Mobile product analytics (APP-048). owner_id is nullable-in-spirit but stored NOT
+-- NULL from a resolved identity — POST /api/v1/analytics/events is bearer-guarded,
+-- so there is never an anonymous event to attribute. props is the client's already-
+-- redacted payload; the route strips the same sensitive keys again server-side
+-- (belt and suspenders — a compromised or out-of-date client is not the only thing
+-- this guards against).
+CREATE TABLE IF NOT EXISTS mobile_analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  owner_id UUID NOT NULL REFERENCES users(id),
+  event TEXT NOT NULL,
+  props JSONB,
+  ts TIMESTAMPTZ NOT NULL,
+  app_version TEXT,
+  platform TEXT,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_owner ON mobile_analytics_events(owner_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_mobile_analytics_events_event ON mobile_analytics_events(event, ts DESC);
+
+-- First-party page-view analytics (9/3 traffic dashboard). ONE row per
+-- (day, path, rotating-daily-visitor-hash); hits increments on repeat views. NO
+-- IP, user agent, or cookie is ever stored — visitor is a sha256 of a daily salt
+-- (see lib/track.ts visitorHash), so it rotates every day and cannot be
+-- correlated across days or tied back to a person. Written by the public,
+-- unauthenticated POST /api/track; read by GET /api/ops/traffic.
+CREATE TABLE IF NOT EXISTS page_views (
+  day DATE NOT NULL,
+  path TEXT NOT NULL,
+  visitor TEXT NOT NULL,
+  hits INTEGER NOT NULL DEFAULT 1,
+  first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (day, path, visitor)
+);
+CREATE INDEX IF NOT EXISTS idx_page_views_day ON page_views(day);
+
+-- 6-digit email verification code (9/5, mobile enrollment follow-up). Additive
+-- alongside the existing link token in the SAME row — resend rotates both. The
+-- code itself is never stored: only its sha256(code + user_id) hash, so a DB
+-- leak alone cannot be used to verify an account. code_attempts caps guessing
+-- at 5 wrong tries (verify-code/route.ts), independent of the link's own TTL.
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_hash TEXT;
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_expires_at TIMESTAMPTZ;
+ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS code_attempts INT NOT NULL DEFAULT 0;
+
+-- Waitlist email drip (9/8, Waitlist Communication Kit Emails 1-6). One row per
+-- subscriber, keyed on lower(email) so the SAME person can never be enrolled twice
+-- (the kit's "duplicates" suppression, enforced by the index rather than by a scan).
+-- stage is the last email SENT (0 = nothing yet); next_send_at is when stage+1 is
+-- due. status: active | sending (claimed by a drain tick) | completed (stage 6 sent) |
+-- suppressed (never send again; suppression_reason says why) | failed (send kept
+-- erroring; operator attention). unsubscribe_token is an opaque 128-bit random
+-- secret — the preferences/unsubscribe URLs — revocable per row, no signing key to rotate.
+CREATE TABLE IF NOT EXISTS waitlist_sequence (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  email TEXT NOT NULL,
+  first_name TEXT,
+  submission_id TEXT,
+  stage SMALLINT NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active',
+  next_send_at TIMESTAMPTZ,
+  last_sent_at TIMESTAMPTZ,
+  send_attempts SMALLINT NOT NULL DEFAULT 0,
+  last_error TEXT,
+  suppression_reason TEXT,
+  suppressed_at TIMESTAMPTZ,
+  unsubscribe_token TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_sequence_email ON waitlist_sequence(lower(email));
+CREATE INDEX IF NOT EXISTS idx_waitlist_sequence_due ON waitlist_sequence(status, next_send_at);
+
+-- Send log. The partial unique index is the idempotency guarantee: at most ONE
+-- successful send per (subscriber, stage), whatever the drain does. Failed attempts
+-- are logged as their own rows so a retry is visible, not overwritten.
+CREATE TABLE IF NOT EXISTS waitlist_sequence_sends (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  sequence_id UUID NOT NULL REFERENCES waitlist_sequence(id),
+  stage SMALLINT NOT NULL,
+  status TEXT NOT NULL,                              -- sent | failed
+  resend_message_id TEXT,
+  error TEXT,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_waitlist_sequence_sends_sent
+  ON waitlist_sequence_sends(sequence_id, stage) WHERE status = 'sent';
+CREATE INDEX IF NOT EXISTS idx_waitlist_sequence_sends_seq ON waitlist_sequence_sends(sequence_id, stage);
+
+-- Per-address marketing preference. Keyed on the lowercased address so it outlives
+-- any one sequence row and is honoured by every future marketing send.
+CREATE TABLE IF NOT EXISTS email_preferences (
+  email TEXT PRIMARY KEY,
+  unsubscribed BOOLEAN NOT NULL DEFAULT FALSE,
+  unsubscribed_at TIMESTAMPTZ,
+  resubscribed_at TIMESTAMPTZ,
+  source TEXT,                                       -- link | one-click | preferences | ops
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Provider delivery events (Resend webhook): bounces and complaints. provider_event_id
+-- is the Svix message id, so a redelivered webhook inserts nothing the second time.
+-- A Permanent bounce or a complaint suppresses the address at the next send check.
+CREATE TABLE IF NOT EXISTS email_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  provider TEXT NOT NULL DEFAULT 'resend',
+  provider_event_id TEXT UNIQUE,
+  event_type TEXT NOT NULL,
+  email TEXT NOT NULL,
+  message_id TEXT,
+  bounce_type TEXT,                                  -- Permanent | Transient | NULL
+  payload JSONB,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_email_events_email ON email_events(lower(email), event_type);
+
+-- Notification HISTORY feed (10.4 gap audit: the app.html notifications sheet and
+-- dashboard bell show a past-events feed, but only /preferences and /devices existed
+-- to back it). ONE row per customer per event actually pushed — written from inside
+-- dispatchToCustomers (lib/push/dispatch.ts), the single place every push category
+-- (trade_opened/closed/approval, brokerage_health, billing, community) already funnels
+-- through, so this is never a second, divergent notification trigger. 'kind' mirrors
+-- NotificationCategory; 'data' carries the same deep-link payload the push itself sends
+-- (route/params/amount) so the feed can reuse the existing tap-routing logic instead of
+-- inventing new navigation. Title/body are the UNREDACTED copy — this feed is read
+-- in-app behind the customer's own auth, not a lock screen, so APP-035's redaction
+-- (which only governs the OS push banner) does not apply here.
+CREATE TABLE IF NOT EXISTS customer_notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  data JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  read_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_customer_notifications_feed ON customer_notifications(user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_customer_notifications_unread ON customer_notifications(user_id) WHERE read_at IS NULL;
+
+-- Google SSO ("Continue with Google", OAuth 2.0 + PKCE). auth_user_id already existed
+-- as a UNIQUE provider-identity slot but was never wired to anything — Google sign-in
+-- stores 'google:<sub>' there, namespaced so a future second provider can share the
+-- column without a collision. A Google account has no password and (at account-
+-- creation time) no phone/state collected — those three were NOT NULL for the
+-- email/password form's KYC fields, so a Google-created row needs them nullable.
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN phone DROP NOT NULL;
+ALTER TABLE users ALTER COLUMN state DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider TEXT NOT NULL DEFAULT 'password';
+
+-- First-party product analytics (dev-handoff events table, POST /api/v1/events).
+-- user_id is nullable because most of these events fire pre-login (marketing CTAs,
+-- the waitlist modal, the first enrollment steps) — anon_id (a client-generated UUID,
+-- never derived from IP/UA) is the join key for that case, the same way page_views
+-- uses a rotating visitor hash for the SAME reason. 'surface' distinguishes web from
+-- the two native shells so one funnel query can cover all three. No column here may
+-- ever hold a card/account/broker number, an email, or a phone — enforced at the
+-- route layer (route.ts strips those before this INSERT), not just by convention.
+CREATE TABLE IF NOT EXISTS analytics_events (
+  id BIGSERIAL PRIMARY KEY,
+  user_id UUID,
+  anon_id TEXT,
+  event TEXT NOT NULL,
+  props JSONB,
+  surface TEXT NOT NULL DEFAULT 'web',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_event_day ON analytics_events(event, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analytics_events_user ON analytics_events(user_id) WHERE user_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_analytics_events_anon ON analytics_events(anon_id) WHERE anon_id IS NOT NULL;
 `
 
 let _ensured: Promise<void> | null = null

@@ -275,6 +275,83 @@ def _ensure_config_vix_decay_max(conn, engine: Engine) -> None:
             )
 
 
+def _ensure_config_pivot_on_confirm(conn, engine: Engine) -> None:
+    """Idempotent column add for the confirmed-direction pivot (2026-08-18).
+
+    When set, a `settle_at_expiry` credit bot will close its position if the
+    two-stage watcher confirms a move AGAINST it — flow mix extreme in the
+    morning AND price then committing to a side. Validated on 892 sessions of
+    real expiry-day NBBO; see monitor.decide_exit for the numbers and the
+    control that makes the gate load-bearing.
+
+    NULL/0 means off, so every existing bot is unchanged and the fleet cannot
+    be silently armed. Only ebb/ebb_pm carry a default — they are the only
+    credit + settle_at_expiry bots, and the study is theirs.
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "pivot_on_confirm", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN pivot_on_confirm INTEGER NULL"
+            ))
+        # Same repeat-safe backfill discipline as the VIX gate above: runs on
+        # every startup, only ever fills "never configured", never an
+        # operator's value. That column shipped create-time-only once and left
+        # ebb ungated over a weekend — do not reintroduce that shape.
+        default = (BOT_REGISTRY[bot].get("defaults") or {}).get("pivot_on_confirm")
+        if default is not None:
+            conn.execute(
+                text(f"UPDATE {t} SET pivot_on_confirm = :v "
+                     "WHERE id = 1 AND pivot_on_confirm IS NULL"),
+                {"v": int(default)},
+            )
+
+
+def _ensure_config_cinder_gates(conn, engine: Engine) -> None:
+    """Idempotent column add for CINDER's three macro entry gates plus its
+    calendar-day cooldown (2026-10-05). All four are nullable and OFF unless
+    a bot's registry defaults set them — NULL/0/FALSE means no gate, so
+    every bot other than CINDER is unaffected. See scanner.py's "MACRO ENTRY
+    GATES" block for how each is consulted.
+
+    gex_ceiling_b        -- prior-session net_gex_b ($bn) must be <= this
+    live_vix_ratio_max   -- live VIX / trailing-20-session max must be < this
+    require_vix_contango -- 1 = require live VIX < VIX3M (normal contango)
+    entry_cooldown_days  -- minimum CALENDAR days since this bot's last entry
+    """
+    for bot in list_bots():
+        t = bot_table(bot, "config")
+        if not _column_exists(conn, t, "gex_ceiling_b", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN gex_ceiling_b NUMERIC NULL"
+            ))
+        if not _column_exists(conn, t, "live_vix_ratio_max", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN live_vix_ratio_max NUMERIC NULL"
+            ))
+        if not _column_exists(conn, t, "require_vix_contango", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN require_vix_contango INTEGER NULL"
+            ))
+        if not _column_exists(conn, t, "entry_cooldown_days", engine):
+            conn.execute(text(
+                f"ALTER TABLE {t} ADD COLUMN entry_cooldown_days INTEGER NULL"
+            ))
+        # Same repeat-safe backfill discipline as vix_decay_max/pivot_on_confirm:
+        # runs on every startup, only ever fills "never configured" rows.
+        defs = BOT_REGISTRY[bot].get("defaults") or {}
+        for col, caster in (
+            ("gex_ceiling_b", float), ("live_vix_ratio_max", float),
+            ("require_vix_contango", int), ("entry_cooldown_days", int),
+        ):
+            default = defs.get(col)
+            if default is not None:
+                conn.execute(
+                    text(f"UPDATE {t} SET {col} = :v WHERE id = 1 AND {col} IS NULL"),
+                    {"v": caster(default)},
+                )
+
+
 def create_bot_tables(engine: Engine) -> None:
     """Create all per-bot tables and seed a config row per bot.
 
@@ -292,6 +369,8 @@ def create_bot_tables(engine: Engine) -> None:
         _ensure_config_min_credit(conn, engine)
         _ensure_config_drift_offset(conn, engine)
         _ensure_config_vix_decay_max(conn, engine)
+        _ensure_config_pivot_on_confirm(conn, engine)
+        _ensure_config_cinder_gates(conn, engine)
         # Seed config rows — ON CONFLICT DO NOTHING means restart never
         # overwrites user-edited values.
         for bot in list_bots():
@@ -305,10 +384,13 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max"
+                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max, "
+                    "pivot_on_confirm, gex_ceiling_b, live_vix_ratio_max, "
+                    "require_vix_contango, entry_cooldown_days"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax, :pivot, "
+                    ":gexceil, :vratio, :contango, :cooldowndays"
                     ")"
                 )
             else:
@@ -317,10 +399,13 @@ def create_bot_tables(engine: Engine) -> None:
                     "id, starting_capital, enabled, max_contracts, bp_pct, sd_mult, "
                     "front_dte, back_dte, pt_pct, sl_pct, entry_start_ct, entry_end_ct, "
                     "eod_close_ct, discord_alerts, delta_skew, use_gex_walls, entry_days, "
-                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max"
+                    "allow_stacking, max_concurrent_positions, drift_offset, vix_decay_max, "
+                    "pivot_on_confirm, gex_ceiling_b, live_vix_ratio_max, "
+                    "require_vix_contango, entry_cooldown_days"
                     ") VALUES ("
                     ":id, :sc, :en, :mc, :bp, :sd, :fdte, :bdte, :pt, :sl, "
-                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax"
+                    ":es, :ee, :eod, :dc, :ds, :gw, :ed, :stk, :mcp, :drift, :vixmax, :pivot, "
+                    ":gexceil, :vratio, :contango, :cooldowndays"
                     ") ON CONFLICT (id) DO NOTHING"
                 )
             conn.execute(stmt, {
@@ -345,6 +430,11 @@ def create_bot_tables(engine: Engine) -> None:
                 "mcp": defs.get("max_concurrent_positions", 0),
                 "drift": defs.get("drift_offset", 3),
                 "vixmax": defs.get("vix_decay_max"),
+                "pivot": defs.get("pivot_on_confirm"),
+                "gexceil": defs.get("gex_ceiling_b"),
+                "vratio": defs.get("live_vix_ratio_max"),
+                "contango": defs.get("require_vix_contango"),
+                "cooldowndays": defs.get("entry_cooldown_days"),
             })
 
 

@@ -56,7 +56,7 @@ export default function TradeApprovalsClient() {
     return (
       <div className="rounded-2xl border border-white/10 bg-forge-card/90 p-8 text-center">
         <p className="text-sm text-gray-400">Please sign in to view your trades.</p>
-        <Link href="/login?next=/account/trades" className="mt-3 inline-block text-sm font-semibold text-amber-500 hover:text-amber-400">
+        <Link href="/login?next=/account/approvals" className="mt-3 inline-block text-sm font-semibold text-amber-500 hover:text-amber-400">
           Sign in
         </Link>
       </div>

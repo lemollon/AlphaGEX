@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
-import { evaluateAccountEligibility, maskAccountNumber } from '@/lib/enrollment/eligibility'
+import { evaluateAccountEligibility, maskAccountNumber, normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
+import { getKnownBotTradedTradierAccountNumbers } from '@/lib/customer-executor/bot-account-registry'
 import { encryptSecret } from '@/lib/crypto/secret-box'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 
@@ -115,6 +116,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         status: a.status as string | null,
         buyingPower: typeof a.buying_power === 'number' ? a.buying_power : null,
         brokerBlocked: a.broker_blocked === true,
+        brokerSlug: normalizeInstitutionSlug(a.institution_name as string | null | undefined),
+        displayMask: maskAccountNumber(externalRef),
+        knownBotAccountNumbers: getKnownBotTradedTradierAccountNumbers(),
       })
       await customerExecute(
         `INSERT INTO broker_accounts

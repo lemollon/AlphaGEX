@@ -9,6 +9,8 @@ import {
   getDisplayName,
   getFeed,
   insertMessage,
+  insertPendingMessage,
+  isReplyTargetVisible,
   maybeForgeReply,
   maybePostScheduledUpdate,
   seedWelcomeMessage,
@@ -58,11 +60,11 @@ export async function POST(req: NextRequest) {
     if (!session.customerId) {
       return NextResponse.json({ error: 'Log in to join the conversation.' }, { status: 401 })
     }
-    // Posting requires a live membership — a bot subscription OR the $15 Community plan.
-    // Reading the feed stays open (a locked preview); this is what makes Community sellable.
+    // Posting requires a live membership — a bot subscription OR the free Community plan.
+    // Reading the feed stays open (a locked preview); joining to post costs nothing.
     if (!(await hasActiveMembership(session.customerId))) {
       return NextResponse.json(
-        { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to post — $15/mo.' },
+        { code: 'MEMBERSHIP_REQUIRED', error: 'Join the Forge Community to post — it’s free.' },
         { status: 402 },
       )
     }
@@ -70,15 +72,50 @@ export async function POST(req: NextRequest) {
     const channelSlug = typeof body.channel === 'string' ? body.channel : DEFAULT_CHANNEL
     const message = typeof body.message === 'string' ? body.message.trim() : ''
     if (!message) return NextResponse.json({ error: 'Message is empty.' }, { status: 400 })
-    if (message.length > 2000) {
-      return NextResponse.json({ error: 'Message is too long (2000 characters max).' }, { status: 400 })
+    // db-community #190/#249: "composer ... 500-character limit", web and mobile alike.
+    if (message.length > 500) {
+      return NextResponse.json({ error: 'Message is too long (500 characters max).' }, { status: 400 })
     }
 
     const channelId = await getChannelId(channelSlug)
     if (!channelId) return NextResponse.json({ error: 'Unknown channel.' }, { status: 404 })
 
+    // Threaded replies (APP-055). A reply must point at a message the poster can
+    // actually see, in the SAME channel — a stale/blocked/cross-channel parent_id
+    // is a 404, not a reply nobody will ever see attached to.
+    const parentId = typeof body.parent_id === 'string' && body.parent_id.trim() ? body.parent_id.trim() : null
+    if (parentId && !(await isReplyTargetVisible(parentId, channelId, session.customerId))) {
+      return NextResponse.json({ error: 'The post you are replying to is not available.' }, { status: 404 })
+    }
+
     // Moderation executes BEFORE persistence (design doc acceptance criterion).
     const verdict = await moderateMessage(message)
+    if (!verdict.ok && verdict.pending) {
+      // #218: the scorer errored — hold the post instead of either publishing it
+      // unchecked or treating it as a rejection the poster needs to fix. Content
+      // is preserved in community_pending_messages, not discarded.
+      const senderName = await getDisplayName(session.customerId)
+      await insertPendingMessage({
+        channelId,
+        userId: session.customerId,
+        senderName,
+        message,
+        parentId,
+        reason: verdict.category ?? 'MODERATION_UNAVAILABLE',
+      })
+      await customerExecute(
+        `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
+         VALUES ($1, $2, $3, $4, 'PENDING')`,
+        [session.customerId, message.slice(0, 200), verdict.category ?? 'MODERATION_UNAVAILABLE', verdict.score ?? null],
+      ).catch(() => undefined)
+      return NextResponse.json(
+        {
+          status: 'pending',
+          message: 'Posting is delayed — your message is being reviewed and will appear shortly.',
+        },
+        { status: 202 },
+      )
+    }
     if (!verdict.ok) {
       await customerExecute(
         `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
@@ -96,13 +133,15 @@ export async function POST(req: NextRequest) {
       channelId,
       userId: session.customerId,
       senderName,
-      senderType: 'USER',
+      senderType: 'member',
       message,
+      parentId,
     })
     await touchPresence(session.customerId, senderName)
 
-    // Forge replies asynchronously; the 4s poll surfaces it.
-    void maybeForgeReply({ channelId, senderName, message })
+    // Forge replies asynchronously; the mobile poll / web page surfaces it. Parented
+    // to the message it's answering so it lands inside that thread (APP-057).
+    void maybeForgeReply({ channelId, senderName, message, parentMessageId: messageId })
 
     return NextResponse.json({ messageId, status: 'success' })
   } catch (e) {

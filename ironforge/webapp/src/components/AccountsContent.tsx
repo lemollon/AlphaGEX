@@ -68,19 +68,19 @@ function fmtDollar(n: number | null | undefined): string {
  * That has been false since SPARK became the production bot (`PRODUCTION_BOT` in
  * lib/tradier.ts): the console could only map an account to the ONE bot with no
  * live customer surface, and could NOT map the bots that actually trade — SPARK
- * on production, SPARK2/KINDLE on their own accounts.
+ * on production, KINDLE on its own account.
  *
+
  * INFERNO and BLAZE stay off this list: they are genuinely paper-only
  * (`BOT_ACCOUNTS` gives them no accounts), so an account mapping would be inert.
  */
-const ASSIGNABLE_BOTS = ['SPARK', 'SPARK2', 'FLAME', 'KINDLE'] as const
+const ASSIGNABLE_BOTS = ['SPARK', 'FLAME', 'KINDLE'] as const
 /** All bots for display purposes (includes paper-only bots that can appear on legacy rows). */
-const ALL_BOTS = ['SPARK', 'SPARK2', 'FLAME', 'KINDLE', 'INFERNO'] as const
+const ALL_BOTS = ['SPARK', 'FLAME', 'KINDLE', 'INFERNO'] as const
 
 const BOT_COLORS: Record<string, string> = {
   FLAME: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   SPARK: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  SPARK2: 'bg-sky-500/20 text-sky-400 border-sky-500/30',
   KINDLE: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
   INFERNO: 'bg-red-500/20 text-red-400 border-red-500/30',
 }
@@ -106,7 +106,7 @@ function getTradingMode(bot: string, accountType: string): { label: string; cls:
   }
   // Sandbox: bots with a mapped broker account place real sandbox orders; the
   // rest simulate locally. Keep this in step with BOT_ACCOUNTS in lib/tradier.ts.
-  if (bot === 'FLAME' || bot === 'SPARK' || bot === 'SPARK2' || bot === 'KINDLE') {
+  if (bot === 'FLAME' || bot === 'SPARK' || bot === 'KINDLE') {
     return { label: 'LIVE', cls: 'bg-green-500/20 text-green-400 border-green-500/30' }
   }
   return { label: 'PAPER', cls: 'bg-gray-500/20 text-gray-400 border-gray-500/30' }

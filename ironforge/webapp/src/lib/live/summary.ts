@@ -1,16 +1,26 @@
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY, isSettleAtExpiryBot } from '@/lib/db'
 import {
   getProductionPauseState,
   getOwnerPauseState,
   getSandboxAccountBalances,
-  getSpark2ProductionBalance,
+  getFlameProductionBalance,
   getQuoteDetail,
   getIcMarkToMarket,
   calculateIcUnrealizedPnl,
   isConfigured,
 } from '@/lib/tradier'
-import { isMarketOpen, DEFAULT_EOD_CUTOFF_MIN, formatCTClock } from '@/lib/pt-tiers'
+import {
+  isMarketOpen,
+  DEFAULT_EOD_CUTOFF_MIN,
+  formatCTClock,
+  getCurrentPTTier,
+  isSparkStrategyBot,
+} from '@/lib/pt-tiers'
+import { isEarlyClose } from '@/lib/market-calendar'
 import { deriveCustomerState, getMarketSession } from './state'
+import { countProtectiveSkipDays } from './riskProtection'
+import { buildActivityFeed } from './activityFeed'
+import { RECENT_TRADES_LIMIT, buildStreakSummary } from './winLossStreak'
 import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 
 /**
@@ -25,6 +35,7 @@ import type { LiveSummary, LiveTrade, LiveOpenPosition } from './types'
 import { resolveAccountMode, scopeFilter, LIVE_BOT_LABEL, paperDisclosure, type LiveBot } from './viewer'
 import { deriveSwingMeta } from './swing'
 import { sparkRegimeBpCap, isSparkV2SizingBot } from '@/lib/spark-sizing'
+import { BACKTEST_ANCHORS, compareToBacktestAnchor } from './backtestAnchor'
 
 interface HeartbeatDetails {
   action?: string
@@ -79,6 +90,10 @@ export async function getLiveSummary(
     ownerPause,
     balances,
     spyQuote,
+    protectiveScanRows,
+    tradedCtDateRows,
+    scanRowsToday,
+    recentClosedPnlRows,
   ] = await Promise.all([
     dbQuery(
       `SELECT scan_count, last_heartbeat, status, details
@@ -91,7 +106,12 @@ export async function getLiveSummary(
       // be able to answer. Filtering here made "row exists but inactive" and "no
       // row at all" indistinguishable — both returned zero rows and both rendered
       // as "trading is temporarily disabled".
-      `SELECT starting_capital, is_active
+      // buying_power/collateral_in_use added for db-dash #205: the per-bot summary
+      // (this function) returned account.value/today_pnl only, while /performance's
+      // combined getPerformance() already carries capital_available/held_for_open_trades
+      // off the SAME columns (see capRows in performance.ts). Reading them here too
+      // closes that gap rather than inventing a second formula.
+      `SELECT starting_capital, is_active, buying_power, collateral_in_use
        FROM ${botTable(BOT, 'paper_account')}
        WHERE TRUE ${dteFilter} ${prodFilter}
        ORDER BY id DESC LIMIT 1`,
@@ -148,6 +168,50 @@ export async function getLiveSummary(
     getOwnerPauseState(BOT),
     getSandboxAccountBalances().catch(() => []),
     getQuoteDetail('SPY').catch(() => null),
+    // Risky-setups-skipped counter: this month's SCAN log rows, CT-month
+    // boundary computed in SQL so there is no app/DB timezone mismatch.
+    // null (not []) on failure — distinguishes "no scans this month" from
+    // "the query errored", which risk_protection below must tell apart.
+    dbQuery<{ log_time: string | Date; details: string | null }>(
+      `SELECT log_time, details
+       FROM ${botTable(BOT, 'logs')}
+       WHERE level = 'SCAN'
+         AND (log_time AT TIME ZONE 'America/Chicago') >= date_trunc('month', (NOW() AT TIME ZONE 'America/Chicago'))
+         ${dteFilter}`,
+    ).catch(() => null),
+    // Same scope (dte_mode + account) as the rest of this page's queries —
+    // reuses prodFilter so "traded" means the same account this summary
+    // otherwise describes.
+    dbQuery<{ d: string | Date }>(
+      `SELECT DISTINCT (open_time AT TIME ZONE 'America/Chicago')::date AS d
+       FROM ${botTable(BOT, 'positions')}
+       WHERE (open_time AT TIME ZONE 'America/Chicago') >= date_trunc('month', (NOW() AT TIME ZONE 'America/Chicago'))
+         ${dteFilter} ${prodFilter}`,
+    ).catch(() => null),
+    // Live gate/health activity feed: today's SCAN log rows, same table as the
+    // risky-setups-skipped counter above, just scoped to today instead of the
+    // month. null (not []) on failure — distinguishes "no scans yet today"
+    // from "the query errored", which activity_feed below must tell apart.
+    dbQuery<{ log_time: string | Date; details: string | null }>(
+      `SELECT log_time, details
+       FROM ${botTable(BOT, 'logs')}
+       WHERE level = 'SCAN'
+         AND (log_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ${dteFilter}
+       ORDER BY log_time ASC`,
+    ).catch(() => null),
+    // Win/loss streak: the last RECENT_TRADES_LIMIT closed trades, newest
+    // first — same scope (dte_mode + account) as the rest of this page. null
+    // (not []) on failure so a real "no trades yet" empty state is never
+    // confused with a query error.
+    dbQuery<{ realized_pnl: string | number }>(
+      `SELECT realized_pnl
+       FROM ${botTable(BOT, 'positions')}
+       WHERE status IN ('closed', 'expired')
+         AND realized_pnl IS NOT NULL
+         ${dteFilter} ${prodFilter}
+       ORDER BY close_time DESC LIMIT ${RECENT_TRADES_LIMIT}`,
+    ).catch(() => null),
   ])
 
   const hb = heartbeatRows[0]
@@ -187,9 +251,7 @@ export async function getLiveSummary(
   // path the status route uses so pausing never blanks the balance).
   // Fallback: DB ledger (starting_capital + Σ realized) with source flagged.
   // Bot-aware balance source: SPARK's production account rows come from
-  // ironforge_accounts; SPARK2's single live account lives in env creds and is
-  // read directly (never SPARK's rows — accounts must not cross-leak).
-  // Paper bots (FLAME) have no broker account at all: never consult Tradier for
+  // ironforge_accounts. Paper bots (FLAME) have no broker account at all: never consult Tradier for
   // them, always derive from the paper ledger below. Guarding explicitly rather
   // than relying on the per-bot branches falling through to the same place.
   const paper = resolveAccountMode(BOT) === 'paper'
@@ -224,12 +286,25 @@ export async function getLiveSummary(
   let accountValue: number | null = null
   let todayPnl: number | null = null
   let source: 'tradier' | 'paper_account' = 'paper_account'
-  if (BOT === 'spark2' && !paper) {
-    const det = await getSpark2ProductionBalance().catch(() => null)
+  // db-dash #205: same broker-first, ledger-fallback pair as accountValue/todayPnl
+  // just below — computed alongside them so the three numbers can never disagree
+  // about which source (Tradier vs the paper ledger) they came from.
+  let capitalAvailable: number | null = accountRows[0]?.buying_power != null ? num(accountRows[0].buying_power) : null
+  let heldForOpenTrades: number | null =
+    accountRows[0]?.collateral_in_use != null ? num(accountRows[0].collateral_in_use) : null
+  // FLAME's live account is credentialed from env. 🚨 Without this branch the
+  // customer page derived FLAME's value from the DB ledger while the operator
+  // console read Tradier — the same number rendered two different ways, which
+  // is the divergence this whole change fixes. The DB fallback below still
+  // applies when creds are absent (paper FLAME).
+  if (BOT === 'flame' && !paper) {
+    const det = await getFlameProductionBalance().catch(() => null)
     if (det?.total_equity != null) {
       accountValue = Math.round(num(det.total_equity) * 100) / 100
       todayPnl = Math.round((num(det.close_pl) + num(det.open_pl)) * 100) / 100
       source = 'tradier'
+      capitalAvailable = num(det.option_buying_power)
+      heldForOpenTrades = Math.round(Math.max(0, accountValue - capitalAvailable) * 100) / 100
     }
   }
   if (source !== 'tradier' && prodBals.length > 0) {
@@ -239,6 +314,8 @@ export async function getLiveSummary(
       prodBals.reduce((a, b) => a + num(b.day_pnl) + num(b.unrealized_pnl), 0) * 100,
     ) / 100
     source = 'tradier'
+    capitalAvailable = Math.round(prodBals.reduce((a, b) => a + num(b.option_buying_power), 0) * 100) / 100
+    heldForOpenTrades = Math.round(Math.max(0, accountValue - capitalAvailable) * 100) / 100
   } else if (source !== 'tradier') {
     const startingCapital = num(accountRows[0]?.starting_capital)
     if (startingCapital > 0) {
@@ -277,7 +354,7 @@ export async function getLiveSummary(
   // Day P&L per point = equity − day-open BALANCE (not day-open equity). Balance only
   // moves on closes, so an overnight swing-hold's unrealized carry shows from the first
   // tick and the curve TERMINATES at the same number the "Today's Result" headline shows.
-  // (2026-07-17 bug: anchoring at day-open EQUITY baked SPARK2's −$259 overnight carry
+  // (2026-07-17 bug: anchoring at day-open EQUITY baked a −$259 overnight carry
   // into the baseline — a −$208 day rendered as a +$220 green mountain.)
   const dayOpenBalance = intradayRows.length ? num(intradayRows[0].balance) : null
   const intraday = intradayRows.map((r) => ({
@@ -287,6 +364,86 @@ export async function getLiveSummary(
       ? Math.round((num(r.balance) + num(r.unrealized_pnl) - dayOpenBalance) * 100) / 100
       : null,
   }))
+
+  // --- Risky setups skipped this month --------------------------------
+  // Honest-data rule: null (never a fabricated number) when either query
+  // above failed. A count of exactly 0 is real and must still render.
+  let riskProtection: LiveSummary['risk_protection'] = null
+  if (protectiveScanRows !== null && tradedCtDateRows !== null) {
+    try {
+      const logs = protectiveScanRows.map((r) => {
+        let reason: string | null = null
+        try {
+          // details is a JSON STRING, not JSONB — one malformed row must not
+          // break the others, so this parse is per-row.
+          const parsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+          reason = parsed && typeof parsed.reason === 'string' ? parsed.reason : null
+        } catch {
+          reason = null
+        }
+        return { logTime: r.log_time, reason }
+      })
+      const tradedCtDates = new Set(
+        tradedCtDateRows
+          .map((r) => (r.d instanceof Date ? r.d.toISOString().slice(0, 10) : String(r.d).slice(0, 10)))
+          .filter(Boolean),
+      )
+      riskProtection = {
+        skipped_count: countProtectiveSkipDays({ logs, tradedCtDates }),
+        period_label: 'this month',
+      }
+    } catch {
+      riskProtection = null
+    }
+  }
+
+  // --- Today's gate/health activity feed --------------------------------
+  // Honest-data rule: null (never a fabricated feed) when the query above
+  // failed. An empty entries array (no scans logged yet today) is a real,
+  // renderable state and must still return an object, not null.
+  let activityFeed: LiveSummary['activity_feed'] = null
+  if (scanRowsToday !== null) {
+    try {
+      const parsedRows = scanRowsToday.map((r) => {
+        let action = 'scan'
+        let reason: string | null = null
+        try {
+          // details is a JSON STRING, not JSONB — one malformed row must not
+          // break the others, so this parse is per-row (same pattern as the
+          // risk-protection integration above).
+          const parsed = typeof r.details === 'string' ? JSON.parse(r.details) : r.details
+          if (parsed && typeof parsed.action === 'string') action = parsed.action
+          if (parsed && typeof parsed.reason === 'string') reason = parsed.reason
+        } catch {
+          // action stays 'scan', reason stays null
+        }
+        return { logTime: r.log_time, action, reason }
+      })
+      // Uncapped so gates_held_today counts every distinct gate segment
+      // today, not just the ones inside the display cap.
+      const fullFeed = buildActivityFeed(parsedRows, { max: Number.MAX_SAFE_INTEGER })
+      activityFeed = {
+        scans_today: scanRowsToday.length,
+        gates_held_today: fullFeed.filter((e) => e.kind === 'gate').length,
+        entries: fullFeed.slice(0, 8),
+      }
+    } catch {
+      activityFeed = null
+    }
+  }
+
+  // --- Win/loss streak (last RECENT_TRADES_LIMIT closed trades) ----------
+  // Honest-data rule: null (never a fabricated streak) when the query above
+  // failed. An empty streak (no trades closed yet) is a real, renderable
+  // state and must still return an object, not null.
+  let winLossStreak: LiveSummary['win_loss_streak'] = null
+  if (recentClosedPnlRows !== null) {
+    try {
+      winLossStreak = buildStreakSummary(recentClosedPnlRows.map((r) => num(r.realized_pnl)))
+    } catch {
+      winLossStreak = null
+    }
+  }
 
   return {
     state,
@@ -306,6 +463,8 @@ export async function getLiveSummary(
       value: accountValue,
       today_pnl: todayPnl,
       today_pnl_pct: todayPnlPct,
+      capital_available: capitalAvailable,
+      held_for_open_trades: heldForOpenTrades,
       source,
       mode: mode ?? resolveAccountMode(BOT),
       disclosure: paper ? paperDisclosure(BOT) : null,
@@ -318,6 +477,13 @@ export async function getLiveSummary(
       // fabricated countdown — consumers null-guard and fall back to the badge.
       trial: null,
     },
+    risk_protection: riskProtection,
+    activity_feed: activityFeed,
+    win_loss_streak: winLossStreak,
+    // Route-populated (app/api/live/summary/route.ts), same pattern as
+    // membership/activation_confirmation: this needs customerId, which this
+    // function does not receive. Inert placeholder here only.
+    milestones: null,
     as_of: new Date().toISOString(),
   }
 }
@@ -338,6 +504,38 @@ function profitBasisPct(pnl: number, maxProfitDollars: number, maxLossDollars: n
   const basis = pnl >= 0 ? maxProfitDollars : maxLossDollars
   if (!(basis > 0)) return null
   return Math.round((pnl / basis) * 10000) / 100
+}
+
+/**
+ * A CT-local wall-clock time ("today at HH:MM CT") as an absolute UTC instant.
+ *
+ * Used for the lifecycle line's "Auto Close" node — the client needs a real
+ * instant it can format in the VIEWER's local time, not a pre-formatted CT
+ * string. Same offset trick as eventCalendar/halt-window.ts's ctWallToUtc:
+ * guess the instant, ask Intl what CT wall-clock time that guess actually is,
+ * then correct by the difference — handles DST without a timezone database.
+ */
+function ctWallTimeUtcIso(ctDateStr: string, minsSinceMidnight: number): string {
+  const [y, mo, d] = ctDateStr.split('-').map(Number)
+  const hh = Math.floor(minsSinceMidnight / 60)
+  const mm = minsSinceMidnight % 60
+  const guess = new Date(Date.UTC(y, mo - 1, d, hh, mm, 0))
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  })
+  const parts = dtf.formatToParts(guess).reduce((acc, p) => {
+    if (p.type !== 'literal') acc[p.type] = p.value
+    return acc
+  }, {} as Record<string, string>)
+  const ctMs = Date.UTC(
+    parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day),
+    parseInt(parts.hour === '24' ? '0' : parts.hour), parseInt(parts.minute), parseInt(parts.second),
+  )
+  const offsetMin = (ctMs - guess.getTime()) / 60000
+  return new Date(guess.getTime() - offsetMin * 60000).toISOString()
 }
 
 export async function getLiveTrade(
@@ -400,6 +598,7 @@ export async function getLiveTrade(
       `SELECT COALESCE(SUM(realized_pnl), 0) as pnl,
               COALESCE(SUM(collateral_required), 0) as risk_dollars,
               COALESCE(SUM(contracts * total_credit * 100), 0) as max_profit_dollars,
+              COALESCE(SUM(contracts), 0) as contracts,
               COUNT(*) as cnt
        FROM ${botTable(BOT, 'positions')}
        WHERE status IN ('closed', 'expired')
@@ -413,6 +612,23 @@ export async function getLiveTrade(
     // LOSS (collateral). collateral_required is the stored max loss per position.
     const riskDollars = num(todaysClosed[0]?.risk_dollars)
     const maxProfitDollars = num(todaysClosed[0]?.max_profit_dollars)
+    const todaysContracts = int(todaysClosed[0]?.contracts)
+    const todayResult = closedCount > 0
+      ? { pnl, pct: profitBasisPct(pnl, maxProfitDollars, riskDollars) }
+      : null
+    // Advanced/technical-trader only — see backtestAnchor.ts. Never fabricated
+    // when there was no trade today, and never computed off a total that has
+    // no per-lot denominator. LiveBot is exactly 'spark' | 'flame', so every
+    // bot this function can be called with has a validated anchor.
+    const anchor = BACKTEST_ANCHORS[BOT]
+    const todayResultTechnical = todayResult && todaysContracts > 0
+      ? {
+          perLot: Math.round((pnl / todaysContracts) * 100) / 100,
+          contracts: todaysContracts,
+          anchor,
+          comparison: compareToBacktestAnchor(pnl, todaysContracts, anchor),
+        }
+      : null
     return {
       active: false,
       opened_at: null,
@@ -421,14 +637,13 @@ export async function getLiveTrade(
       unrealized_pnl: null,
       unrealized_pnl_pct: null,
       pnl_source: 'none',
+      target_dollars: null,
+      stop_dollars: null,
+      auto_close_at: null,
       spark_series: sparkSeries,
       positions: [],
-      today_result: closedCount > 0
-        ? {
-            pnl,
-            pct: profitBasisPct(pnl, maxProfitDollars, riskDollars),
-          }
-        : null,
+      today_result: todayResult,
+      today_result_technical: todayResultTechnical,
     }
   }
 
@@ -442,6 +657,79 @@ export async function getLiveTrade(
   // Priced in parallel: each position needs its own mark-to-market, and they are
   // independent.
   const ctTodayDate = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+
+  // Per-position marks for today, minute-bucketed — the per-trade chart.
+  //
+  // One query for every open position rather than one per position: this runs on a
+  // page poll, and the positions are already being priced against Tradier in parallel
+  // just below. Rows only exist from the moment the scanner started recording them,
+  // so an older position legitimately comes back empty.
+  const openIds = positionRows.map((p) => String(p.position_id ?? '')).filter(Boolean)
+  const seriesByPosition = new Map<string, Array<{ timestamp: string; pnl: number }>>()
+  if (openIds.length > 0) {
+    try {
+      const idList = openIds.map((id) => `'${escapeSql(id)}'`).join(',')
+      const rows = await dbQuery(
+        `SELECT position_id,
+                date_trunc('minute', snapshot_time) AS bucket,
+                AVG(unrealized_pnl) AS pnl
+           FROM ${botTable(BOT, 'position_snapshots')}
+          WHERE position_id IN (${idList})
+            AND (snapshot_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+            AND unrealized_pnl IS NOT NULL
+          GROUP BY position_id, bucket
+          ORDER BY bucket ASC`,
+      )
+      for (const r of rows) {
+        const id = String(r.position_id)
+        if (!seriesByPosition.has(id)) seriesByPosition.set(id, [])
+        seriesByPosition.get(id)!.push({
+          timestamp: String(r.bucket),
+          pnl: Math.round(num(r.pnl) * 100) / 100,
+        })
+      }
+    } catch {
+      // The table is created on first use; a bot that has not scanned since the
+      // change simply has no chart yet. An empty series is the correct answer, and
+      // it must never take the whole Live page down with it.
+    }
+  }
+
+  // Profit-target % and stop-loss multiplier for the lifecycle line's "Target /
+  // Stop" caption — same config the operator's position-monitor route reads,
+  // with the same fallback defaults (30% / 2.0×) when the row is missing.
+  // SPARK-strategy bots ignore the DB profit_target_pct in favor of the live
+  // sliding tier (mirrors pt-tiers.ts's own note on this — position-monitor
+  // does the same override).
+  //
+  // FLAME/SPARK (isSettleAtExpiryBot) never read this config at all: EBB holds
+  // every position to settlement — PT off, stop not consulted — so the row's
+  // leftover IC-template defaults (30%/2.0×) must not leak into targetDollars/
+  // stopDollars below as a fabricated number the strategy doesn't act on.
+  let icPtPct = 0.30
+  let icSlMult = 2.0
+  if (!isSettleAtExpiryBot(BOT)) {
+    try {
+      const cfgScope = resolveAccountMode(BOT) === 'production' ? 'production' : 'sandbox'
+      const cfgRows = await dbQuery(
+        `SELECT stop_loss_pct, profit_target_pct
+         FROM ${botTable(BOT, 'config')}
+         WHERE COALESCE(account_type, 'sandbox') IN ('${escapeSql(cfgScope)}', 'sandbox')
+           ${dteFilter}
+         ORDER BY CASE WHEN COALESCE(account_type, 'sandbox') = '${escapeSql(cfgScope)}' THEN 0 ELSE 1 END
+         LIMIT 1`,
+      )
+      const slPct = num(cfgRows[0]?.stop_loss_pct)
+      if (slPct > 0) icSlMult = slPct / 100
+      const ptPct = num(cfgRows[0]?.profit_target_pct)
+      if (ptPct > 0) icPtPct = ptPct / 100
+    } catch {
+      // Leave the defaults — the lifecycle line's Target/Stop caption falls back
+      // to the same numbers position-monitor would, rather than going blank.
+    }
+    if (isSparkStrategyBot(BOT)) icPtPct = getCurrentPTTier(new Date(), BOT).pct
+  }
+
   const positions: LiveOpenPosition[] = await Promise.all(
     positionRows.map(async (p): Promise<LiveOpenPosition> => {
       const pContracts = int(p.contracts)
@@ -449,6 +737,38 @@ export async function getLiveTrade(
       const pExpiration =
         p.expiration?.toISOString?.()?.slice(0, 10) ||
         (p.expiration ? String(p.expiration).slice(0, 10) : '')
+
+      // Lifecycle line ("Target / Stop" + "Auto Close" nodes). Dollar profit at
+      // the configured PT is credit × pt% × contracts; dollar loss at the
+      // configured SL is credit × (slMult − 1) × contracts — the same two
+      // thresholds position-monitor reports as profit_target_price/stop_loss_price,
+      // converted from a per-contract price into what the customer actually
+      // stands to gain/lose. slMult <= 1 means the strategy has no real stop
+      // (holds to settlement) — null rather than a nonsense $0/negative figure.
+      //
+      // FLAME/SPARK hold to settlement unconditionally — isSettleAtExpiryBot
+      // forces both to null above the config read even exists for them, so the
+      // client's "hold to close" fallback is never shadowed by a stray IC
+      // template default.
+      const targetDollars = !isSettleAtExpiryBot(BOT) && pCredit > 0
+        ? Math.round(pContracts * pCredit * icPtPct * 100 * 100) / 100
+        : null
+      const stopDollars = !isSettleAtExpiryBot(BOT) && pCredit > 0 && icSlMult > 1
+        ? Math.round(pContracts * pCredit * (icSlMult - 1) * 100 * 100) / 100
+        : null
+      // Auto-close only has a same-day scheduled instant when this position
+      // expires today. For most bots that instant is the EOD safety cutoff
+      // (2:45 PM CT); FLAME/SPARK instead hold to the actual session close
+      // (3:00 PM CT, or noon CT on an early-close half-day) — using the
+      // generic 2:45 PM cutoff for them was reporting a close time the bot
+      // does not observe (its own guard runs in the final three minutes
+      // before whichever close actually applies).
+      const closeCutoffMin = isSettleAtExpiryBot(BOT)
+        ? (isEarlyClose(new Date(`${ctTodayDate}T12:00:00`)) ? 12 * 60 : 15 * 60)
+        : DEFAULT_EOD_CUTOFF_MIN
+      const autoCloseAt = pExpiration === ctTodayDate
+        ? ctWallTimeUtcIso(ctTodayDate, closeCutoffMin)
+        : null
 
       let pnl: number | null = null
       let pnlPct: number | null = null
@@ -493,6 +813,7 @@ export async function getLiveTrade(
       const collateral = num(p.collateral_required)
 
       return {
+        series: seriesByPosition.get(String(p.position_id ?? '')) ?? [],
         position_id: String(p.position_id ?? ''),
         opened_at: pOpened ? pOpened.toISOString() : null,
         opened_date_label: pOpened
@@ -514,6 +835,9 @@ export async function getLiveTrade(
         unrealized_pnl: pnl,
         unrealized_pnl_pct: pnlPct,
         pnl_source: source,
+        target_dollars: targetDollars,
+        stop_dollars: stopDollars,
+        auto_close_at: autoCloseAt,
         held_overnight: heldOvernight,
         day_number: dayNumber,
         // Regime AT ENTRY, straight off the row. It set this trade's strikes and size,
@@ -605,6 +929,11 @@ export async function getLiveTrade(
     unrealized_pnl: unrealizedPnl,
     unrealized_pnl_pct: unrealizedPnlPct,
     pnl_source: pnlSource,
+    // Mirrors positions[0], same as every other scalar field in this return —
+    // already computed once inside the positions.map above.
+    target_dollars: positions[0]?.target_dollars ?? null,
+    stop_dollars: positions[0]?.stop_dollars ?? null,
+    auto_close_at: positions[0]?.auto_close_at ?? null,
     spark_series: sparkSeries,
     today_result: null,
     positions,

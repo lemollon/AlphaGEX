@@ -7,6 +7,7 @@ import {
   type RiskAnswers,
 } from '@/lib/onboarding/risk-scoring'
 import { BOT_PLANS } from '@/lib/billing/plans'
+import { dteMode } from '@/lib/db'
 
 // Helper: build an answers object from explicit option ids (in question order).
 function answers(ids: string[]): RiskAnswers {
@@ -126,4 +127,39 @@ describe('every possible recommendation is a plan a customer can actually buy', 
       expect(BOT_RATIONALE[p.recommendedBot]).toBeTruthy()
     }
   })
+})
+
+/**
+ * The rationale copy must describe the strategy the bot actually runs.
+ *
+ * It claimed "2-day-to-expiration iron condors" (FLAME) and "1-day" (SPARK) for
+ * eleven days after the 2026-08-16 EBB cutover made both false — and the only
+ * test covering it asserted the string was non-empty. Pin it to dteMode(), the
+ * same source the scanner and every query read, exactly as plan-copy.test.ts
+ * pins the billing blurbs.
+ */
+describe('BOT_RATIONALE matches the strategy the bot runs', () => {
+  const ALL_DTE = ['0DTE', '1DTE', '2DTE']
+
+  for (const [bot, rationale] of Object.entries(BOT_RATIONALE)) {
+    const own = dteMode(bot.toLowerCase())
+
+    it(`${bot}: states ${own} and no other expiry`, () => {
+      expect(own).toBeTruthy()
+      expect(rationale).toContain(own as string)
+      for (const wrong of ALL_DTE.filter((d) => d !== own)) {
+        expect(rationale).not.toContain(wrong)
+      }
+    })
+
+    it(`${bot}: does not call the trade an iron condor`, () => {
+      // Both bots sell a one-sided PUT credit spread. Short calls measured
+      // negative at every delta (2026-08-11), so there is no call wing to sell.
+      expect(rationale).not.toMatch(/iron condor|condor/i)
+    })
+
+    it(`${bot}: makes no performance or income promise`, () => {
+      expect(rationale).not.toMatch(/\b(income|profit|returns?|guarantee\w*|win\w*)\b/i)
+    })
+  }
 })

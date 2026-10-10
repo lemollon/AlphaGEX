@@ -1,11 +1,12 @@
 'use client'
 
 import dynamic from 'next/dynamic'
+import { Suspense } from 'react'
 
 const PerpetualsCryptoContent = dynamic(() => import('./PerpetualsCryptoContent'), {
   ssr: false,
   loading: () => (
-    <div className="min-h-screen bg-[#030712]">
+    <div className="min-h-screen bg-[#0a0e1a]">
       <div className="animate-pulse p-8 space-y-6">
         <div className="h-10 bg-gray-800 rounded w-1/3" />
         <div className="grid grid-cols-4 gap-4">
@@ -20,5 +21,9 @@ const PerpetualsCryptoContent = dynamic(() => import('./PerpetualsCryptoContent'
 })
 
 export default function PerpetualsCryptoPage() {
-  return <PerpetualsCryptoContent />
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#0a0e1a]" />}>
+      <PerpetualsCryptoContent />
+    </Suspense>
+  )
 }

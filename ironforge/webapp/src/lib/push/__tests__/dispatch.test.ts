@@ -29,7 +29,17 @@ vi.mock('@/lib/customers-db', () => ({
   customerQuery: async (sql: string, params: unknown[] = []) => {
     if (sql.includes('FROM notification_prefs')) {
       const p = state.prefs.get(params[0] as string)
-      return p ? [p] : []
+      if (!p) return []
+      // Real column projection: only a key actually NAMED in the SELECT
+      // clause comes back. This is what makes the big_move/daily_summary bug
+      // (loadPrefs' SELECT never named them, so prefs.big_move/daily_summary
+      // were always undefined regardless of what the row held) reproducible
+      // here — a fixture object with the key set is not enough by itself.
+      const projected: Record<string, boolean> = {}
+      for (const col of Object.keys(p)) {
+        if (sql.includes(col)) projected[col] = p[col]
+      }
+      return [projected]
     }
     if (sql.includes('FROM push_devices')) {
       return state.devices.get(params[0] as string) ?? []
@@ -216,5 +226,74 @@ describe('preferences and devices', () => {
     const r = await dispatchToCustomers(evt(), [USER], NOW)
     expect(r.sent).toBe(0)
     expect(r.reasons).toContain('no_device')
+  })
+})
+
+describe('big_move / daily_summary preference columns (bug, found 2026-10-06)', () => {
+  // loadPrefs()'s SELECT never named big_move or daily_summary, so
+  // prefs[column] was always `undefined` for these two categories — Guard 1's
+  // `prefs[...] !== true` then skipped every one of them as "pref_off",
+  // regardless of what the customer actually had set in Settings.
+  it('sends a daily_summary push when the customer has it enabled', async () => {
+    state.prefs.set(USER, {
+      trade_opened: true,
+      trade_closed: true,
+      trade_approval: true,
+      brokerage_health: true,
+      billing: true,
+      community: false,
+      big_move: false,
+      daily_summary: true,
+      show_amounts_on_lockscreen: false,
+    })
+    const r = await dispatchToCustomers(
+      evt({ category: 'daily_summary', eventKey: 'daily_summary:2026-08-02', route: '/home' }),
+      [USER],
+      NOW,
+    )
+    expect(r.sent).toBe(1)
+    expect(r.reasons).not.toContain('pref_off')
+  })
+
+  it('sends a big_move push when the customer has it enabled', async () => {
+    state.prefs.set(USER, {
+      trade_opened: true,
+      trade_closed: true,
+      trade_approval: true,
+      brokerage_health: true,
+      billing: true,
+      community: false,
+      big_move: true,
+      daily_summary: false,
+      show_amounts_on_lockscreen: false,
+    })
+    const r = await dispatchToCustomers(
+      evt({ category: 'big_move', eventKey: 'big_move:spark:1', route: '/live', routeParams: { account: 'spark' } }),
+      [USER],
+      NOW,
+    )
+    expect(r.sent).toBe(1)
+    expect(r.reasons).not.toContain('pref_off')
+  })
+
+  it('still skips daily_summary/big_move as pref_off when the customer left them off', async () => {
+    state.prefs.set(USER, {
+      trade_opened: true,
+      trade_closed: true,
+      trade_approval: true,
+      brokerage_health: true,
+      billing: true,
+      community: false,
+      big_move: false,
+      daily_summary: false,
+      show_amounts_on_lockscreen: false,
+    })
+    const r = await dispatchToCustomers(
+      evt({ category: 'daily_summary', eventKey: 'daily_summary:2026-08-03', route: '/home' }),
+      [USER],
+      NOW,
+    )
+    expect(r.sent).toBe(0)
+    expect(r.reasons).toContain('pref_off')
   })
 })

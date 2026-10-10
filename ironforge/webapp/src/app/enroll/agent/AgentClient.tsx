@@ -5,20 +5,21 @@ import Link from 'next/link'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { SELECTED_ACCOUNT_KEY } from '../broker/BrokerClient'
+import { BOT_PLANS, botTagline } from '@/lib/billing/plans'
+import { EMBER_AGENT } from '@/lib/agents/ember'
 
 /**
- * AGENT-01 — Choose Spark or Flame (July 29 handoff).
+ * AGENT-01 — RESUME FALLBACK (10/5 reorder).
  *
- * Selecting an agent creates a DRAFT configuration with the rule-schema defaults
- * (config: {} → server defaults apply) against the account chosen at BROKER-01 — it
- * never activates anything, and the footnote says so. There is no separate configure
- * screen: the approved flow has none, and the review screen renders the server-computed
- * deployment limits as display-only truth.
- *
- * FLOW ORDER NOTE. The handoff's §2 sequence puts Agent before Brokerage; here the
- * account comes first because the built agent-config API computes limits from a real
- * account's buying power at draft time — a deliberate, documented deviation that keeps
- * the review numbers live instead of hypothetical.
+ * The web order now mints the agent config automatically the moment a brokerage
+ * account is chosen (broker/BrokerClient.tsx, via the same shared
+ * createAgentConfigDraft() this screen used to call directly) — Choose agent already
+ * happened earlier (the /enroll/plan screen, now titled "Choose agent"), so this
+ * screen is no longer a rail step of its own. It stays live as the fallback a
+ * customer lands on if that auto-creation failed (e.g. Ember's $500-$2,000 gate
+ * against this account) or if a stale/changed account/config needs re-deriving —
+ * "any account or agent change invalidates the activation review" (§3 AGENT-02) still
+ * needs somewhere to send a customer to fix it. Still never activates anything.
  *
  * Color law: Spark = the `spark` token (blue-* is remapped to neutral in Tailwind);
  * Flame = brand orange (amber-*).
@@ -68,7 +69,7 @@ export default function AgentClient() {
     })()
   }, [enrollment, call, router, setError])
 
-  async function select(agent: 'spark' | 'flame') {
+  async function select(agent: 'spark' | 'flame' | 'ember') {
     if (!account) return
     setBusy(true)
     setError(null)
@@ -79,7 +80,12 @@ export default function AgentClient() {
         body: JSON.stringify({ agent_code: agent, broker_account_id: account.id, config: {} }),
       })
       if (d.status !== 'valid') {
-        const detail = Array.isArray(d.violations) && d.violations.length ? ` ${d.violations.join(' ')}` : ''
+        // d.violations is [{ field, message }] (ValidationResult) — carries Ember's
+        // $500–$2,000 balance-range message when that's the reason.
+        const messages = Array.isArray(d.violations)
+          ? d.violations.map((v: { message?: string }) => v?.message).filter(Boolean)
+          : []
+        const detail = messages.length ? ` ${messages.join(' ')}` : ''
         setError(`Your setup needs attention before review.${detail}`)
         setBusy(false)
         return
@@ -96,48 +102,78 @@ export default function AgentClient() {
     }
   }
 
+  // The plan step already picked which bot this enrollment is for (and billed/skipped
+  // billing accordingly) — show only the matching tile when it's known, so a customer
+  // can't configure a config for a bot they didn't choose. Falls back to showing every
+  // tile for an older enrollment with no selected_plan on record.
+  const plan = enrollment?.selected_plan
+  const showSpark = plan == null || plan === 'spark'
+  const showFlame = plan == null || plan === 'flame'
+  const showEmber = plan == null || plan === 'ember'
+
   return (
     <EnrollShell
-      headline="Choose your trading agent."
-      subline="Select the risk profile that best fits how you want to trade."
+      headline={plan === 'ember' ? 'Set up Ember.' : 'Choose your trading agent.'}
+      subline={
+        plan === 'ember'
+          ? 'Ember runs the same rules-based approach, sized for smaller accounts.'
+          : 'Select the risk profile that best fits how you want to trade.'
+      }
       maxWidthClass="max-w-3xl"
+      step="broker"
+      enrollment={enrollment}
     >
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Choose Spark or Flame</h2>
-        <p className="mt-1 text-sm text-gray-400">
-          Both agents use rules-based iron condor strategies with different risk profiles.
-        </p>
         {account?.mask ? (
-          <p className="mt-2 text-xs text-gray-500">
-            Trading account: <span className="font-mono text-gray-300">{account.mask}</span>
+          <p className="help" style={{ marginBottom: 14 }}>
+            Trading account: <span className="mono">{account.mask}</span>
           </p>
         ) : null}
 
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+        {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
 
-        {resolving && !error ? (
-          <div className="mt-6 h-72 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
+        {resolving && !error ? <div className="card pad" style={{ height: 280 }} /> : null}
 
         {account ? (
-          <div className="mt-6 grid gap-5 md:grid-cols-2">
+          <div className="agents" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', display: 'grid' }}>
+          {/*
+            ONE STRATEGY AT TWO CLOCKS — this is the screen where a customer picks
+            which bot trades their money, so the copy has to be true.
+
+            It used to sell a risk ladder: Spark badged "Lower risk" and described
+            as "a more conservative IRON CONDOR strategy", Flame badged "Higher
+            risk" as "TWO-DAY SPY put credit spreads with heavier capital
+            deployment". Every one of those claims was wrong after the 2026-08-16
+            EBB change:
+              - `dteMode` returns '0DTE' for BOTH — neither is an iron condor or
+                a two-day spread any more.
+              - Their scanner configs are identical on wing width, positions at a
+                time, contracts, profit target and end-of-day handling.
+              - `bp_pct` is 0.20 for both, so "heavier capital deployment" was
+                false in the direction that matters most.
+
+            A fabricated risk grade on an enrolment screen means someone picking
+            "Lower risk" believed they were buying a safer product. They were
+            buying the same product at a different time of day. Structure and
+            cadence are read from BOT_PLANS so this cannot drift from checkout.
+          */}
             {/* Spark */}
+            {showSpark ? (
             <div className="flex flex-col rounded-xl border border-spark/60 bg-black/20 p-6">
+              {/* Badge states WHEN, not a risk grade — see the block comment above. */}
               <span className="self-start rounded-md bg-spark px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-                Lower risk
+                Morning entry
               </span>
               <h3 className="mt-3 text-2xl font-bold text-spark">Spark</h3>
               <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                A more conservative iron condor strategy designed for steadier, long-term account growth.
+                {botTagline('spark')}, entered {BOT_PLANS.spark.cadence}. The most a trade can lose
+                is fixed before it opens.
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
               <p className="mt-1 text-sm text-gray-400">
-                Traders who prioritize consistency, controlled capital exposure, and smaller drawdowns.
+                Traders who want the day&rsquo;s position established early in the session.
               </p>
               <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
-                {['Lower-risk profile', 'Conservative capital deployment', 'Long-term growth focus'].map((f) => (
+                {[botTagline('spark'), `Trades ${BOT_PLANS.spark.cadence}`, 'Defined risk on every trade'].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                     <span aria-hidden className="mt-0.5 font-bold text-spark">✓</span>
                     {f}
@@ -153,16 +189,18 @@ export default function AgentClient() {
                 Select Spark
               </button>
             </div>
+            ) : null}
 
             {/* Flame */}
+            {showFlame ? (
             <div className="flex flex-col rounded-xl border border-amber-500/60 bg-black/20 p-6">
               <span className="self-start rounded-md bg-amber-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-black">
-                Higher risk
+                Afternoon entry
               </span>
               <h3 className="mt-3 text-2xl font-bold text-amber-500">Flame</h3>
               <p className="mt-2 text-sm leading-relaxed text-gray-300">
-                A more aggressive premium-selling strategy — two-day SPY put credit spreads with
-                heavier capital deployment.
+                The same strategy as Spark, entered {BOT_PLANS.flame.cadence} instead — a shorter
+                run to expiry. The most a trade can lose is fixed before it opens.
               </p>
               {/* Honesty (audit M6): Flame currently executes in simulation. Selling it
                   as live automation while delivering paper was a trust problem. */}
@@ -173,10 +211,11 @@ export default function AgentClient() {
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
               <p className="mt-1 text-sm text-gray-400">
-                Traders comfortable with greater volatility and larger drawdowns in exchange for more potential upside.
+                Traders who prefer a later entry &mdash; or who already run Spark and want entries
+                spread across the day rather than concentrated in one window.
               </p>
               <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
-                {['Higher-risk profile', 'More aggressive capital deployment', 'Premium-selling focus'].map((f) => (
+                {[botTagline('flame'), `Trades ${BOT_PLANS.flame.cadence}`, 'Defined risk on every trade'].map((f) => (
                   <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
                     <span aria-hidden className="mt-0.5 font-bold text-amber-500">✓</span>
                     {f}
@@ -192,17 +231,50 @@ export default function AgentClient() {
                 Select Flame
               </button>
             </div>
+            ) : null}
+
+            {/* Ember */}
+            {showEmber ? (
+            <div className="flex flex-col rounded-xl border p-6 bg-black/20" style={{ borderColor: `${EMBER_AGENT.accent}60` }}>
+              <span
+                className="self-start rounded-md px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white"
+                style={{ backgroundColor: EMBER_AGENT.accent }}
+              >
+                Free
+              </span>
+              <h3 className="mt-3 text-2xl font-bold" style={{ color: EMBER_AGENT.accent }}>{EMBER_AGENT.name}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-gray-300">{EMBER_AGENT.blurb}</p>
+              <p className="mt-4 text-[10px] font-bold uppercase tracking-wider text-gray-500">Best for</p>
+              <p className="mt-1 text-sm text-gray-400">First-time investors with $500–$2,000 to trade with.</p>
+              <ul className="mt-4 space-y-2 border-t border-forge-border pt-4">
+                {[...EMBER_AGENT.tags, 'Defined risk on every trade'].map((f) => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-gray-300">
+                    <span aria-hidden className="mt-0.5 font-bold" style={{ color: EMBER_AGENT.accent }}>✓</span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => select('ember')}
+                className="mt-auto w-full rounded-lg px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ backgroundColor: EMBER_AGENT.accent }}
+              >
+                Select Ember
+              </button>
+            </div>
+            ) : null}
           </div>
         ) : null}
 
-        <p className="mt-5 text-sm text-gray-500">
+        <p className="help" style={{ marginTop: 20 }}>
           Agent selection does not activate trading. You will review your setup before activation.
         </p>
 
-        <Link href="/enroll/broker" className="mt-4 inline-block text-sm text-gray-400 hover:text-white">
-          ← Back to brokerage
-        </Link>
-      </div>
+        <div className="nav-row">
+          <Link href="/enroll/broker" className="btn">← Back to brokerage</Link>
+        </div>
     </EnrollShell>
   )
 }

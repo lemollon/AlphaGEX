@@ -5,7 +5,8 @@ import { validateWaitlist, CONSENT_VERSION, WAITLIST_SOURCE } from '@/lib/waitli
 import { upsertWaitlistToAttio } from '@/lib/attio'
 import { enqueueCrmEvent } from '@/lib/crm/outbox'
 import { CAPITAL_RANGE_TO_VOLUME, toLeadSource } from '@/lib/crm/schema'
-import { sendWaitlistConfirmation } from '@/lib/email'
+import { enrollInWaitlistSequence } from '@/lib/waitlist-drip/sequence'
+import { drainWaitlistDrip } from '@/lib/waitlist-drip/drain'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -206,18 +207,22 @@ export async function POST(req: NextRequest) {
     ).catch(() => {})
   }
 
-  // 3) Confirmation email — async, best-effort, sent ONCE per confirmed prospect.
-  //    A failure never discards the lead; a resubmit after a failed send retries.
-  if (!alreadyEmailed) {
-    void sendWaitlistConfirmation({ to: n.email, firstName: n.firstName })
-      .then((r) =>
-        customerExecute(
-          `UPDATE waitlist_submissions SET email_status=$2, updated_at=now() WHERE lower(email)=lower($1)`,
-          [n.email, r.sent ? 'sent' : r.skipped ? 'pending' : 'failed'],
-        ).catch(() => {}),
-      )
-      .catch(() => {})
-  }
+  // 3) Welcome email = Email 1 of the waitlist drip (Communication Kit, 9/8), which REPLACES
+  //    the old standalone confirmation — both said "you're on the list", and two welcomes a
+  //    minute apart read as a bug. Enrollment creates the sequence row with Email 1 due now;
+  //    the scanner's 30s drain would pick it up, but the kit says "immediately", so kick a
+  //    drain for this one address without awaiting it. The drain claims rows with a row
+  //    lock, so this kick and the scanner tick can never both send. Idempotent on email: a
+  //    resubmit never restarts the sequence, and never undoes an unsubscribe.
+  //    `alreadyEmailed` (legacy email_status) is intentionally NOT consulted — the sequence
+  //    row is the source of truth for what has been sent.
+  void alreadyEmailed
+  void enrollInWaitlistSequence({ email: n.email, firstName: n.firstName, submissionId })
+    .then((r) => {
+      if (r.enrolled && !r.existing) return drainWaitlistDrip({ limit: 1, onlyEmail: n.email })
+      return undefined
+    })
+    .catch((e) => console.error('[waitlist] drip enrollment failed (lead saved):', e))
 
   return NextResponse.json(
     {

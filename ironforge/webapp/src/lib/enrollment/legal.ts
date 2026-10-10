@@ -52,12 +52,26 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentSpec[] = [
  * Plans that authorize automated trading. Community is education/chat only.
  * 'automate' is the family value PLAN-01 persists before an agent is chosen — the
  * agent choice lives on agent_configs.agent_code, never as a second plan write.
+ *
+ * 'both' kept here for backward compatibility with enrollment rows that already carry
+ * selected_plan='both' — the PLAN-01 route no longer accepts it for a NEW choice
+ * (Leron, 2026-10-04, binding: no bundle plan for new enrollments; Spark and Flame are
+ * two separate subscriptions), but an existing record must still compute the correct
+ * (automate-family) legal requirements rather than silently falling to 'core' only.
+ * 'ember' added the same day — Ember trades automatically too (via its internal REFLEX
+ * engine) and needs the same automate-family legal set (risk disclosure, trading
+ * authorization, etc).
  */
-const AUTOMATE_PLANS = new Set(['spark', 'flame', 'both', 'automate'])
+const AUTOMATE_PLANS = new Set(['spark', 'flame', 'both', 'ember', 'automate'])
 
 /** True when this plan (or plan family) authorizes automated trading. */
 export function isAutomatePlan(plan: string | null | undefined): boolean {
   return plan != null && AUTOMATE_PLANS.has(plan)
+}
+
+/** Ember is free and skips billing entirely (see service.ts recordAcceptances). */
+export function isEmberPlan(plan: string | null | undefined): boolean {
+  return plan === 'ember'
 }
 
 /**
@@ -74,6 +88,9 @@ export function requiredDocumentsFor(plan: string | null | undefined): LegalDocu
 export interface AcceptedVersion {
   code: string
   version: string
+  /** When this specific (code, version) was accepted — the Review step's
+   *  "Agreements" row timestamp (en-6 #128: "Agreements (signer + timestamp)"). */
+  acceptedAt?: Date
 }
 
 /**
@@ -92,4 +109,15 @@ export function staleDocumentCodes(
   return requiredDocumentsFor(plan)
     .filter((d) => !have.has(`${d.code}@${d.version}`))
     .map((d) => d.code)
+}
+
+/**
+ * Case-insensitive, whitespace-normalized match between a typed e-signature and the
+ * account's name on file (design spec §5 step 2: "must case-insensitively match
+ * account name" — gap audit "E-signature match" PARTIAL/S; previously the acceptances
+ * route only length-checked the signature and never compared it to anything).
+ */
+export function signatureMatchesName(signature: string, firstName: string, lastName: string): boolean {
+  const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
+  return norm(signature) === norm(`${firstName} ${lastName}`)
 }

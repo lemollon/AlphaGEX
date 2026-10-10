@@ -1,6 +1,7 @@
 'use client'
 
-import { Area, ComposedChart, ReferenceDot, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
+import { useEffect, useState } from 'react'
+import { Area, ComposedChart, ReferenceArea, ReferenceDot, ReferenceLine, ResponsiveContainer, XAxis, YAxis } from 'recharts'
 import type { CustomerState, LiveTrade } from '@/lib/live/types'
 import { formatDollarPnl } from '@/lib/format'
 import type { AccentTheme } from './accent'
@@ -22,6 +23,28 @@ function formatDuration(min: number | null): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
+/** 30-minute-boundary CT tick marks between two instants, as epoch ms
+ * (db-open #173: "time ticks every 30 minutes"). Pure arithmetic on the
+ * absolute-time delta — a 30-minute wall-clock boundary is still exactly
+ * 30 real minutes within one trading session, so no timezone-date
+ * reconstruction is needed. */
+function thirtyMinuteTicks(startMs: number, endMs: number): number[] {
+  if (!(endMs > startMs)) return []
+  const startCtMinute = new Date(startMs).toLocaleString('en-US', {
+    timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false,
+  })
+  const [hh, mm] = startCtMinute.split(':').map(Number)
+  const minuteOfDay = hh * 60 + mm
+  const nextBoundary = minuteOfDay % 30 === 0 ? minuteOfDay : Math.ceil(minuteOfDay / 30) * 30
+  let t = startMs + (nextBoundary - minuteOfDay) * 60_000
+  const ticks: number[] = []
+  while (t <= endMs) {
+    ticks.push(t)
+    t += 30 * 60_000
+  }
+  return ticks
+}
+
 function statusLabel(trade: LiveTrade | null, state: CustomerState | null): { title: string; sub: string } {
   if (state?.key === 'NOT_LINKED') return { title: 'No Account Linked', sub: 'Contact support to get set up' }
   if (state?.key === 'PAUSED') return { title: 'Trading Paused', sub: 'Open positions remain managed' }
@@ -41,6 +64,7 @@ export default function LiveTradeCard({
   state,
   accent,
   accountValue = null,
+  nextOpenLabel = null,
 }: {
   trade: LiveTrade | null
   error: boolean
@@ -48,7 +72,24 @@ export default function LiveTradeCard({
   accent: AccentTheme
   /** Account equity, for the "% of account at risk" figure. null renders "—". */
   accountValue?: number | null
+  /** db-dash #174: "Next session time or 'Paused'" — summary.market.next_open_label,
+   *  e.g. "Opens Monday 8:30 AM CT". null while the market is open. */
+  nextOpenLabel?: string | null
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [nowMs, setNowMs] = useState<number | null>(null)
+
+  // Ticks the time-left bar and the chart's "rest of session" shading once a
+  // second while a trade is open — nothing else here depends on wall-clock
+  // time, so this is the only re-render source for those two pieces.
+  useEffect(() => {
+    if (!trade?.active) return
+    const tick = () => setNowMs(Date.now())
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [trade?.active])
+
   const label = statusLabel(trade, state)
   const pnl = trade?.active ? trade.unrealized_pnl : trade?.today_result?.pnl ?? null
   const pct = trade?.active ? trade.unrealized_pnl_pct : trade?.today_result?.pct ?? null
@@ -60,6 +101,27 @@ export default function LiveTradeCard({
   // snapshots used to zero out and paint a −$208 day green (2026-07-17 fix).
   const outcomePnl = pnl ?? lastPnl
   const chartColor = outcomePnl >= 0 ? '#4ade80' : '#f87171'
+
+  // Time-left bar + "rest of session" shading need real instants, not labels.
+  // auto_close_at is only set when the position expires TODAY (summary.ts) —
+  // overnight swing holds correctly show neither.
+  const openedAtMs = trade?.opened_at ? new Date(trade.opened_at).getTime() : null
+  const autoCloseAtMs = trade?.auto_close_at ? new Date(trade.auto_close_at).getTime() : null
+  const hasSessionWindow = trade?.active && openedAtMs != null && autoCloseAtMs != null && autoCloseAtMs > openedAtMs
+  const totalMs = hasSessionWindow ? autoCloseAtMs! - openedAtMs! : null
+  const elapsedMs = hasSessionWindow && nowMs != null ? Math.min(Math.max(nowMs - openedAtMs!, 0), totalMs!) : null
+  const remainingMs = totalMs != null && elapsedMs != null ? totalMs - elapsedMs : null
+  const elapsedPct = totalMs && elapsedMs != null ? Math.round((elapsedMs / totalMs) * 100) : null
+
+  const chartData = series.map((pt) => ({ t: new Date(pt.timestamp).getTime(), pnl: pt.pnl }))
+  const lastT = chartData.length ? chartData[chartData.length - 1].t : null
+  const chartDomainEnd = hasSessionWindow ? autoCloseAtMs! : lastT
+  const xTicks =
+    showChart && openedAtMs != null && chartDomainEnd != null ? thirtyMinuteTicks(openedAtMs, chartDomainEnd) : []
+  // Shade from "now" (or the last data point if the feed is behind) to the
+  // session close — db-open #173's "shaded 'Rest of session'".
+  const restOfSessionStart =
+    hasSessionWindow && nowMs != null && lastT != null ? Math.max(nowMs, lastT) : null
 
   return (
     <section className="rounded-xl border border-forge-border bg-forge-card/80 p-4">
@@ -99,6 +161,28 @@ export default function LiveTradeCard({
             </div>
           )}
 
+          {/* Time-left bar: "Open 1h 16m · 1h 2m left" (db-open #172). Only
+              renders for a same-session (0DTE) trade — auto_close_at is null
+              for an overnight swing hold, which the "Day N of M" framing
+              above already covers. */}
+          {hasSessionWindow && elapsedPct != null && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-xs text-gray-500">
+                <span>
+                  Open {formatDuration(trade!.time_in_trade_min)}
+                  {remainingMs != null && <> · {formatDuration(Math.round(remainingMs / 60_000))} left</>}
+                </span>
+                <span>{formatCT(trade!.auto_close_at)} CT close</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-forge-border">
+                <div
+                  className={accent.dot}
+                  style={{ width: `${elapsedPct}%`, height: '100%', borderRadius: 'inherit' }}
+                />
+              </div>
+            </div>
+          )}
+
           {(trade?.active || trade?.today_result) && (
             <div className="mt-4 rounded-lg border border-forge-border/70 bg-forge-bg/60 p-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -121,10 +205,24 @@ export default function LiveTradeCard({
                   )}
                 </div>
                 {showChart && (
-                  <div className="h-[100px] min-w-0 flex-1">
+                  <div
+                    className="h-[120px] min-w-0 flex-1"
+                    role="img"
+                    aria-label={`Trade P&L chart, currently ${formatDollarPnl(outcomePnl)}`}
+                  >
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={series} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
-                        <XAxis dataKey="timestamp" hide />
+                      <ComposedChart data={chartData} margin={{ top: 6, right: 4, bottom: 0, left: 4 }}>
+                        {/* Dollar axis + 30-min time ticks (db-open #173, previously hidden). */}
+                        <XAxis
+                          dataKey="t"
+                          type="number"
+                          domain={openedAtMs != null && chartDomainEnd != null ? [openedAtMs, chartDomainEnd] : ['auto', 'auto']}
+                          ticks={xTicks.length ? xTicks : undefined}
+                          tickFormatter={(v: number) => formatCT(new Date(v).toISOString())}
+                          stroke="transparent"
+                          tick={{ fill: '#78716c', fontSize: 9 }}
+                          height={16}
+                        />
                         <YAxis
                           orientation="right"
                           domain={['auto', 'auto']}
@@ -134,7 +232,17 @@ export default function LiveTradeCard({
                           width={48}
                           tickCount={3}
                         />
-                        <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
+                        <ReferenceLine y={0} stroke="#78716c" />
+                        {/* "Rest of session" shading from now to the close (db-open #173). */}
+                        {restOfSessionStart != null && chartDomainEnd != null && chartDomainEnd > restOfSessionStart && (
+                          <ReferenceArea
+                            x1={restOfSessionStart}
+                            x2={chartDomainEnd}
+                            fill="#78716c"
+                            fillOpacity={0.08}
+                            label={{ value: 'Rest of session', position: 'insideTopRight', fill: '#78716c', fontSize: 9 }}
+                          />
+                        )}
                         <Area
                           type="monotone"
                           dataKey="pnl"
@@ -144,13 +252,9 @@ export default function LiveTradeCard({
                           isAnimationActive={false}
                           dot={false}
                         />
-                        <ReferenceDot
-                          x={series[series.length - 1].timestamp}
-                          y={lastPnl}
-                          r={4}
-                          fill={chartColor}
-                          stroke="none"
-                        />
+                        {lastT != null && (
+                          <ReferenceDot x={lastT} y={lastPnl} r={4} fill={chartColor} stroke="none" />
+                        )}
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
@@ -175,11 +279,73 @@ export default function LiveTradeCard({
             <RegimeRow p={trade.positions[0]} accountValue={accountValue} />
           ) : null}
 
+          {/* OPT-IN, technical-trader only. Collapsed by default — this never
+              changes what a default customer sees, and it only renders once
+              there is an actual trade today (today_result_technical is never
+              fabricated on a 0-trade day). Purely descriptive: whether today's
+              PER-LOT result fell inside or outside the strategy's validated
+              backtested range, never a projection of tomorrow. */}
+          {trade?.today_result_technical && (
+            <div className="mt-4 border-t border-forge-border pt-3">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                aria-expanded={advancedOpen}
+                className="flex w-full items-center justify-between text-xs font-semibold uppercase tracking-widest text-gray-500 hover:text-gray-300"
+              >
+                Advanced
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round"
+                  className={`h-4 w-4 transition-transform ${advancedOpen ? 'rotate-180' : ''}`}>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+              {advancedOpen && (
+                <div className="mt-3 rounded-lg border border-forge-border/70 bg-forge-bg/60 p-3 text-sm">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs text-gray-500">Today, per lot</div>
+                      <div className="mt-0.5 font-mono text-gray-200">
+                        {formatDollarPnl(trade.today_result_technical.perLot)}
+                        <span className="ml-1 text-xs font-normal text-gray-500">
+                          / {trade.today_result_technical.contracts} lot{trade.today_result_technical.contracts === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Typical range / lot</div>
+                      <div className="mt-0.5 font-mono text-gray-200">
+                        {formatDollarPnl(trade.today_result_technical.anchor.worstDayAvg)} to {formatDollarPnl(trade.today_result_technical.anchor.bestDayAvg)}
+                      </div>
+                    </div>
+                  </div>
+                  {trade.today_result_technical.comparison && (
+                    <p className="mt-3 text-gray-300">
+                      {trade.today_result_technical.comparison.label}
+                    </p>
+                  )}
+                  {/* Same visual weight as the numbers above it, per the compliance
+                      requirement — never a footnote. */}
+                  <p className="mt-3 font-semibold text-amber-400">
+                    Backtested historical range — not a guarantee of future results.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           {!trade?.active && !trade?.today_result && trade && (
             <p className="mt-4 text-sm text-gray-400">
-              {state?.key === 'WORKING_WAITING' && state.dot === 'gray'
-                ? 'Markets are closed — Spark opens trades only during market hours.'
-                : 'Spark will show the trade here the moment one opens.'}
+              {/* db-dash #174: a paused agent and a closed market read as the same
+                  generic line before this — "Paused" and the actual next-session
+                  time are both real, different things a customer needs to know. */}
+              {state?.paused
+                ? 'Trading is paused. Resume from Settings when you’re ready.'
+                : state?.key === 'WORKING_WAITING' && state.dot === 'gray'
+                  ? nextOpenLabel
+                    ? `Markets are closed — ${nextOpenLabel[0].toLowerCase()}${nextOpenLabel.slice(1)}.`
+                    : 'Markets are closed — Spark opens trades only during market hours.'
+                  : 'Spark will show the trade here the moment one opens.'}
             </p>
           )}
         </>

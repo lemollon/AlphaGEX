@@ -1,0 +1,117 @@
+name: Perp External Backtest
+
+on:
+  push:
+    branches:
+      - feature/perp-edge-hardening
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - backtest/perp_strategy_family_search.py
+      - backtest/perp_coin_profile_search.py
+      - backtest/perp_direction_regime_search.py
+      - .github/workflows/perp-external-backtest.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - backtest/perp_strategy_family_search.py
+      - .github/workflows/perp-external-backtest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        days: [30, 90, 180, 365]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Hyperliquid reconstruction backtest
+        run: |
+          python backtest/external_perp_reconstruction.py \
+            --days "${{ matrix.days }}" \
+            --out "artifacts/perp_external_backtest_${{ matrix.days }}d"
+
+      - name: Show report
+        run: cat "artifacts/perp_external_backtest_${{ matrix.days }}d/report.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-external-backtest-${{ matrix.days }}d
+          path: artifacts/perp_external_backtest_${{ matrix.days }}d/
+          if-no-files-found: error
+          retention-days: 30
+
+
+  strategy-family-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Search per-coin strategy families
+        run: |
+          python backtest/perp_strategy_family_search.py --windows "30,90,180,365" --out artifacts/perp_strategy_family_search
+      - name: Show family report
+        run: cat artifacts/perp_strategy_family_search/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-strategy-family-search
+          path: artifacts/perp_strategy_family_search/
+          if-no-files-found: error
+          retention-days: 30
+
+
+  coin-profile-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Search selective coin-specific profiles
+        run: |
+          python backtest/perp_coin_profile_search.py --windows "30,90,180,365" --out artifacts/perp_coin_profile_search
+      - name: Show selective profile report
+        run: cat artifacts/perp_coin_profile_search/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-coin-profile-search
+          path: artifacts/perp_coin_profile_search/
+          if-no-files-found: error
+          retention-days: 30
+
+
+  direction-regime-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Refine direction and volatility regime
+        run: |
+          python backtest/perp_direction_regime_search.py --windows "30,90,180,365" --out artifacts/perp_direction_regime
+      - name: Show direction/regime report
+        run: cat artifacts/perp_direction_regime/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-direction-regime
+          path: artifacts/perp_direction_regime/
+          if-no-files-found: error
+          retention-days: 30

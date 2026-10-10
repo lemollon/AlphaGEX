@@ -379,6 +379,26 @@ export async function findLiveSubscriptionForPrice(
   return null
 }
 
+/**
+ * EMBEDDED billing (10/5 reorder) — a SetupIntent so the enrollment's Billing step can
+ * collect a card with Stripe Elements/Payment Element instead of a hosted-Checkout
+ * redirect, with $0 due today, EXACTLY like createSetupCheckout() above (setup mode,
+ * card only). A SetupIntent — not a subscription — is deliberate: creating a
+ * subscription now (even `default_incomplete`) would start Stripe's own billing clock
+ * at card entry, contradicting "the trial begins only after brokerage+agent+activation"
+ * (§7), which createTrialingSubscription() below still enforces by creating the real
+ * subscription ONLY inside the activation transaction. usage:'off_session' is what
+ * lets that later subscription charge this same saved card without the customer
+ * present.
+ */
+export async function createSetupIntent(opts: { customerId: string }): Promise<{ id: string; client_secret: string }> {
+  return stripeRequest<{ id: string; client_secret: string }>('POST', '/setup_intents', {
+    customer: opts.customerId,
+    payment_method_types: ['card'],
+    usage: 'off_session',
+  })
+}
+
 /** A payment method actually attached to this customer — the §4 "payment method is valid" input. */
 export async function hasUsablePaymentMethod(customerId: string): Promise<boolean> {
   try {
@@ -392,6 +412,37 @@ export async function hasUsablePaymentMethod(customerId: string): Promise<boolea
     // Unknown => treated as INVALID. The activation predicate must never be told
     // "valid" on a failed lookup.
     return false
+  }
+}
+
+/**
+ * Generous upper bound for every "trial" Stripe subscription this app creates — never
+ * the real trial length. The trading-day ledger (lib/enrollment/trial-close.ts) decides
+ * when TRIAL_ELIGIBLE_DAYS eligible trading days have passed and calls endTrialNow()
+ * well before this date arrives. One shared constant so a reader comparing the main
+ * enrollment path, the legacy add-agent Checkout path and the Community-to-Automate
+ * upgrade path sees the same number and the same reasoning, not three independent guesses.
+ */
+export const TRIAL_HOLD_DAYS = 60
+
+/**
+ * The customer's most recent card on file, as a DISPLAY-ONLY masked summary — brand
+ * and last4, nothing else. Never the full number (Stripe never returns it over the API
+ * either). Used by the Account tab's "Payment method" row (fidelity audit) — read-only,
+ * no mutation, same gated-degradation pattern as hasUsablePaymentMethod above.
+ */
+export async function getDefaultPaymentMethod(
+  customerId: string,
+): Promise<{ brand: string; last4: string } | null> {
+  try {
+    const res = await stripeRequest<
+      StripeList<{ card?: { brand?: string; last4?: string } }>
+    >('GET', '/payment_methods', { customer: customerId, type: 'card', limit: 1 })
+    const card = res.data?.[0]?.card
+    if (!card?.last4) return null
+    return { brand: card.brand ?? 'card', last4: card.last4 }
+  } catch {
+    return null
   }
 }
 
@@ -413,7 +464,7 @@ export async function createTrialingSubscription(opts: {
   /** Generous upper bound; the ledger ends it earlier. */
   holdDays?: number
 }): Promise<{ id: string; status: string }> {
-  const holdDays = opts.holdDays ?? 60
+  const holdDays = opts.holdDays ?? TRIAL_HOLD_DAYS
   const trialEnd = Math.floor(Date.now() / 1000) + holdDays * 24 * 60 * 60
   return stripeRequest<{ id: string; status: string }>('POST', '/subscriptions', {
     customer: opts.customerId,
@@ -443,12 +494,24 @@ export async function createSubscriptionCheckout(opts: {
   successUrl: string
   cancelUrl: string
 }): Promise<{ id: string; url: string }> {
-  // Stripe rejects trial_period_days below 1, so only include it for a real trial
-  // (bot plans pass 5; Community passes 0 = charge immediately, no trial).
+  // trialDays > 0 only ever means "this plan has a free trial at all" (Community no
+  // longer calls this function — free, no Stripe — so every real caller passes the
+  // bot plans' 5). The LENGTH of that trial is never Stripe's own calendar clock
+  // (trial_period_days starts counting the instant this Checkout session completes,
+  // weekends and holidays included — gap audit #184/#216, "adding a second agent
+  // starts a 5 CALENDAR-day trial, not 5 trading days"). trial_end as an explicit far
+  // HOLD timestamp, same technique as createTrialingSubscription, is what lets the
+  // webhook's trials-ledger insert (checkout.session.completed) and trial-close.ts's
+  // daily job end it after exactly TRIAL_ELIGIBLE_DAYS eligible TRADING days instead.
   const subscription_data: Record<string, unknown> = {
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
   }
-  if (opts.trialDays > 0) subscription_data.trial_period_days = opts.trialDays
+  if (opts.trialDays > 0) {
+    subscription_data.trial_end = Math.floor(Date.now() / 1000) + TRIAL_HOLD_DAYS * 24 * 60 * 60
+    // Same reasoning as createTrialingSubscription: without this, Stripe may void the
+    // subscription at trial_end if no default payment method is attached yet.
+    subscription_data.trial_settings = { end_behavior: { missing_payment_method: 'cancel' } }
+  }
 
   const session = await stripeRequest<{ id: string; url: string }>('POST', '/checkout/sessions', {
     mode: 'subscription',
@@ -478,10 +541,20 @@ export async function retrieveCheckoutSession(id: string): Promise<any> {
 export async function createBillingPortalSession(opts: {
   customerId: string
   returnUrl: string
+  /**
+   * A Stripe portal configuration id (`bpc_...`). Omitted, Stripe serves the account's
+   * DEFAULT portal, which permits CHANGING PLAN — and a plan change reachable from
+   * inside the iOS app is a purchasing mechanism under App Review Guideline 3.1.1.
+   *
+   * Mobile callers must therefore pass a configuration with subscription updates
+   * disabled. The route enforces that; this signature only carries it.
+   */
+  configuration?: string
 }): Promise<{ url: string }> {
   const session = await stripeRequest<{ url: string }>('POST', '/billing_portal/sessions', {
     customer: opts.customerId,
     return_url: opts.returnUrl,
+    ...(opts.configuration ? { configuration: opts.configuration } : {}),
   })
   return { url: session.url }
 }
@@ -508,10 +581,15 @@ export async function retrieveSubscription(id: string): Promise<StripeSubscripti
  * bundle price when it ends. No new card entry is needed — the payment method is already on file.
  */
 /**
- * Upgrades a Community-only subscription ($10) in place to a single-bot Automate price
- * ($50 total — Community is included in Automate), rather than opening a second parallel
- * subscription (which double-billed $60/mo and matched no advertised total — UAT-011).
+ * Upgrades a GRANDFATHERED, still-paying Community-only subscription in place to a
+ * single-bot Automate price ($50 total — Community is included in Automate), rather
+ * than opening a second parallel subscription (which double-billed $60/mo and matched
+ * no advertised total — UAT-011). Community is free for new members as of 2026-10-05,
+ * so a free member has no Stripe subscription to upgrade here — this path only ever
+ * fires for the pre-existing paid community_monthly subscribers callers check for via
+ * `communitySub?.stripe_subscription_id` (see billing/checkout/route.ts).
  *
+
  * The 5-day agent trial rides on the upgrade (product decision 7/31): trial_end is set,
  * proration is 'none' — the member keeps the Community period they already paid for, the
  * $50 rate starts when the trial ends. metadata.bot is overwritten to the new slug so the
@@ -525,9 +603,15 @@ export async function upgradeCommunityToBot(opts: {
   bot: string
   trialDays: number
 }): Promise<StripeSubscription> {
+  // Same HOLD-not-length fix as createSubscriptionCheckout (gap audit #184/#216):
+  // opts.trialDays (5) used to be multiplied straight into the timestamp, which is
+  // exactly a 5-CALENDAR-day trial by another name. The caller still writes a trials
+  // ledger row for this upgrade (checkout/route.ts) so the trading-day job ends it at
+  // the right time instead.
   return stripeRequest<StripeSubscription>('POST', `/subscriptions/${encodeURIComponent(opts.subscriptionId)}`, {
     items: [{ id: opts.itemId, price: opts.botPriceId }],
-    trial_end: Math.floor(Date.now() / 1000) + opts.trialDays * 86_400,
+    trial_end: Math.floor(Date.now() / 1000) + TRIAL_HOLD_DAYS * 86_400,
+    trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
     proration_behavior: 'none',
     metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
   })

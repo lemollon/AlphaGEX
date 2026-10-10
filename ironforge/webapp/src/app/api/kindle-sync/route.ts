@@ -78,6 +78,7 @@ export async function POST() {
            collateral_in_use = 0,
            buying_power      = $2,
            high_water_mark   = $1,
+           high_water_balance = $1,
            max_drawdown      = 0,
            total_trades      = 0,
            updated_at        = NOW()`,

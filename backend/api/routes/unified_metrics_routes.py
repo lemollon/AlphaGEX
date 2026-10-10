@@ -15,6 +15,7 @@ Created: January 2025
 Purpose: Fix data reconciliation issues between bot frontends
 """
 
+import asyncio
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -346,49 +347,53 @@ async def debug_equity_curve(bot: str):
         }
         positions_table = table_map.get(bot.upper())
 
-        conn = get_connection()
-        cursor = conn.cursor()
+        def _run_diagnostic_queries():
+            conn = get_connection()
+            cursor = conn.cursor()
 
-        # Test 1: Simple count (no timestamp handling)
-        cursor.execute(f"""
-            SELECT status, COUNT(*), COALESCE(SUM(realized_pnl), 0)
-            FROM {positions_table}
-            GROUP BY status
-        """)
-        status_counts = cursor.fetchall()
+            # Test 1: Simple count (no timestamp handling)
+            cursor.execute(f"""
+                SELECT status, COUNT(*), COALESCE(SUM(realized_pnl), 0)
+                FROM {positions_table}
+                GROUP BY status
+            """)
+            status_counts = cursor.fetchall()
 
-        # Test 2: Check if close_time and open_time exist
-        cursor.execute(f"""
-            SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN close_time IS NULL THEN 1 ELSE 0 END) as null_close_time,
-                SUM(CASE WHEN open_time IS NULL THEN 1 ELSE 0 END) as null_open_time
-            FROM {positions_table}
-            WHERE status IN ('closed', 'expired', 'partial_close')
-        """)
-        null_check = cursor.fetchone()
-
-        # Test 3: Try the exact equity curve query
-        error_msg = None
-        trades_found = 0
-        try:
+            # Test 2: Check if close_time and open_time exist
             cursor.execute(f"""
                 SELECT
-                    COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
-                    realized_pnl,
-                    position_id
+                    COUNT(*) as total,
+                    SUM(CASE WHEN close_time IS NULL THEN 1 ELSE 0 END) as null_close_time,
+                    SUM(CASE WHEN open_time IS NULL THEN 1 ELSE 0 END) as null_open_time
                 FROM {positions_table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
-                LIMIT 5
             """)
-            sample_trades = cursor.fetchall()
-            trades_found = len(sample_trades)
-        except Exception as e:
-            error_msg = str(e)
-            sample_trades = []
+            null_check = cursor.fetchone()
 
-        conn.close()
+            # Test 3: Try the exact equity curve query
+            error_msg = None
+            sample_trades = []
+            try:
+                cursor.execute(f"""
+                    SELECT
+                        COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                        realized_pnl,
+                        position_id
+                    FROM {positions_table}
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
+                    LIMIT 5
+                """)
+                sample_trades = cursor.fetchall()
+            except Exception as e:
+                error_msg = str(e)
+                sample_trades = []
+
+            conn.close()
+            return status_counts, null_check, error_msg, sample_trades
+
+        status_counts, null_check, error_msg, sample_trades = await asyncio.to_thread(_run_diagnostic_queries)
+        trades_found = len(sample_trades)
 
         return {
             "success": True,

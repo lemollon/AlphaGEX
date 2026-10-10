@@ -48,21 +48,6 @@ const DEFAULTS: Record<string, Record<string, number | string>> = {
     pdt_max_day_trades: 4, starting_capital: BOT_STARTING_CAPITAL.spark,
   },
 
-  // spark2 — SPARK's paper twin. Same strategy code (isSparkV2Sizing +
-  // isSparkStrategy both include it), its own ledger and account.
-  //
-  // Without this entry it fell through to `DEFAULTS.inferno` and the API reported
-  // sd 1.0 / stop 1000 / PT 100 / unlimited trades — INFERNO's aggressive 0DTE
-  // profile — for a 1DTE bot that actually runs 1.2 SD and one trade a day.
-  spark2: {
-    sd_multiplier: 1.2, spread_width: 5.0, min_credit: 0.25,
-    // 40 — spark2 is on isSparkV2Sizing too, same code constant as SPARK.
-    profit_target_pct: 30.0, stop_loss_pct: 200.0, vix_skip: 40.0,
-    max_contracts: 0, max_trades_per_day: 1, buying_power_usage_pct: 0.85,
-    risk_per_trade_pct: 0.15, min_win_probability: 0.42,
-    entry_start: '08:30', entry_end: '14:00', eod_cutoff_et: '14:45',
-    pdt_max_day_trades: 4, starting_capital: 10000.0,
-  },
   // REPOINTED 2026-08-11 -- SPY only, puts only, 14 DTE, delta 0.10 (k=2.10),
   // $5 wings, 3x stop, no stand-down, 1 contract. The only configuration that
   // survived an honest walk-forward once the stand-down look-ahead was removed.
@@ -112,7 +97,7 @@ const ALL_FIELDS = NUMERIC_FIELDS.concat(INT_FIELDS, STRING_FIELDS)
  * If one of these is ever wired up, delete it here in the SAME change.
  */
 const INERT_FIELDS: Record<string, string> = {
-  vix_skip: 'the VIX ceiling is set in code — 40 for spark/spark2, 32 for the others',
+  vix_skip: 'the VIX ceiling is set in code — 40 for spark, 32 for the others',
   risk_per_trade_pct: 'never read; sizing is buying_power_usage_pct against the regime cap',
   min_win_probability: 'never read by the scanner',
   entry_start: 'only entry_end is parsed from the row; the open is a code constant',
@@ -128,7 +113,7 @@ const INERT_FIELDS: Record<string, string> = {
  * reported as inert — the whole point of this list is that the API never tells an
  * operator a field is dead when it governs real money.
  */
-const SWING_BOTS = ['spark2', 'kindle']
+const SWING_BOTS = ['kindle']
 
 /**
  * Bots whose wing width is DERIVED FROM LIVE EQUITY every scan, so the stored
@@ -155,7 +140,7 @@ const DERIVED_WIDTH_BOTS = ['forge', 'flame', 'spark']
  * with it.
  */
 const MIN_CREDIT_FLOOR: Record<string, number> = {
-  flame: 0.05, spark: 0.05, spark2: 0.25, inferno: 0.15, kindle: 0.05,
+  flame: 0.05, spark: 0.05, inferno: 0.15, kindle: 0.05,
   forge: 0.25,
 }
 
@@ -165,8 +150,8 @@ const MIN_CREDIT_FLOOR: Record<string, number> = {
  * getSlidingProfitTarget (scanner.ts):
  *   · INFERNO           -> returns 1.0 / HOLD_TO_EOD. The row's PT is never used.
  *   · SPARK-strategy    -> hardcoded 0.40 / 0.35 / 0.30 by CT time-of-day. The
- *     (spark/spark2/     comment there is explicit: "the DB profit_target_pct
- *      kindle)           override does NOT apply to these bots".
+ *     (spark/kindle)     comment there is explicit: "the DB profit_target_pct
+ *                        override does NOT apply to these bots".
  *   · everything else   -> derived FROM the row (basePt, then basePt-0.10, -0.15).
  *
  * So for every bot except FLAME the stored number governs nothing, and a single

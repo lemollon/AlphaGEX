@@ -2,7 +2,7 @@
 """
 RESET ALL PERPETUAL BOT TRADING DATA
 
-This script performs a complete data reset for all 7 perpetual trading bots:
+This script performs a complete data reset for the 6 active perpetual trading bots:
   - AGAPE-BTC-PERP
   - AGAPE-ETH-PERP
   - AGAPE-SOL-PERP
@@ -43,7 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
-# All 5 perpetual bots and their table names
+# Active perpetual bots and their table names
 PERP_BOTS = {
     "BTC-PERP": {
         "prefix": "agape_btc_perp",
@@ -109,17 +109,6 @@ PERP_BOTS = {
             "agape_doge_perp_equity_snapshots",
             "agape_doge_perp_scan_activity",
             "agape_doge_perp_activity_log",
-        ],
-    },
-    "SHIB-PERP": {
-        "prefix": "agape_shib_perp",
-        "starting_capital": 1000.0,
-        "config_key": "agape_shib_perp_starting_capital",
-        "tables": [
-            "agape_shib_perp_positions",
-            "agape_shib_perp_equity_snapshots",
-            "agape_shib_perp_scan_activity",
-            "agape_shib_perp_activity_log",
         ],
     },
 }

@@ -1,0 +1,32 @@
+name: Strict report policy
+on:
+  pull_request:
+    paths: ['spreadworks/**', '.github/workflows/report-policy.yml']
+  push:
+    branches: [main]
+    paths: ['spreadworks/**', '.github/workflows/report-policy.yml']
+jobs:
+  report-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: spreadworks/requirements.txt
+      - name: Install report dependencies
+        run: python -m pip install -r spreadworks/requirements.txt
+      - name: Validate complete report contract and failure paths
+        run: >-
+          python -m pytest spreadworks/tests/test_report_policy.py
+          spreadworks/tests/test_full_options_report.py
+          spreadworks/tests/test_report_evidence_integrity.py
+          spreadworks/tests/test_morning_options_report.py
+          spreadworks/tests/test_market_structure.py
+          spreadworks/tests/test_report_refresh.py
+          spreadworks/tests/test_tradier_report_source.py
+          spreadworks/tests/test_intraday_watch.py
+          spreadworks/tests/test_report_archive.py
+          spreadworks/tests/test_theta_flow.py
+          spreadworks/tests/test_thetadata_proxy.py -q

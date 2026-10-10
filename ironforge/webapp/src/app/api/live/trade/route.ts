@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 /**
  * Customer Live page — active-trade state with live unrealized P&L and the
  * mini sparkline series. Polled at ~30s by the client while the page is open.
- * Account-aware: ?account=spark|spark2, authorized server-side per viewer
+ * Account-aware: ?account=spark|flame, authorized server-side per viewer
  * (operators see all; customers only their mapped bots; anonymous = spark).
  */
 export async function GET(req: NextRequest) {

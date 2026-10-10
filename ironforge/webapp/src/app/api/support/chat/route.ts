@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
 import { isAnthropicConfigured, streamAnthropic, type ChatMessage } from '@/lib/support/anthropic'
 import { buildSparkySystemPrompt } from '@/lib/support/persona'
+import { rateLimited } from '@/lib/rate-limit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,18 +21,9 @@ export const dynamic = 'force-dynamic'
 const MAX_TURNS = 16 // cap history sent upstream
 const MAX_MSG_LEN = 4000
 
-// Lightweight in-memory rate limit (per instance). Support is low-QPS; this just stops abuse.
-const HITS = new Map<string, number[]>()
+// Rate limit config — see lib/rate-limit.ts. Support is low-QPS; this just stops abuse.
 const WINDOW_MS = 60_000
 const MAX_PER_WINDOW = 20
-
-function rateLimited(key: string): boolean {
-  const now = Date.now()
-  const arr = (HITS.get(key) ?? []).filter((t) => now - t < WINDOW_MS)
-  arr.push(now)
-  HITS.set(key, arr)
-  return arr.length > MAX_PER_WINDOW
-}
 
 function sanitizeMessages(raw: unknown): ChatMessage[] {
   if (!Array.isArray(raw)) return []
@@ -67,7 +59,7 @@ export async function POST(req: NextRequest) {
       { status: 503 },
     )
   }
-  if (rateLimited(session.customerId)) {
+  if (rateLimited(`support:${session.customerId}`, { windowMs: WINDOW_MS, maxPerWindow: MAX_PER_WINDOW })) {
     return NextResponse.json({ error: 'You’re sending messages a bit fast — give it a moment.' }, { status: 429 })
   }
 

@@ -1,7 +1,14 @@
-import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
+import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
 import { scopeFilter, resolveAccountMode, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT } from './bots'
 import { getSandboxAccountBalances } from '@/lib/tradier'
+import {
+  sumTradingDayWindow,
+  dailyResultBars,
+  agentLead,
+  cumulativePnlSeries,
+  type PnlPoint,
+} from './trading-days'
 
 /**
  * Customer Performance page payload — the viewer's all-time history, COMBINED
@@ -25,13 +32,33 @@ export interface BotPerf {
   trades: number
   /** All-time return on the pooled starting capital, percent. null when no base. */
   return_pct: number | null
-  /** Realised P&L over the trailing 7 / 30 days (the Wealth-Snapshot KPIs,
-   *  now shown on Performance and switchable per strategy). */
+  /** Realised P&L over the last 5 / 21 TRADING days, including today
+   *  (dev-handoff §6 KPI contract — not a Monday-reset calendar week or a
+   *  1st-of-month calendar reset; see trading-days.ts). */
   weekly: number
   monthly: number
+  /** Broker buying power (Tradier `option_buying_power`) for a live bot, or the
+   *  paper ledger's own `buying_power` column for a paper bot (db-kpi "Capital
+   *  available"). Null only when neither source answered. */
+  capital_available: number | null
+  /** Capital committed to open positions right now — Tradier accountValue minus
+   *  capital_available for a live bot, or the paper ledger's own
+   *  `collateral_in_use` for a paper bot (db-kpi "Capital available" sub-label). */
+  held_for_open_trades: number | null
+  /** Realized P&L for today's trading session plus unrealized P&L on anything
+   *  still open (db-kpi "Today"). Null only when neither source answered. */
+  today_pnl: number | null
   /** This bot's own cumulative-realised equity curve, so the per-strategy
    *  toggle switches the chart, not just the numbers. */
   curve: EquityPoint[]
+  /** Last 20 trading days as zero-filled {day, pnl} bars (Daily results chart). */
+  daily_bars: Array<{ day: string; pnl: number }>
+  /** Agent lead tile: "Days the trade kept its credit: X of Y". Null when the
+   *  agent has no closed trade yet. */
+  lead: { kept: number; total: number } | null
+  /** Cumulative-from-zero P&L series per chart range (dev-handoff: "single
+   *  cumulative line from 0", not an equity curve — see cumulativePnlSeries). */
+  pnl_ranges: { '1D': PnlPoint[]; '1W': PnlPoint[]; '1M': PnlPoint[]; ALL: PnlPoint[] }
 }
 
 export interface EquityPoint {
@@ -51,11 +78,21 @@ export interface PerformanceData {
     wins: number
     losses: number
     best_day: number | null
-    /** Combined trailing 7 / 30-day realised P&L (Wealth-Snapshot KPIs). */
+    /** Combined last-5 / last-21-trading-day realised P&L (dev-handoff KPIs). */
     weekly: number
     monthly: number
+    /** Sum of every owned bot's capital_available/held_for_open_trades/today_pnl.
+     *  Null when EVERY bot's own figure is null (nothing real to add); otherwise
+     *  missing bots count as 0 so one unreadable source doesn't blank the total. */
+    capital_available: number | null
+    held_for_open_trades: number | null
+    today_pnl: number | null
   }
   equity_curve: EquityPoint[]
+  /** Combined last 20 trading days as zero-filled {day, pnl} bars. */
+  daily_bars: Array<{ day: string; pnl: number }>
+  /** Combined cumulative-from-zero P&L series per chart range. */
+  pnl_ranges: { '1D': PnlPoint[]; '1W': PnlPoint[]; '1M': PnlPoint[]; ALL: PnlPoint[] }
   as_of: string
 }
 
@@ -73,15 +110,15 @@ function buildCurve(points: Array<{ t: number; pnl: number }>, base: number): Eq
   return out
 }
 
-/** Sum P&L of points whose timestamp is within the trailing `days`. */
-function trailing(points: Array<{ t: number; pnl: number }>, days: number, nowMs: number): number {
-  const cut = nowMs - days * 86_400_000
-  const s = points.reduce((a, p) => (p.t >= cut ? a + p.pnl : a), 0)
-  return Math.round(s * 100) / 100
+/** Win rate as a percent, one decimal, or null when there is nothing to divide by.
+ *  Shared definition — win = realized_pnl > 0 — so every KPI derived from it (this
+ *  page's per-bot/combined win_rate, the mobile Ledger KPI strip) agrees. */
+export function winRatePct(wins: number, trades: number): number | null {
+  return trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null
 }
 
 /** Base per-bot stats before getPerformance enriches with curve + trailing KPIs. */
-type BasePerf = Omit<BotPerf, 'return_pct' | 'weekly' | 'monthly' | 'curve'>
+type BasePerf = Omit<BotPerf, 'return_pct' | 'weekly' | 'monthly' | 'curve' | 'daily_bars' | 'lead' | 'pnl_ranges'>
 
 interface RawBot {
   perf: BasePerf
@@ -105,7 +142,7 @@ async function loadBot(
   const prod = scopeFilter(bot, person, isOperator)
   const closed = `status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${prod}`
 
-  const [statRows, capRows, pointRows] = await Promise.all([
+  const [statRows, capRows, pointRows, todayRealizedRows, latestSnapshotRows] = await Promise.all([
     dbQuery(
       `SELECT COUNT(*) AS trades,
               COUNT(*) FILTER (WHERE realized_pnl > 0) AS wins,
@@ -113,12 +150,27 @@ async function loadBot(
        FROM ${botTable(bot, 'positions')} WHERE ${closed}`,
     ),
     dbQuery(
-      `SELECT starting_capital FROM ${botTable(bot, 'paper_account')}
+      `SELECT starting_capital, buying_power, collateral_in_use
+       FROM ${botTable(bot, 'paper_account')}
        WHERE is_active = TRUE ${dteFilter} ${prod} ORDER BY id DESC LIMIT 1`,
     ),
     dbQuery(
       `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS ct_date, close_time, realized_pnl
        FROM ${botTable(bot, 'positions')} WHERE ${closed} ORDER BY close_time ASC`,
+    ),
+    // db-kpi "Today": realized P&L for TODAY's session only — a separate sum from
+    // the all-time `pnl` above, which the daily_bars/weekly/monthly windows below
+    // also need their own trading-day math for, not this plain calendar date.
+    dbQuery(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS today_realized_pnl
+       FROM ${botTable(bot, 'positions')}
+       WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
+         AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
+         ${dteFilter} ${prod}`,
+    ),
+    dbQuery(
+      `SELECT unrealized_pnl FROM ${botTable(bot, 'equity_snapshots')}
+       WHERE 1=1 ${dteFilter} ${prod} ORDER BY snapshot_time DESC LIMIT 1`,
     ),
   ])
 
@@ -143,6 +195,19 @@ async function loadBot(
   let accountValue = Math.round((startingCapital + pnl) * 100) / 100
   let balanceSource: 'tradier' | 'paper_account' = 'paper_account'
 
+  // db-kpi "Capital available" / "Today" — same broker-first, ledger-fallback rule as
+  // account value above. Paper's own buying_power/collateral_in_use columns are the
+  // real paper ledger (not invented); Tradier's option_buying_power/day_pnl are the
+  // real broker fields (see tradier.ts's SandboxAccountBalance — the same ones
+  // getLiveSummary's single-bot "Today" KPI already trusts).
+  let capitalAvailable: number | null = capRows[0]?.buying_power != null ? num(capRows[0].buying_power) : null
+  let heldForOpenTrades: number | null =
+    capRows[0]?.collateral_in_use != null ? num(capRows[0].collateral_in_use) : null
+  let todayPnl: number | null =
+    todayRealizedRows[0] != null
+      ? Math.round((num(todayRealizedRows[0].today_realized_pnl) + num(latestSnapshotRows[0]?.unrealized_pnl)) * 100) / 100
+      : null
+
   if (!isPaper) {
     const bals = await getSandboxAccountBalances().catch(() => [])
     const prodBals = bals.filter(
@@ -159,6 +224,15 @@ async function loadBot(
       accountValue = Math.round(prodBals.reduce((a, b) => a + num(b.total_equity), 0) * 100) / 100
       startingCapital = Math.round((accountValue - pnl) * 100) / 100
       balanceSource = 'tradier'
+      capitalAvailable = Math.round(prodBals.reduce((a, b) => a + num(b.option_buying_power), 0) * 100) / 100
+      heldForOpenTrades = Math.round(Math.max(0, accountValue - capitalAvailable) * 100) / 100
+      todayPnl = Math.round(prodBals.reduce((a, b) => a + num(b.day_pnl) + num(b.unrealized_pnl), 0) * 100) / 100
+    } else {
+      // Not readable for this viewer — never claim a paper-ledger number for a
+      // live bot's capital/today figures.
+      capitalAvailable = null
+      heldForOpenTrades = null
+      todayPnl = null
     }
   }
 
@@ -177,8 +251,11 @@ async function loadBot(
       account_value: accountValue,
       balance_source: balanceSource,
       total_pnl: pnl,
-      win_rate: trades > 0 ? Math.round((wins / trades) * 1000) / 10 : null,
+      win_rate: winRatePct(wins, trades),
       trades,
+      capital_available: capitalAvailable,
+      held_for_open_trades: heldForOpenTrades,
+      today_pnl: todayPnl,
     },
     wins,
     points,
@@ -191,17 +268,27 @@ export async function getPerformance(
   isOperator = false,
 ): Promise<PerformanceData> {
   const raws = await Promise.all(bots.map((b) => loadBot(b, persons[b] ?? null, isOperator)))
-  const nowMs = Date.now()
+  const asOf = new Date()
   // Enrich each bot with its own curve + trailing KPIs so the per-strategy
   // toggle on the Performance page switches the chart and the income tiles.
+  // "Past week"/"Past month" are 5/21 TRADING days (dev-handoff §6), not a
+  // calendar week or calendar month.
   const perfBots = raws.map((r) => ({
     ...r.perf,
     return_pct: r.perf.starting_capital > 0
       ? Math.round((r.perf.total_pnl / r.perf.starting_capital) * 10000) / 100
       : null,
-    weekly: trailing(r.points, 7, nowMs),
-    monthly: trailing(r.points, 30, nowMs),
+    weekly: sumTradingDayWindow(r.points, 5, asOf),
+    monthly: sumTradingDayWindow(r.points, 21, asOf),
     curve: buildCurve(r.points, r.perf.starting_capital),
+    daily_bars: dailyResultBars(r.points, 20, asOf),
+    lead: agentLead(r.points),
+    pnl_ranges: {
+      '1D': cumulativePnlSeries(r.points, 1, asOf),
+      '1W': cumulativePnlSeries(r.points, 5, asOf),
+      '1M': cumulativePnlSeries(r.points, 21, asOf),
+      ALL: cumulativePnlSeries(r.points, null, asOf),
+    },
   }))
 
   const round2 = (v: number) => Math.round(v * 100) / 100
@@ -220,6 +307,14 @@ export async function getPerformance(
   }
   const bestDay = byDay.size ? round2(Math.max(...Array.from(byDay.values()))) : null
 
+  // Sum each nullable per-bot figure, but only when AT LEAST ONE bot actually
+  // answered — all-null in means all-null out, never a fabricated $0.00 total.
+  const sumNullable = (vals: Array<number | null>): number | null =>
+    vals.every((v) => v == null) ? null : round2(vals.reduce((s: number, v) => s + (v ?? 0), 0))
+  const capitalAvailable = sumNullable(perfBots.map((b) => b.capital_available))
+  const heldForOpenTrades = sumNullable(perfBots.map((b) => b.held_for_open_trades))
+  const todayPnl = sumNullable(perfBots.map((b) => b.today_pnl))
+
   // Combined equity curve: merge every bot's closed trades by close time, run a
   // cumulative sum on top of the pooled starting capital.
   const all = raws.flatMap((r) => r.points).sort((a, b) => a.t - b.t)
@@ -231,6 +326,8 @@ export async function getPerformance(
   }
   if (curve.length) curve.unshift({ t: new Date(all[0].t).toISOString(), equity: round2(startingCapital) })
 
+  const combinedPoints = all.map((p) => ({ t: p.t, day: p.day, pnl: p.pnl }))
+
   return {
     bots: perfBots,
     combined: {
@@ -238,15 +335,29 @@ export async function getPerformance(
       account_value: round2(startingCapital + totalPnl),
       total_pnl: totalPnl,
       total_return_pct: startingCapital > 0 ? Math.round((totalPnl / startingCapital) * 10000) / 100 : null,
-      win_rate: totalTrades > 0 ? Math.round((wins / totalTrades) * 1000) / 10 : null,
+      win_rate: winRatePct(wins, totalTrades),
       total_trades: totalTrades,
       wins,
       losses: totalTrades - wins,
       best_day: bestDay,
+      // Combined weekly/monthly are the SUM of each bot's own trading-day
+      // window, not a window recomputed on the merged points — two bots can
+      // trade on different days, so "the last 5 trading days" isn't a single
+      // shared set across them the way it is for a single bot.
       weekly: round2(perfBots.reduce((s, b) => s + b.weekly, 0)),
       monthly: round2(perfBots.reduce((s, b) => s + b.monthly, 0)),
+      capital_available: capitalAvailable,
+      held_for_open_trades: heldForOpenTrades,
+      today_pnl: todayPnl,
     },
     equity_curve: curve,
+    daily_bars: dailyResultBars(combinedPoints, 20, asOf),
+    pnl_ranges: {
+      '1D': cumulativePnlSeries(combinedPoints, 1, asOf),
+      '1W': cumulativePnlSeries(combinedPoints, 5, asOf),
+      '1M': cumulativePnlSeries(combinedPoints, 21, asOf),
+      ALL: cumulativePnlSeries(combinedPoints, null, asOf),
+    },
     as_of: new Date().toISOString(),
   }
 }

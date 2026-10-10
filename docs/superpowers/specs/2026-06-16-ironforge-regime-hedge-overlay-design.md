@@ -1,5 +1,12 @@
 # IronForge Regime-Gated Hedge Overlay — Design
 
+> **Historical document — superseded for Spark/Flame operations as of September 28, 2026.**
+> This dated design/plan records its original implementation context. Its references to Spark/Flame strategy, account ownership, paper-only execution, or per-trade approval are historical. Current enrollment-v2 customer activation uses standing authorization; legacy-v1 approval is a separate path.
+> Use [Spark and Flame current state, September 28](../../../ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the current 0DTE EBB rules, customer sizing, feature switches, and account boundaries.
+> Historical results and incident findings below retain their original scope; they are not current deployment verification.
+
+## Historical content
+
 **Date:** 2026-06-16
 **Status:** Proposed (analysis done; calibrating before build).
 **Motivation:** SPARK (live) took multi-day drawdowns — May 20 −$1,092, Jun 05 −$1,442, Jun 09 −$1,218 — and the volatility regime engine *was* flagging those days (ts_flattening / backwardation fired Jun 05 + Jun 09) but the warning was informational only, flapped intra-cycle, and nothing hedged. Goal: convert the existing regime signal into a **sized, far-dated hedge** placed only on flagged days.

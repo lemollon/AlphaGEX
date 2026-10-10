@@ -13,6 +13,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import re
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -49,8 +50,70 @@ else:
         print(f"[SpreadWorks]   {p} -> exists={p.exists()}")
 
 
+# Master kill switch for the fleet-wide SpreadWorks Discord route (scheduler,
+# bot open/close embeds, gamma/risk alerts, TSUNAMI, and daily brief). The
+# intraday + QQQ entry watchers use a separate, narrowly scoped switch below.
+# Default OFF because enabling entry alerts must not reactivate the fleet.
+DISCORD_ENABLED_ENV = "SPREADWORKS_DISCORD_ENABLED"
+INTRADAY_DISCORD_ENABLED_ENV = "INTRADAY_ALERTS_ENABLED"
+INTRADAY_DISCORD_WEBHOOK_ENV = "INTRADAY_DISCORD_WEBHOOK_URL"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def discord_posting_enabled() -> bool:
+    return os.getenv(DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def intraday_discord_posting_enabled() -> bool:
+    """Return whether the isolated intraday/QQQ alert route is enabled."""
+    return os.getenv(INTRADAY_DISCORD_ENABLED_ENV, "").strip().lower() in _TRUTHY
+
+
+def _post_discord_webhook_sync(embed_or_embeds, webhook_url: str,
+                               *, log_prefix: str) -> bool:
+    """Post one Discord payload after the caller has applied its scope gate."""
+    import requests as req
+
+    if isinstance(embed_or_embeds, dict):
+        embeds = [embed_or_embeds]
+    else:
+        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+
+    import time as _time
+    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
+    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
+    # processed the message even though the response timed out client-side.
+    # So we only retry on connect errors and 5xx, never on read timeout.
+    for attempt in range(3):
+        try:
+            resp = req.post(webhook_url, json={"embeds": embeds},
+                            headers={"Content-Type": "application/json"}, timeout=30)
+            if resp.status_code == 429:
+                retry_after = resp.json().get("retry_after", 5)
+                logger.warning("[%s] Rate limited, waiting %ss", log_prefix,
+                               retry_after)
+                _time.sleep(retry_after)
+                continue
+            resp.raise_for_status()
+            return True
+        except req.exceptions.ReadTimeout:
+            # Don't retry read timeouts — message may already be delivered.
+            logger.error("[%s] Webhook read timeout on attempt %s — NOT "
+                         "retrying (would risk duplicate)", log_prefix,
+                         attempt + 1)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            # requests exceptions can include the full webhook URL. Log only
+            # the exception class so the Discord credential never reaches logs.
+            logger.error("[%s] Webhook attempt %s/3 failed: %s", log_prefix,
+                         attempt + 1, type(exc).__name__)
+            if attempt < 2:
+                _time.sleep(2 ** (attempt + 1))
+    return False
+
+
 def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
-    """Send embeds to Discord webhook (sync, for scheduler use).
+    """Send embeds through the fleet-wide SpreadWorks Discord route.
 
     Accepts either a single embed dict or a list of embeds (max 10 per
     Discord's webhook limit). Multi-embed posts render as a vertical
@@ -62,48 +125,73 @@ def _send_webhook_sync(embed_or_embeds, webhook_url: str | None = None) -> bool:
     EBB's posts to the risk-advisor channel via a per-bot registry
     override). Falls back to DISCORD_WEBHOOK_URL when omitted/empty.
     """
-    import requests as req
-
-    if isinstance(embed_or_embeds, dict):
-        embeds = [embed_or_embeds]
-    else:
-        embeds = list(embed_or_embeds)[:10]  # Discord caps at 10
+    if not discord_posting_enabled():
+        logger.info(f"[SpreadWorks] Discord posting disabled ({DISCORD_ENABLED_ENV} not true) — skipping")
+        return False
 
     url = webhook_url or os.getenv("DISCORD_WEBHOOK_URL", "")
     if not url:
         logger.warning("[SpreadWorks] DISCORD_WEBHOOK_URL not set — skipping")
         return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="SpreadWorks")
 
-    import time as _time
-    # Per-attempt timeout (30s) — Render egress to discord.com can be slow.
-    # Read-timeout retries are NOT safe for webhook POSTs: Discord may have
-    # processed the message even though the response timed out client-side.
-    # So we only retry on connect errors and 5xx, never on read timeout.
-    for attempt in range(3):
-        try:
-            resp = req.post(url, json={"embeds": embeds},
-                            headers={"Content-Type": "application/json"}, timeout=30)
-            if resp.status_code == 429:
-                retry_after = resp.json().get("retry_after", 5)
-                logger.warning(f"[SpreadWorks] Rate limited, waiting {retry_after}s")
-                _time.sleep(retry_after)
-                continue
-            resp.raise_for_status()
-            return True
-        except req.exceptions.ReadTimeout:
-            # Don't retry read timeouts — message may already be delivered.
-            logger.error(f"[SpreadWorks] Webhook read timeout on attempt {attempt+1} — NOT retrying (would risk duplicate)")
-            return False
-        except Exception as e:
-            logger.error(f"[SpreadWorks] Webhook attempt {attempt+1}/3 failed: {e}")
-            if attempt < 2:
-                _time.sleep(2 ** (attempt + 1))
-    return False
+
+def _send_intraday_webhook_sync(embed_or_embeds,
+                                webhook_url: str | None = None) -> bool:
+    """Send only intraday/QQQ alerts, independent of the fleet-wide switch."""
+    if not intraday_discord_posting_enabled():
+        logger.info("[IntradayAlerts] Discord posting disabled (%s not true) "
+                    "— skipping", INTRADAY_DISCORD_ENABLED_ENV)
+        return False
+
+    url = (webhook_url
+           or os.getenv(INTRADAY_DISCORD_WEBHOOK_ENV, "").strip()
+           or os.getenv("DISCORD_WEBHOOK_URL", "").strip())
+    if not url:
+        logger.warning("[IntradayAlerts] %s and DISCORD_WEBHOOK_URL are not "
+                       "set — skipping", INTRADAY_DISCORD_WEBHOOK_ENV)
+        return False
+    return _post_discord_webhook_sync(embed_or_embeds, url,
+                                      log_prefix="IntradayAlerts")
 
 
 _active_scheduler = None  # singleton guard — only one scheduler per process
 _last_posted = {}  # in-process fast-path: {message_key: timestamp}
 _evening_brief_fn = None  # set by _start_scheduler so routes can manual-trigger
+
+
+def _release_post_slot_db(key: str, fire_date) -> None:
+    """Give a claimed slot back.
+
+    🚨 THE CLAIM IS NOT THE DELIVERY. Every alert here claims its slot BEFORE
+    it posts, and `_send()`'s return value was discarded at all eight call
+    sites. So a webhook that is unset, revoked, rate-limited or simply down
+    produced exactly the same result as a successful post: the row is written,
+    the page reports `fired: true`, and the alert is permanently suppressed for
+    the rest of the day because the slot is taken.
+
+    A failed send therefore has to hand the slot back, or one dropped packet
+    silently costs the whole day's alert. Never raises — a failure to release
+    must not take down the job that was already failing.
+    """
+    try:
+        from .db import SessionLocal
+        from sqlalchemy import text as sa_text
+    except Exception:                                        # noqa: BLE001
+        return
+    if SessionLocal is None:
+        return
+    db = SessionLocal()
+    try:
+        db.execute(sa_text("DELETE FROM discord_post_log "
+                           "WHERE message_key = :k AND fire_date = :d"),
+                   {"k": key, "d": fire_date})
+        db.commit()
+    except Exception:                                        # noqa: BLE001
+        db.rollback()
+    finally:
+        db.close()
 
 
 def _claim_post_slot_db(key: str, fire_date) -> bool:
@@ -188,6 +276,36 @@ def _dedup_ok(key: str, cooldown_seconds: int = 300, fire_date=None) -> bool:
 
     _last_posted[key] = now
     return True
+
+
+async def _sample_calls() -> None:
+    """Hit the three surfaces so their verdicts get recorded.
+
+    🚨 CALLS THE REAL ENDPOINTS rather than recomputing the verdicts here. A
+    sampler with its own copy of the logic is a second source of truth and
+    drifts the moment either side changes - the recorded history would then
+    describe a signal that was never actually shown to anyone.
+
+    Uses an in-process ASGI transport, so it runs exactly the code path a
+    browser does without going over the network or needing to know the port.
+    """
+    import httpx
+    from . import app as _app
+    paths = ("/api/spreadworks/risk-advisor/state",
+             "/api/spreadworks/risk-advisor/session",
+             "/api/spreadworks/squeeze/state")
+    try:
+        transport = httpx.ASGITransport(app=_app)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://sampler") as c:
+            for p in paths:
+                try:
+                    await c.get(p, timeout=45.0)
+                except Exception as e:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "[calls] sample %s failed: %r", p, e)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).warning("[calls] sampler failed: %r", e)
 
 
 def _start_scheduler(app: FastAPI):
@@ -826,7 +944,7 @@ def _start_scheduler(app: FastAPI):
             )
             # Web search keeps the synthesis grounded in TODAY's news flow.
             # web_search_20260209 has dynamic filtering built in (no separate
-            # code_execution tool needed). Supported on Sonnet 4.6.
+            # code_execution tool needed). Supported on Sonnet 5.5.
             tools = [{"type": "web_search_20260209", "name": "web_search"}]
             messages = [{"role": "user", "content": prompt}]
 
@@ -835,7 +953,7 @@ def _start_scheduler(app: FastAPI):
             text = ""
             for _ in range(3):
                 msg = client.messages.create(
-                    model="claude-sonnet-4-6",
+                    model="claude-sonnet-5-5",
                     max_tokens=1500,  # web search blocks consume tokens
                     tools=tools,
                     messages=messages,
@@ -1240,6 +1358,22 @@ def _start_scheduler(app: FastAPI):
         )
 
     # ------------------------------------------------------------------
+    # Wall Scanner capture — every 5 min during market hours. Keeps the
+    # request-path cache warm AND writes wall_scanner_snapshots history so
+    # the page can show OI/GEX build-up over time (Leron 2026-09-11: "show
+    # position over days and intradays"). Advisory only, no bot reads this.
+    # ------------------------------------------------------------------
+    async def _wall_scanner_capture():
+        if not _is_trading_day():
+            return
+        import asyncio
+        from .bots import wall_scanner
+        try:
+            await asyncio.to_thread(wall_scanner.capture_and_store)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[SpreadWorks] wall_scanner capture failed: {exc}")
+
+    # ------------------------------------------------------------------
     # NEW: GEX Shift Alert — every 5 min during market hours
     # ------------------------------------------------------------------
     _last_flip_point = {"SPY": None}  # in-memory state for comparison
@@ -1396,6 +1530,26 @@ def _start_scheduler(app: FastAPI):
     # Every 5 min 8:30-15:00 CT — GEX shift detection + snapshot
     scheduler.add_job(_fire_gex_shift_check, "cron", minute="*/5",
                       hour="8-14", day_of_week="mon-fri", id="discord_gex_shift", replace_existing=True)
+
+    # Every 5 min 8:30-15:00 CT — Wall Scanner capture (history for build-up
+    # over time). Independent of the Discord jobs above; never posts anything.
+    scheduler.add_job(_wall_scanner_capture, "cron", minute="*/5",
+                      hour="8-15", day_of_week="mon-fri", id="wall_scanner_capture", replace_existing=True)
+
+    # Every 15 min 8:30-15:00 CT — sample all three call surfaces.
+    # 🚨 WITHOUT THIS THE HISTORY ONLY EXISTS WHEN SOMEONE IS LOOKING. The
+    # verdicts are recorded from inside the endpoints, so a day nobody opened
+    # the page would have no record of what the signal said - and the days you
+    # are not watching are exactly the ones worth auditing later.
+    scheduler.add_job(_sample_calls, "cron", minute="*/15",
+                      hour="8-14", day_of_week="mon-fri",
+                      id="sw_sample_calls", replace_existing=True)
+    # 15:05 CT — one more after the bell, to capture the CLOSING call. That is
+    # the one that carries overnight, and it is the only one the close-to-next
+    # -open gap can honestly be attributed to.
+    scheduler.add_job(_sample_calls, "cron", hour=15, minute=5,
+                      day_of_week="mon-fri", id="sw_sample_calls_close",
+                      replace_existing=True)
 
     # --- Close block ---
     # 15:00 CT — Market close reflection
@@ -1568,6 +1722,42 @@ def _start_scheduler(app: FastAPI):
     return scheduler
 
 
+def _ensure_additive_columns(eng):
+    """ALTER TABLE ... ADD COLUMN IF NOT EXISTS for tables outside `positions`.
+
+    `Base.metadata.create_all()` creates missing TABLES but never adds a column
+    to one that already exists, so a new field on a young table silently reads
+    NULL forever in production while working fine on a fresh local database.
+    Additive only — nothing here drops or retypes.
+    """
+    from sqlalchemy import text as sa_text
+
+    additive = {
+        # 2026-08-19: the intraday tape only carried volume LEVELS; the mix is
+        # the leg that actually signals. See routes_risk.RiskSessionLog.
+        "risk_session_log": {"roll_pc_z": "DOUBLE PRECISION"},
+    }
+    try:
+        with eng.connect() as conn:
+            for table, cols in additive.items():
+                res = conn.execute(sa_text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = :t AND table_schema = 'public'"),
+                    {"t": table})
+                existing = {r[0] for r in res}
+                if not existing:
+                    continue          # create_all() will build it complete
+                for col, ddl in cols.items():
+                    if col in existing:
+                        continue
+                    with eng.begin() as w:
+                        w.execute(sa_text(
+                            f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {ddl}"))
+                    print(f"[SpreadWorks] Schema: added {table}.{col}")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[SpreadWorks] Additive schema migration error: {e}")
+
+
 def _ensure_schema(eng):
     """Ensure positions/daily_marks tables match the current SQLAlchemy model.
 
@@ -1650,6 +1840,7 @@ async def lifespan(app: FastAPI):
         try:
             # Ensure existing tables have all expected columns (non-destructive)
             _ensure_schema(engine)
+            _ensure_additive_columns(engine)
             Base.metadata.create_all(bind=engine)
             print("[SpreadWorks] Database tables created/verified")
         except Exception as e:
@@ -1660,6 +1851,25 @@ async def lifespan(app: FastAPI):
             print("[SpreadWorks] Bot tables created/verified")
         except Exception as e:
             print(f"[SpreadWorks] Bot table creation failed (non-fatal): {e}")
+        try:
+            # Correct three FLOW trades booked off garbage opening-bell quotes.
+            # Idempotent — guarded by the flow_restatements audit table, so it
+            # no-ops on every boot after the first — and non-fatal.
+            from .flow_restatement import apply_flow_restatements
+            fr = apply_flow_restatements(engine)
+            print(f"[SpreadWorks] FLOW restatement: {fr}")
+        except Exception as e:
+            print(f"[SpreadWorks] FLOW restatement failed (non-fatal): {e}")
+        try:
+            # Seed the decay monitor's evaluation window from the committed
+            # backtest. Unconditional + ON CONFLICT DO NOTHING, so it reaches a
+            # cold prod on the first boot and no-ops thereafter; without it the
+            # rolling window starts empty and reports UNDERPOWERED for ~2 years.
+            from .signal_calibration import seed_from_csv
+            n = seed_from_csv()
+            print(f"[SpreadWorks] Signal evaluation seeded ({n} new rows)")
+        except Exception as e:
+            print(f"[SpreadWorks] Signal eval seed failed (non-fatal): {e}")
     else:
         print("[SpreadWorks] DATABASE_URL not set — running without database")
 
@@ -1667,6 +1877,15 @@ async def lifespan(app: FastAPI):
 
     # Start scheduler for Discord notifications (inside lifespan, not module-level)
     scheduler = _start_scheduler(app)
+
+    # The weekday 07:00 CT morning options report now runs in this always-on
+    # Render process.  It writes an atomic advisory plan for the dedicated
+    # worker; it never imports or calls broker order code.
+    try:
+        from .morning_options_report import register as register_morning_options
+        register_morning_options(scheduler, app)
+    except Exception as _morning_exc:  # noqa: BLE001
+        logger.error("[MorningOptions] failed to register: %r", _morning_exc)
 
     # Risk Advisor playbook alerts (import-guarded; advisory only)
     try:
@@ -1682,6 +1901,74 @@ async def lifespan(app: FastAPI):
         register_gamma_alerts(scheduler, app)
     except Exception as _ga_exc:  # noqa: BLE001
         logger.warning("[SpreadWorks] gamma alerts failed to register: %r", _ga_exc)
+
+    # Premarket squeeze-hunt signal (PREREG #3/V3): daily scan + Discord alert
+    # at 08:15 CT, ported from the standalone squeeze-premarket-scan Render
+    # Cron Job. Import-guarded; advisory only -- signal-only, no bot reads this.
+    try:
+        from .squeeze_premarket_alerts import register_squeeze_premarket_alerts
+        register_squeeze_premarket_alerts(scheduler, app)
+    except Exception as _spa_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] squeeze premarket alerts failed to "
+                       "register: %r", _spa_exc)
+
+    # Reactive-momentum squeeze signal (ported REACTIVE_WIDE_FADE_PNL_
+    # BACKTEST_MODE): repeating scan every 5 min, 09:30-16:00 ET weekdays,
+    # entry + exit Discord alerts. Separate from the premarket-gated job
+    # above -- no premarket gate, watches the regular session. Import-
+    # guarded; advisory only.
+    try:
+        from .squeeze_reactive_alerts import register_squeeze_reactive_alerts
+        register_squeeze_reactive_alerts(scheduler, app)
+    except Exception as _sra_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] squeeze reactive alerts failed to "
+                       "register: %r", _sra_exc)
+
+    # CINDER: SPY 1DTE debit call spread signal (GEX + VIX-ratio + VIX/VIX3M
+    # term structure, 5-day cooldown). Repeating scan every 5 min,
+    # 09:30-16:00 ET weekdays, entry attempted only in the 11:25-11:35 ET
+    # window. Separate from every squeeze signal above -- own tables, own
+    # job. Import-guarded; signal-only, advisory only -- a separate local
+    # execution bot reads its endpoint and places real orders.
+    try:
+        from .cinder_signal import register_cinder_alerts
+        register_cinder_alerts(scheduler, app)
+    except Exception as _cinder_exc:  # noqa: BLE001
+        logger.warning("[SpreadWorks] CINDER alerts failed to register: %r",
+                       _cinder_exc)
+
+    # Canonical live market structure: persist fresh Tradier VIX-family data
+    # and ORATS+Tradier gamma maps every minute. Durable captures let report
+    # consumers recover through Postgres if the public Render URL is blocked.
+    try:
+        from .market_structure import register as register_market_structure
+        register_market_structure(scheduler, app)
+        from .full_options_report import register as register_full_reports
+        register_full_reports(scheduler, app)
+    except Exception as _market_structure_sched_exc:  # noqa: BLE001
+        logger.warning(
+            "[SpreadWorks] market-structure capture failed to register: %r",
+            _market_structure_sched_exc,
+        )
+
+    # EMBER owns the live Robinhood sleeves.  The module is disabled unless
+    # EMBER_XSP_ENABLED is explicitly set, and its own live flag and durable
+    # state checks still fail closed before any order tool is exposed.
+    try:
+        from .ember.runtime import register as register_ember
+        register_ember(scheduler)
+    except Exception as _ember_exc:  # noqa: BLE001
+        logger.error("[EMBER] failed to register: %r", _ember_exc)
+
+    # The dedicated Render worker owns market-watch cycles.  The web process
+    # continues to serve status, but does not race the worker for alert claims.
+    if os.getenv("QQQ_RETEST_RUN_IN_WEB", "false").strip().lower() == "true":
+        try:
+            from .qqq_retest_watch import register_qqq_retest_watch
+            register_qqq_retest_watch(scheduler, app)
+        except Exception as _qqq_exc:  # noqa: BLE001
+            logger.warning("[SpreadWorks] QQQ retest watch failed to register: %r",
+                           _qqq_exc)
 
     yield
 
@@ -1704,6 +1991,18 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+from .qqq_retest_watch import router as qqq_retest_watch_router
+app.include_router(qqq_retest_watch_router)
+
+from .intraday_watch import router as intraday_watch_router
+app.include_router(intraday_watch_router)
+
+from .speculative_contracts import router as speculative_contracts_router
+app.include_router(speculative_contracts_router)
+
+from .ember.routes import router as ember_router
+app.include_router(ember_router)
 
 from .routes_bots import router as bots_router
 app.include_router(bots_router)
@@ -1738,6 +2037,47 @@ except Exception as _tsunami_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] TSUNAMI routes failed to load: %r", _tsunami_exc)
 
+# SQUEEZE HUNT (small-cap float-velocity research surface) reads a standalone
+# DuckDB warehouse rather than Postgres. Import-guarded like TSUNAMI so a
+# missing duckdb dep or an unreachable warehouse file cannot take down the API.
+try:
+    from .routes_squeeze_hunt import router as squeeze_hunt_router
+    app.include_router(squeeze_hunt_router)
+except Exception as _squeeze_hunt_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] SQUEEZE HUNT routes failed to load: %r", _squeeze_hunt_exc)
+
+# TALON (PAPER-ONLY $500 small-cap squeeze stock bot) -- same one-way
+# Postgres-mirror pattern as SQUEEZE HUNT above, never touches the DuckDB
+# file directly. Import-guarded so a missing mirror table cannot take down
+# the whole API. PAPER ONLY -- this route never places a real order.
+try:
+    from .routes_talon import router as talon_router
+    app.include_router(talon_router)
+except Exception as _talon_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] TALON routes failed to load: %r", _talon_exc)
+
+# Call history — the append-only record of what Session / Squeeze / Risk
+# actually said, with SPY outcomes attached. Read-only; import-guarded.
+try:
+    from .routes_calls import router as calls_router
+    app.include_router(calls_router)
+except Exception as _calls_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Call-history routes failed to load: %r", _calls_exc)
+
+# Live market-structure engine (fresh VIX-family + self-calculated gamma maps)
+# Kept separate from the backtested daily SQUEEZE signal.
+try:
+    from .market_structure import router as market_structure_router
+    app.include_router(market_structure_router)
+    from .full_options_report import router as full_report_router
+    app.include_router(full_report_router)
+except Exception as _market_structure_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] market-structure router failed: %r", _market_structure_exc)
+
 # Squeeze signal (net dealer gamma, backend/bots/gamma_regime.py) — read-only
 # current verdict + history for the chart. Import-guarded; advisory only.
 try:
@@ -1746,6 +2086,84 @@ try:
 except Exception as _squeeze_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] Squeeze routes failed to load: %r", _squeeze_exc)
+
+# Premarket squeeze-hunt signal (PREREG #3/V3, squeeze_premarket_alerts.py) --
+# read-only state for today's scan + recent signal history. Advisory only.
+try:
+    from .routes_squeeze_premarket import router as squeeze_premarket_router
+    app.include_router(squeeze_premarket_router)
+except Exception as _squeeze_pm_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Squeeze premarket routes failed to load: %r", _squeeze_pm_exc)
+
+# Reactive-momentum squeeze signal (squeeze_reactive_alerts.py) -- read-only
+# open positions + recent closed signal history. Sibling to the premarket
+# route above, not a replacement. Advisory only.
+try:
+    from .routes_squeeze_reactive import router as squeeze_reactive_router
+    app.include_router(squeeze_reactive_router)
+except Exception as _squeeze_react_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Squeeze reactive routes failed to load: %r", _squeeze_react_exc)
+
+# CINDER signal (cinder_signal.py) -- read-only open position (with its live
+# current spread value + target-hit flag) + recent closed signal history.
+# Sibling to the squeeze routes above, not a replacement. Advisory only.
+try:
+    from .routes_cinder import router as cinder_router
+    app.include_router(cinder_router)
+except Exception as _cinder_route_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] CINDER routes failed to load: %r", _cinder_route_exc)
+
+# Wall Scanner (backend/bots/wall_scanner.py) — descriptive-only $/% distance
+# to the nearest GEX call/put wall for GME + 7 tickers. NO directional call
+# (flow-mix continuation failed placebo, see module docstring). Import-guarded
+# like the other advisory surfaces; TV outage never takes down the API.
+try:
+    from .routes_wall_scanner import router as wall_scanner_router
+    app.include_router(wall_scanner_router)
+except Exception as _wall_scanner_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Wall Scanner routes failed to load: %r", _wall_scanner_exc)
+
+# Opportunity Scanner (backend/opportunity_scanner.py) — concrete trades from
+# strategies that passed a real test: idea #69's dividend raise, the same-day
+# SPY 0DTE put spread, and FilingSense insider/filing calls. Read-only surface
+# plus one push endpoint for the laptop FilingSense pusher; import-guarded
+# like the other advisory surfaces so a Polygon/yfinance hiccup never takes
+# down the API.
+try:
+    from .routes_opportunity import router as opportunity_router
+    app.include_router(opportunity_router)
+except Exception as _opportunity_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] Opportunity Scanner routes failed to load: %r", _opportunity_exc)
+
+
+@app.get("/api/spreadworks/version", include_in_schema=False)
+async def frontend_version():
+    """Which frontend build is CURRENTLY on disk.
+
+    🚨 WHY THIS EXISTS. Every page here polls its DATA on a timer but never
+    re-fetches its own CODE. A tab left open across a deploy therefore runs the
+    OLD UI against FRESH numbers, indefinitely — the timestamps keep ticking, so
+    it looks alive and correct. That is not a theoretical failure: it cost real
+    time twice on 2026-08-19, when a shipped-and-verified change was reported as
+    missing because the tab predated the deploy. Cache headers do not help; the
+    tab simply never asks again.
+
+    Reads the bundle filename out of the served index.html, which changes on
+    every build because Vite content-hashes it. Cheap, and it never raises — a
+    version check that 500s would be worse than no version check.
+    """
+    try:
+        index = FRONTEND_DIST / "index.html"
+        html = index.read_text(encoding="utf-8", errors="ignore")
+        m = re.search(r'assets/(index-[A-Za-z0-9_-]+\.js)', html)
+        return {"build": m.group(1) if m else None}
+    except Exception:                                        # noqa: BLE001
+        return {"build": None}
 
 
 @app.get("/health")

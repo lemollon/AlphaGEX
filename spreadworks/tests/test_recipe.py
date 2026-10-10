@@ -7,9 +7,17 @@ from backend.routes_risk import _recipe_phase, _recipe_strikes, _recipe_windows
 
 def test_recipe_strikes_spy_dollar_grid():
     # round(777.7 - 2) = round(775.7) = 776; wing sits 5 points lower.
-    short_strike, long_strike = _recipe_strikes(777.7)
+    short_strike, long_strike = _recipe_strikes(777.7, 2, 5)
     assert short_strike == 776
     assert long_strike == 771
+
+
+def test_recipe_strikes_flame_pm_spec_is_not_spark():
+    """FLAME (PM, 13:05 CT) trades a DIFFERENT spec from SPARK (AM,
+    10:05 CT) — short = spot-1, wing 2 — not the AM ticket run twice."""
+    short_strike, long_strike = _recipe_strikes(777.7, 1, 2)
+    assert short_strike == 777
+    assert long_strike == 775
 
 
 def test_recipe_windows_match_ebb_registry():

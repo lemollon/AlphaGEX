@@ -31,7 +31,7 @@ All systems use a dual-naming scheme defined in `backend/api/bot_names.py`:
 ┌─────────────────────────────────────────────────────────────────┐
 │                         FRONTEND (Next.js)                       │
 │  React 18 + TypeScript + Tailwind CSS + SWR                     │
-│  Deployed: Vercel                                                │
+│  Deployed: Render (AlphaGEX service)                             │
 └─────────────────────────────────┬───────────────────────────────┘
                                   │ HTTP/REST
                                   ▼
@@ -52,6 +52,14 @@ All systems use a dual-naming scheme defined in `backend/api/bot_names.py`:
 ```
 
 ---
+
+## IronForge customer and Spark/Flame scope
+
+IronForge, including the `ironforge-customer` Render service, lives in this
+repository under `ironforge/webapp`. Spark and Flame are separate from the
+AlphaGEX VALOR/perpetual runtime. Their current reference is
+[September 28, 2026](ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md); do not
+apply retired 1DTE/2DTE condor or Python/Databricks parameters to these products.
 
 ## Directory Structure
 
@@ -131,7 +139,7 @@ AlphaGEX/
 
 ### Infrastructure
 - **Backend**: Render (web service + 3 workers)
-- **Frontend**: Vercel (auto-deploy from main)
+- **Frontend**: Render Node web service `AlphaGEX` at https://alphagex.onrender.com
 - **Database**: Render PostgreSQL
 
 ---
@@ -155,7 +163,7 @@ ANTHROPIC_API_KEY=your_key            # AI features
 TASTYTRADE_USERNAME=your_username     # VALOR futures
 TASTYTRADE_PASSWORD=your_password
 ORAT_DATABASE_URL=postgresql://...    # CHRONICLES backtester
-CORS_ORIGINS=https://your-frontend.vercel.app
+CORS_ORIGINS=https://alphagex.onrender.com
 ```
 
 ---
@@ -257,8 +265,17 @@ Configured via `render.yaml`:
 - `alphagex-backtester`: Backtest worker
 - `alphagex-db`: PostgreSQL (285+ tables)
 
-### Vercel (Frontend)
-Auto-deploys from `main` branch. Env var: `NEXT_PUBLIC_API_URL`.
+### Render (Frontend)
+The existing `AlphaGEX` Node web service serves Next.js at https://alphagex.onrender.com.
+Its standalone blueprint is `frontend/render.yaml`, with `rootDir: frontend` and branch `main`.
+
+- Build: `npm ci --include=dev && npm run build`
+- Start: `npm start -- --hostname 0.0.0.0 --port $PORT`
+- Health check: `/dashboard`
+- `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_BACKEND_URL`: `https://alphagex-api.onrender.com`
+- `NEXT_PUBLIC_WS_URL`: `wss://alphagex-api.onrender.com`
+
+The `alphagex.com` domain cutover is done — verified 2026-09-23 (DNS on Vercel-managed nameservers, apex A record 216.24.57.1 and `www` CNAME both resolve to this Render service, TLS live). Keep frontend deployment separate from the root backend/worker blueprint.
 
 ---
 

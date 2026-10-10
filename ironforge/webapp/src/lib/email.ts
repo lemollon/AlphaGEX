@@ -6,6 +6,8 @@
  * Swappable: only this module talks to the provider's HTTP API.
  */
 
+import { supportEmail } from '@/lib/support-address'
+
 const RESEND_ENDPOINT = 'https://api.resend.com/emails'
 
 export function isEmailConfigured(): boolean {
@@ -16,18 +18,80 @@ export interface SendResult {
   sent: boolean
   skipped?: boolean
   error?: string
+  /** Resend message id when the provider returned one. */
+  id?: string
+}
+
+export interface SendEmailInput {
+  to: string
+  subject: string
+  html: string
+  /** Plain-text alternative. Always supplied for marketing mail (deliverability + accessibility). */
+  text?: string
+  replyTo?: string
+  /** Extra SMTP headers, e.g. List-Unsubscribe / List-Unsubscribe-Post. */
+  headers?: Record<string, string>
+  /**
+   * Resend `Idempotency-Key`: the same key within Resend's window returns the original
+   * message instead of sending twice. The waitlist drip keys on (subscriber, stage).
+   */
+  idempotencyKey?: string
+}
+
+/**
+ * Generic send through Resend. The single provider seam for mail that is not one of the
+ * fixed transactional templates above/below (the waitlist drip renders its own body). Same
+ * guard as every other sender: unconfigured → skipped, never thrown.
+ */
+export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
+  if (!isEmailConfigured()) return { sent: false, skipped: true }
+  try {
+    const requestHeaders: Record<string, string> = {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    }
+    if (input.idempotencyKey) requestHeaders['Idempotency-Key'] = input.idempotencyKey
+    const res = await fetch(RESEND_ENDPOINT, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM,
+        to: input.to,
+        reply_to: input.replyTo ?? supportEmail(),
+        subject: input.subject,
+        html: input.html,
+        ...(input.text ? { text: input.text } : {}),
+        ...(input.headers ? { headers: input.headers } : {}),
+      }),
+    })
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      return { sent: false, error: `Resend ${res.status}: ${detail.slice(0, 200)}` }
+    }
+    const body = (await res.json().catch(() => null)) as { id?: string } | null
+    return { sent: true, id: typeof body?.id === 'string' ? body.id : undefined }
+  } catch (e) {
+    return { sent: false, error: e instanceof Error ? e.message : 'send failed' }
+  }
 }
 
 function esc(s: string): string {
   return s.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] as string))
 }
 
-function verificationHtml(firstName: string, verifyUrl: string): string {
+function verificationHtml(firstName: string, verifyUrl: string, code?: string): string {
   const name = firstName ? esc(firstName) : 'there'
+  const codeBlock = code
+    ? `<p style="margin:0 0 20px;text-align:center">
+      <span style="display:inline-block;background:#141416;border:1px solid #26262A;border-radius:8px;padding:14px 22px;font-family:'Courier New',monospace;font-size:28px;font-weight:bold;letter-spacing:6px;color:#ffffff">${esc(code)}</span>
+    </p>
+    <p style="color:#737373;font-size:12px;line-height:1.6;text-align:center;margin:0 0 20px">Enter this code in the app, or use the button below. Expires in 15 minutes.</p>`
+    : ''
   return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px">
     <h1 style="font-size:20px;color:#ffffff;margin:0 0 8px">Confirm your email</h1>
     <p style="color:#a3a3a3;font-size:14px;line-height:1.6">Hi ${name}, welcome to IronForge. Confirm your email address to continue setting up your account.</p>
+    ${codeBlock}
     <p style="margin:28px 0">
       <a href="${esc(verifyUrl)}" style="display:inline-block;background:#E8531F;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 24px;border-radius:6px">Verify email</a>
     </p>
@@ -40,6 +104,8 @@ export async function sendVerificationEmail(params: {
   to: string
   verifyUrl: string
   firstName: string
+  /** The 6-digit code (mobile enrollment follow-up, 9/5). Omitted = link-only email, unchanged. */
+  code?: string
 }): Promise<SendResult> {
   if (!isEmailConfigured()) return { sent: false, skipped: true }
   try {
@@ -53,7 +119,7 @@ export async function sendVerificationEmail(params: {
         from: process.env.EMAIL_FROM,
         to: params.to,
         subject: 'Verify your IronForge email',
-        html: verificationHtml(params.firstName, params.verifyUrl),
+        html: verificationHtml(params.firstName, params.verifyUrl, params.code),
       }),
     })
     if (!res.ok) {
@@ -69,7 +135,14 @@ export async function sendVerificationEmail(params: {
 /**
  * Waitlist confirmation (8/26 handoff). Transactional — sent immediately after the
  * Attio record persists. Copy is the approved draft; no launch date is promised.
- * reply_to → support@ironforge.trade per the spec.
+ *
+ * SUPERSEDED 2026-09-08 by Email 1 of the waitlist drip (lib/waitlist-drip): POST
+ * /api/waitlist no longer calls this. Both messages said "you're on the list", and two
+ * welcomes within a minute reads as a bug. Kept (not deleted) so the old template stays
+ * readable and any out-of-tree caller keeps compiling. See vault ADR 0016 (waitlist drip Email 1 replaces the confirmation).
+ * reply_to → the support address per the spec. Resolved through supportEmail() rather
+ * than written inline: the mailbox does not exist yet, so which address replies land
+ * on has to be changeable without a deploy.
  */
 export async function sendWaitlistConfirmation(params: {
   to: string
@@ -86,7 +159,7 @@ export async function sendWaitlistConfirmation(params: {
       body: JSON.stringify({
         from: process.env.EMAIL_FROM,
         to: params.to,
-        reply_to: 'support@ironforge.trade',
+        reply_to: supportEmail(),
         subject: 'You’re on the IronForge waitlist',
         html: waitlistHtml(params.firstName),
       }),
@@ -122,7 +195,7 @@ export async function sendWaitlistInvitation(params: {
       body: JSON.stringify({
         from: process.env.EMAIL_FROM,
         to: params.to,
-        reply_to: 'support@ironforge.trade',
+        reply_to: supportEmail(),
         subject: 'Your IronForge invitation',
         html: invitationHtml(params.firstName, params.enrollUrl),
       }),
@@ -260,6 +333,44 @@ export async function sendTradeApprovalEmail(params: {
   } catch (e) {
     return { sent: false, error: e instanceof Error ? e.message : 'send failed' }
   }
+}
+
+function dailySummaryHtml(firstName: string, dateLabel: string, pnl: number): string {
+  const name = firstName ? esc(firstName) : 'there'
+  const up = pnl >= 0
+  const amount = `${up ? '+' : '-'}$${Math.abs(pnl).toFixed(2)}`
+  const color = up ? '#2FCF93' : '#FF6B5A'
+  return `<!doctype html><html><body style="margin:0;background:#0B0B0D;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5">
+  <div style="max-width:480px;margin:0 auto;padding:32px 24px">
+    <h1 style="font-size:20px;color:#ffffff;margin:0 0 8px">Daily summary</h1>
+    <p style="color:#a3a3a3;font-size:14px;line-height:1.6">Hi ${name}, your agents finished ${esc(dateLabel)} at</p>
+    <p style="margin:16px 0;font-size:32px;color:${color};font-weight:bold">${amount}</p>
+    <p style="margin:28px 0">
+      <a href="https://ironforge.trade/home" style="display:inline-block;background:#E8531F;color:#ffffff;text-decoration:none;font-weight:bold;font-size:14px;padding:12px 24px;border-radius:6px">See today&rsquo;s results</a>
+    </p>
+    <p style="color:#525252;font-size:11px;margin-top:28px">You're receiving this because daily summary alerts are turned on for your account. Turn them off anytime from Settings.</p>
+  </div></body></html>`
+}
+
+/**
+ * Daily summary — ALSO sent as email after the close (gap audit: previously push
+ * only), using the generic sendEmail() sender rather than its own provider call.
+ * Caller (scanner.ts dispatchDailySummaries) gates this on the same
+ * notification_prefs.daily_summary opt-in the push already respects, so turning the
+ * alert off in Settings silences both channels, not just one.
+ */
+export async function sendDailySummaryEmail(params: {
+  to: string
+  firstName: string
+  dateLabel: string
+  pnl: number
+}): Promise<SendResult> {
+  const sign = params.pnl >= 0 ? '+' : '-'
+  return sendEmail({
+    to: params.to,
+    subject: `IronForge daily summary: ${sign}$${Math.abs(params.pnl).toFixed(2)}`,
+    html: dailySummaryHtml(params.firstName, params.dateLabel, params.pnl),
+  })
 }
 
 /* ------------------------------------------------------------------ */

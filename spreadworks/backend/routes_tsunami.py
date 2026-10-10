@@ -899,7 +899,7 @@ def tsunami_trend_trades(limit: int = Query(200, ge=1, le=1000)) -> dict[str, An
         " FROM tsunami_trend_trades ORDER BY ts DESC LIMIT %s", (limit,))
     return {
         "trades": [{"ts": str(r[0]), "letf": r[1], "side": r[2],
-                    "shares": int(r[3]), "price": float(r[4]), "reason": r[5],
+                    "shares": float(r[3]), "price": float(r[4]), "reason": r[5],
                     "realized_pnl": float(r[6]) if r[6] is not None else None}
                    for r in rows],
     }

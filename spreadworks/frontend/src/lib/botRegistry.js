@@ -27,6 +27,22 @@ export const BOT_REGISTRY = {
   ember: { display: 'EMBER', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   squall: { display: 'SQUALL', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
   tempest: { display: 'TEMPEST', strategy: 'updraft', ticker: 'SPY', version: 'v1.0' },
+  // REFLEX is the one exception to the "mirrored from registry.py" note above:
+  // it's a Robinhood stock bot (dev/meltup/ember/run_reflex.py), not part of
+  // the options backend registry. Included here only for display/theme metadata.
+  reflex: { display: 'REFLEX', strategy: 'reactive_momentum', ticker: 'multi', version: 'v1.0' },
+  // MONARCH-A/B — PAPER-ONLY forward validation of two unconfirmed TRIAGE 29
+  // cells (dev/meltup/triage29_wing_delta_sweep.py). Same SPY 0DTE ATM
+  // butterfly construction, differing only in wing delta target (A=0.05,
+  // B=0.25). Both backtested CIs cross zero — see registry.py for the full
+  // caveat. Never arm real money on either from this page.
+  monarch_a: { display: 'MONARCH-A', strategy: 'delta_butterfly', ticker: 'SPY', version: 'v1.0' },
+  monarch_b: { display: 'MONARCH-B', strategy: 'delta_butterfly', ticker: 'SPY', version: 'v1.0' },
+  // CINDER — $500 PAPER mirror of the SPY 1DTE debit call spread rule from
+  // registry.py (GEX + live VIX ratio + VIX/VIX3M term structure gates, 2x
+  // target). Distinct from the already-LIVE backend/cinder_signal.py module
+  // of the same name — see registry.py's "NAMING COLLISION" comment.
+  cinder: { display: 'CINDER', strategy: 'bull_call_spread', ticker: 'SPY', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -49,10 +65,13 @@ export const STRATEGY_LABEL = {
   iron_condor:           'Iron Condor',
   double_diagonal_credit: 'Credit Double Diagonal',
   long_butterfly:        'Long Butterfly',
+  delta_butterfly:       'Delta-Targeted Butterfly (0DTE, paper, unconfirmed)',
   dip_buy:               'Dip-Buy Call',
   vertical_debit:        'Debit Vertical',
   vertical_credit:       'Credit Vertical',
   bull_put_spread:       'Put Credit Spread (0DTE)',
+  bull_call_spread:      'Debit Call Spread (1DTE)',
+  reactive_momentum:     'Reactive Momentum (stocks)',
 };
 
 // Live A/B pairs: each bot's equity chart overlays its peer's curve. SPLASH
@@ -61,6 +80,11 @@ export const STRATEGY_LABEL = {
 export const COMPARE_WITH = {
   splash: 'ripple',
   ripple: 'splash',
+  // MONARCH-A (0.05-delta wings) vs MONARCH-B (0.25-delta wings) — the SAME
+  // unconfirmed construction at two wing targets, paper-tracked on separate
+  // $10k accounts. The overlay is the forward A/B test itself.
+  monarch_a: 'monarch_b',
+  monarch_b: 'monarch_a',
 };
 
 // Per-bot theme palette mirrored from the SpreadWorks Design System
@@ -203,6 +227,24 @@ export const BOT_THEME = {
     glow:        'rgba(240,171,252,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(240,171,252,0.22) 0%, rgba(240,171,252,0.03) 100%)',
   },
+  monarch_a: {
+    glyph:       'butterfly',                  // MONARCH = the butterfly structure itself
+    primary:     '#f97316',                    // orange-500 (monarch-butterfly orange)
+    primarySoft: 'rgba(249,115,22,0.10)',
+    primaryRing: 'rgba(249,115,22,0.30)',
+    glow:        'rgba(249,115,22,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(249,115,22,0.22) 0%, rgba(249,115,22,0.03) 100%)',
+  },
+  monarch_b: {
+    // Same glyph as monarch_a (identical structure, different wing delta) —
+    // distinguished by color only, same convention the A/B pair relies on.
+    glyph:       'butterfly',
+    primary:     '#c2410c',                    // orange-700, darker twin of monarch_a
+    primarySoft: 'rgba(194,65,12,0.10)',
+    primaryRing: 'rgba(194,65,12,0.30)',
+    glow:        'rgba(194,65,12,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(194,65,12,0.22) 0%, rgba(194,65,12,0.03) 100%)',
+  },
   tide: {
     glyph:       'wave',
     primary:     '#2dd4bf',                    // teal-400
@@ -266,5 +308,23 @@ export const BOT_THEME = {
     primaryRing: 'rgba(153,246,228,0.30)',
     glow:        'rgba(153,246,228,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(153,246,228,0.22) 0%, rgba(153,246,228,0.03) 100%)',
+  },
+  reflex: {
+    glyph:       'stream',                     // REFLEX = riding the current once it's already moving
+    primary:     '#06b6d4',                    // cyan-500 (distinct from SURGE's cyan-400)
+    primarySoft: 'rgba(6,182,212,0.10)',
+    primaryRing: 'rgba(6,182,212,0.30)',
+    glow:        'rgba(6,182,212,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(6,182,212,0.22) 0%, rgba(6,182,212,0.03) 100%)',
+  },
+  cinder: {
+    // CINDER = a glowing ember — glyph reuse ('wave') is the established
+    // convention most bots share; color alone carries the identity here.
+    glyph:       'wave',
+    primary:     '#fdba74',                    // orange-300 (ember glow)
+    primarySoft: 'rgba(253,186,116,0.10)',
+    primaryRing: 'rgba(253,186,116,0.30)',
+    glow:        'rgba(253,186,116,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(253,186,116,0.22) 0%, rgba(253,186,116,0.03) 100%)',
   },
 };

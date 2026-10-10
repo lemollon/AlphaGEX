@@ -5,10 +5,20 @@ import Link from 'next/link'
 import useSWR from 'swr'
 import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
-import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN, COMMUNITY_KEY, secondBotIncrement } from '@/lib/billing/plans'
+import { BOT_PLANS, COMMUNITY_PLAN, COMMUNITY_KEY } from '@/lib/billing/plans'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
+interface AgentBilling {
+  bot: string
+  name: string
+  price_monthly: number
+  status: string
+  badge: string
+  next_billing_date: string | null
+  trial_ending_soon: boolean
+}
+interface MembershipResp { membership?: { price_monthly: number; agents?: AgentBilling[] } | null }
 
 /**
  * Billing home — the real "Manage Membership" destination (the rail item used to
@@ -19,10 +29,18 @@ interface EntitlementsResp { bots?: string[] }
 export default function BillingClient() {
   const { data: summary } = useSWR<SummaryResp>('/api/live/summary', fetcher, { refreshInterval: 60_000 })
   const { data: entitlements } = useSWR<EntitlementsResp>('/api/billing/entitlements', fetcher, { shouldRetryOnError: false })
+  // Price comes from buildMembershipResponse (lib/billing/membership.ts resolvePlan) —
+  // the ONE place that knows whether two owned bots are a legacy $75 both_monthly
+  // bundle or two separate $50 subscriptions. /api/live/summary's membership object
+  // carries no price; re-deriving it here is exactly how the stale "$75 always" bug
+  // shipped before.
+  const { data: billingMembership } = useSWR<MembershipResp>('/api/billing/membership', fetcher, { shouldRetryOnError: false })
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const membership = summary?.membership ?? null
+  const priceMonthly = billingMembership?.membership?.price_monthly ?? null
+  const agents = billingMembership?.membership?.agents ?? []
   const owned = entitlements?.bots ?? []
   // Community is tracked in the same table but is not a trading bot — split it out so it
   // never counts as a "second strategy" (which would misprice the plan as Pro).
@@ -60,7 +78,7 @@ export default function BillingClient() {
       const res = await fetch('/api/billing/portal', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
       if (res.ok && data.url) { window.location.href = data.url; return }
-      if (res.status === 409) { window.location.href = '/#memberships'; return }
+      if (res.status === 409) { window.location.href = '/pricing'; return }
       setError(data.error && data.error !== 'no_subscription'
         ? data.error
         : 'Billing management isn’t available just yet — please try again shortly.')
@@ -89,12 +107,38 @@ export default function BillingClient() {
             </div>
             {ownedBots.length > 0 && (
               <div className="mt-1 text-xs text-gray-400">
-                {ownedBots.map((b) => BOT_PLANS[b]?.name ?? b).join(' + ')} · {ownedBots.length > 1 ? `$${BOTH_PLAN.priceMonthly}/mo` : `$${BOT_PLANS[ownedBots[0]]?.priceMonthly ?? 50}/mo`}
+                {ownedBots.map((b) => BOT_PLANS[b]?.name ?? b).join(' + ')}
+                {priceMonthly != null ? ` · $${priceMonthly}/mo` : ''}
                 <span className="text-gray-500"> · Community included</span>
               </div>
             )}
             {ownedBots.length === 0 && communityActive && (
-              <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · ${COMMUNITY_PLAN.priceMonthly}/mo</div>
+              <div className="mt-1 text-xs text-gray-400">{COMMUNITY_PLAN.name} · Free</div>
+            )}
+            {/* Per-agent price/trial breakdown for multi-agent owners (gap audit
+                MISSING — the blended total above has no way to say "Spark's trial
+                ends tomorrow" when Flame just started). */}
+            {agents.length > 1 && (
+              <div className="mt-3 grid gap-1.5">
+                {agents.map((a) => (
+                  <div key={a.bot} className="flex items-center justify-between gap-3 rounded-lg border border-forge-border/60 bg-forge-bg/40 px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-white">{a.name}</span>
+                      <span className={`rounded-full border px-2 py-0.5 text-[10px] ${a.status === 'past_due' ? 'border-red-700/40 text-red-300' : 'border-forge-border text-gray-400'}`}>
+                        {a.badge}
+                      </span>
+                      {a.trial_ending_soon && (
+                        <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400">
+                          Trial ending soon
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-medium text-gray-300">
+                      ${a.price_monthly}/mo{a.next_billing_date ? ` · renews ${a.next_billing_date}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           {hasPlan ? (
@@ -103,10 +147,11 @@ export default function BillingClient() {
               {busy ? 'Opening…' : 'Manage billing'}
             </button>
           ) : (
-            /* Straight to the membership section. This pointed at /pricing, which has
-               308'd to /#memberships since the pricing page was retired — an extra hop
-               that bounced a signed-in customer out to the marketing homepage. */
-            <Link href="/#memberships" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
+            /* Straight to the tiers. This has pointed at /pricing, then at
+               /#memberships while that page was a 308, and now at /pricing again —
+               the homepage no longer carries a membership section, so the anchor
+               would scroll to nothing. /pricing renders the tiers itself. */
+            <Link href="/pricing" className="rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10">See plans</Link>
           )}
         </div>
         {hasPlan && (
@@ -115,9 +160,12 @@ export default function BillingClient() {
         {error && <p className="mt-3 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>}
       </div>
 
-      {/* Add / open a strategy. Pricing ladder (UAT-011): Community only = $10;
-          Community + FIRST agent = an UPGRADE to $50/mo TOTAL (Automate includes
-          Community — never "+$25"); only the SECOND agent is +$25 → $75 total. */}
+      {/* Add / open a strategy. Pricing ladder (UAT-011, revised 2026-10-04; Community
+          made free 2026-10-05): Community only = free; adding a FIRST agent is just the
+          agent's own $49.99/mo (Automate includes Community — nothing on top). A SECOND
+          agent is its OWN full-price $49.99/mo subscription — no bundle, no "$25 more"
+          (Leron, binding; legacy both_monthly subscribers keep their existing $75 rate,
+          see lib/billing/membership.ts). */}
       {notOwned.length > 0 && (
         <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-5">
           <div className="text-sm font-semibold text-white">
@@ -125,7 +173,7 @@ export default function BillingClient() {
           </div>
           <p className="mt-0.5 text-xs text-gray-400">
             {ownedBots.length > 0
-              ? `Add the second strategy for +$${secondBotIncrement(ownedBots[0])}/mo — $${BOTH_PLAN.priceMonthly} total.`
+              ? 'A second strategy is its own subscription, billed separately.'
               : communityActive
                 ? `Upgrades your membership to Forge Automate — $${BOT_PLANS.spark.priceMonthly}/mo total, Community included. Starts with a 5-day free trial.`
                 : 'Starts a 5-day free trial — no charge today.'}
@@ -135,9 +183,7 @@ export default function BillingClient() {
               const plan = BOT_PLANS[b]
               const accent = b === 'flame' ? '#EE5A24' : '#3B82F6'
               const label = ownedBots.length > 0 ? `Add ${plan.name}` : communityActive ? `Add ${plan.name}` : `Open ${plan.name}`
-              const price = ownedBots.length > 0
-                ? `+$${secondBotIncrement(ownedBots[0])}/mo`
-                : `$${plan.priceMonthly}/mo total`
+              const price = `$${plan.priceMonthly}/mo`
               return (
                 <Link key={b} href={`/live/${b}/open`}
                   className="flex items-center justify-between gap-3 rounded-lg border border-forge-border bg-forge-bg/50 px-3 py-2.5 transition hover:border-white/25"
@@ -159,12 +205,12 @@ export default function BillingClient() {
             <div>
               <div className="text-sm font-semibold text-white">Just want the community?</div>
               <p className="mt-0.5 text-xs text-gray-400">
-                Chat, market insights, and education — no trading bot. ${COMMUNITY_PLAN.priceMonthly}/mo, cancel anytime.
+                Chat, market insights, and education — no trading bot. Free, no card required.
               </p>
             </div>
             <button onClick={joinCommunity} disabled={busy}
               className="shrink-0 rounded-lg border border-amber-500 px-4 py-2.5 text-sm font-semibold text-amber-500 transition hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-60">
-              {busy ? 'Opening…' : `Join for $${COMMUNITY_PLAN.priceMonthly}/mo`}
+              {busy ? 'Joining…' : 'Join for free'}
             </button>
           </div>
         </div>

@@ -1,68 +1,171 @@
-import { useMemo, useState } from 'react'
-import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, StyleSheet } from 'react-native'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native'
+import { useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
 import useSWR from 'swr'
+import useSWRInfinite from 'swr/infinite'
 import { api } from '@/api/client'
-import type { HistoryTrade } from '@/api/types'
-import { color, space, radius, type, font, agentAccent } from '@/theme/tokens'
+import type {
+  HistoryTrade,
+  TradesPageResponse,
+  TradesTotals,
+  EntitlementsResponse,
+  EmberTradesResponse,
+} from '@/api/types'
+import {
+  getLedgerKey,
+  mergeLedgerPages,
+  ledgerTotal,
+  ledgerTotals,
+  hasMoreLedgerPages,
+  groupTradesByDay,
+  totalsFromTrades,
+  rangeCutoffDate,
+  LEDGER_RANGES,
+  type LedgerFilters,
+} from '@/ledger/paging'
+import { emberClosedTradesToHistory } from '@/ledger/ember'
+import { tradeDetailHref } from '@/ledger/detail'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
+import { useTheme } from '@/theme/ThemeContext'
+import type { ColorTokens } from '@/theme/palette'
 import { Card, Money, OutcomeBadge, AgentBadge, Loading, Empty, ErrorState } from '@/components/ui'
+import { AppHeader, Mascot } from '@/components/Brand'
+import { Sheet, SheetHeader } from '@/components/Sheet'
+import { AGENT_LABEL } from '@/agents/copy'
+import type { AgentBot } from '@/agents/routes'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 
 /**
- * Ledger — UX-004 (APP-017/018/020/021/052/053).
+ * Ledger — 10.4 redesign (handoff/ironforge-10.4-addendum.md §2 "Ledger tab"),
+ * replacing the prior dropdown-filtered flat list (UX-004 / APP-017/018/020/
+ * 021/052/053) with the design's summary card, chip filters and day-grouped
+ * rows.
  *
- * GET /api/live/trades already returns exactly the approved card fields, including a
- * normalized outcome_kind that maps 1:1 to the three badge states. Ticker and return %
- * are intentionally ABSENT from the card per UX-004 — do not add them back.
- *
- * Filtering is client-side: the endpoint returns up to 300 rows per bot in one shot, so
- * a round trip per keystroke would be strictly worse. Filters combine, and any change
- * resets scroll position — which is the mobile equivalent of "filter changes reset
- * pagination".
+ * Spark/Flame still come from GET /api/live/trades, server-side filtered and
+ * cursor-paginated (src/ledger/paging.ts) — unchanged plumbing, new
+ * presentation. Ember is a SEPARATE agent with its own trade book (PR #3177,
+ * GET /api/ember/trades) that /api/live/trades has never covered — selecting
+ * the Ember chip switches the whole screen onto that endpoint, adapted into
+ * the same row shape by src/ledger/ember.ts, with search/range filtering and
+ * the summary totals computed client-side (no cursor API exists for it yet).
+ * Agent chips only ever show agents this viewer actually owns (GET
+ * /api/billing/entitlements) — never a fixed All/Spark/Flame list a
+ * non-owner would see and tap into nothing.
  */
-const RANGES = [
-  { key: '30', label: 'Last 30 Days', days: 30 },
-  { key: '90', label: 'Last 90 Days', days: 90 },
-  { key: 'all', label: 'All Time', days: null },
-] as const
+const AGENT_CHIP_BOTS: AgentBot[] = ['spark', 'flame', 'ember']
 
 export default function LedgerScreen() {
-  const { data, error, isLoading, mutate, isValidating } = useSWR<{ trades: HistoryTrade[] }>(
-    '/api/live/trades',
-    (p: string) => api(p),
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const router = useRouter()
+  // Re-tap-tab-to-scroll-to-top (#231) — the standard React Navigation hook, which
+  // listens for a second tap on this tab's own icon while it is already focused.
+  const scrollRef = useRef<ScrollView>(null)
+  useScrollToTop(scrollRef)
+  const [query, setQuery] = useState('')
+  const [agent, setAgent] = useState<string>('all')
+  // 10.4 design `ledger()`: the Month chip (`st.ledgerRange==='21'`) is selected by
+  // default, not Week — the chips and their order already matched; only the
+  // default selection was off.
+  const [range, setRange] = useState<string>('21')
+  // Styled sheet for a tapped Ember trade — there is no /api/live/trades/[id]
+  // equivalent for Ember (PR #3177 only shipped the list + status), so this opens
+  // a sheet built entirely from the row the list already fetched, rather than a
+  // route that would have nothing further to load.
+  const [emberSheetTrade, setEmberSheetTrade] = useState<HistoryTrade | null>(null)
+
+  const entitlements = useSWR<EntitlementsResponse>('/api/billing/entitlements', (p: string) =>
+    api<EntitlementsResponse>(p),
+  )
+  const ownedBots = entitlements.data?.bots ?? []
+  const ownsEmber = ownedBots.includes('ember')
+
+  const sparkFlameAgent = agent === 'ember' ? 'all' : agent
+  const filters: LedgerFilters = useMemo(
+    () => ({ agent: sparkFlameAgent, range, query }),
+    [sparkFlameAgent, range, query],
+  )
+
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useSWRInfinite<TradesPageResponse>(
+    agent === 'ember' ? () => null : getLedgerKey(filters),
+    (p: string) => api<TradesPageResponse>(p),
     { refreshInterval: 60_000 },
   )
 
-  const [query, setQuery] = useState('')
-  const [agent, setAgent] = useState<string>('all')
-  const [range, setRange] = useState<string>('30')
+  // A filter change resets paging to page 1 — without this, switching from "Spark"
+  // back to "All Agents" would keep whatever `size` the previous filter had reached
+  // and fire that many requests against the new key on the first render.
+  useEffect(() => {
+    setSize(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agent, range, query])
 
-  const trades = data?.trades ?? []
+  const emberSWR = useSWR<EmberTradesResponse>(
+    agent === 'ember' && ownsEmber ? '/api/ember/trades' : null,
+    (p: string) => api<EmberTradesResponse>(p),
+    { refreshInterval: 60_000, shouldRetryOnError: false },
+  )
 
-  const agents = useMemo(() => {
-    const set = new Set(trades.map((t) => t.strategy))
-    return ['all', ...Array.from(set)]
-  }, [trades])
+  const sparkFlameTrades = mergeLedgerPages(data)
+  const total = ledgerTotal(data)
+  const serverTotals = ledgerTotals(data)
+  const canLoadMore = hasMoreLedgerPages(data)
+  const loadingMore = isValidating && size > 0 && !!data && data.length < size
 
-  const filtered = useMemo(() => {
-    const days = RANGES.find((r) => r.key === range)?.days ?? null
-    const cutoff = days ? Date.now() - days * 86400_000 : null
+  // Ember's own list is NOT cursor-paginated — it is filtered/searched entirely
+  // client-side from the one /api/ember/trades response, the same way the
+  // app.html prototype filters its already-fully-loaded example data, except
+  // every row here is real.
+  const emberAll = useMemo(() => emberClosedTradesToHistory(emberSWR.data?.trades ?? []), [emberSWR.data])
+  const emberCutoff = rangeCutoffDate(range)
+  const emberFiltered = useMemo(() => {
+    let rows = emberAll
+    if (emberCutoff) rows = rows.filter((t) => t.close_date >= emberCutoff)
     const q = query.trim().toLowerCase()
-    return trades.filter((t) => {
-      if (agent !== 'all' && t.strategy !== agent) return false
-      if (cutoff && new Date(t.close_date).getTime() < cutoff) return false
-      if (q) {
-        const hay = `${t.strategy} ${t.outcome} ${t.close_date} ${t.underlying}`.toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
-    })
-  }, [trades, agent, range, query])
+    if (q) {
+      rows = rows.filter((t) =>
+        `${t.strategy} ${formatDate(t.close_date)} ${t.outcome} ${t.pnl}`.toLowerCase().includes(q),
+      )
+    }
+    return rows
+  }, [emberAll, emberCutoff, query])
 
-  if (isLoading) return <Shell><Loading label="Loading your trade history…" /></Shell>
-  if (error) {
+  const trades = agent === 'ember' ? emberFiltered : sparkFlameTrades
+  const totals = agent === 'ember' ? totalsFromTrades(emberFiltered) : serverTotals
+  const dayGroups = useMemo(() => groupTradesByDay(trades), [trades])
+
+  const loading = agent === 'ember' ? emberSWR.isLoading : isLoading && !data
+  const loadError = agent === 'ember' ? emberSWR.error : error && !data
+
+  const agentChips = [
+    { key: 'all', label: 'All Agents' },
+    ...AGENT_CHIP_BOTS.filter((b) => b === 'ember' ? ownsEmber : ownedBots.includes(b)).map((b) => ({
+      key: b,
+      label: AGENT_LABEL[b],
+    })),
+  ]
+
+  function reload() {
+    void mutate()
+    void emberSWR.mutate()
+  }
+
+  function openTrade(t: HistoryTrade) {
+    if (t.bot === 'ember') {
+      setEmberSheetTrade(t)
+      return
+    }
+    router.push(tradeDetailHref(t.id))
+  }
+
+  if (loading) return <Shell><Loading label="Loading your trade history…" /></Shell>
+  if (loadError) {
     return (
       <Shell>
-        <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
+        <ErrorState message={String(((agent === 'ember' ? emberSWR.error : error) as Error).message)} onRetry={reload} />
       </Shell>
     )
   }
@@ -70,113 +173,274 @@ export default function LedgerScreen() {
   return (
     <Shell>
       <ScrollView
+        ref={scrollRef}
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         refreshControl={
-          <RefreshControl refreshing={isValidating} onRefresh={() => mutate()} tintColor={color.accent} />
+          <RefreshControl
+            refreshing={agent === 'ember' ? emberSWR.isValidating : isValidating && size === 1}
+            onRefresh={reload}
+            tintColor={color.accent}
+          />
         }
+        // The screen has always used a ScrollView, not a FlatList, so there is no
+        // native onEndReached prop — this is its equivalent: within 200px of the
+        // bottom, fetch the next page.
+        onScroll={({ nativeEvent }) => {
+          if (agent === 'ember') return
+          const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
+          const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
+          if (nearBottom && canLoadMore && !loadingMore) setSize(size + 1)
+        }}
+        scrollEventThrottle={200}
       >
-        <Text style={s.title}>Ledger</Text>
+        <View style={s.titleRow}>
+          <Text style={s.title}>Ledger</Text>
+          <Text style={[type.label, { color: color.muted }]}>Every trade, every outcome</Text>
+        </View>
 
-        <Card style={{ marginBottom: space.lg }}>
-          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>
-            Trade History
-          </Text>
-          <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
-            {filtered.length} completed {filtered.length === 1 ? 'trade' : 'trades'}
-          </Text>
+        <SummaryCard totals={totals} />
 
+        <View style={s.search}>
+          <Ionicons name="search" size={16} color={color.muted} />
           <TextInput
             value={query}
             onChangeText={setQuery}
-            placeholder="Search"
+            placeholder="Search trades"
             placeholderTextColor={color.muted}
-            style={s.search}
+            style={s.searchInput}
             autoCorrect={false}
           />
+        </View>
 
-          <View style={s.chipRow}>
-            {agents.map((a) => (
-              <Chip
-                key={a}
-                label={a === 'all' ? 'All Agents' : a}
-                active={agent === a}
-                onPress={() => setAgent(a)}
-              />
-            ))}
-          </View>
-          <View style={s.chipRow}>
-            {RANGES.map((r) => (
-              <Chip key={r.key} label={r.label} active={range === r.key} onPress={() => setRange(r.key)} />
-            ))}
-          </View>
-        </Card>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={s.chipScroll}
+          contentContainerStyle={s.chipRow}
+        >
+          {agentChips.map((c) => {
+            const active = agent === c.key
+            return (
+              <Pressable
+                key={c.key}
+                onPress={() => setAgent(c.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[s.chip, active && { backgroundColor: color.text, borderColor: color.text }]}
+              >
+                {c.key !== 'all' ? <Mascot bot={c.key} size={18} /> : null}
+                <Text style={[type.label, { color: active ? color.bg : color.textDim, fontFamily: font.bodyMedium }]}>
+                  {c.label}
+                </Text>
+              </Pressable>
+            )
+          })}
+        </ScrollView>
 
-        {filtered.length === 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={s.chipScroll}
+          contentContainerStyle={s.chipRow}
+        >
+          {LEDGER_RANGES.map((r) => {
+            const active = range === r.key
+            return (
+              <Pressable
+                key={r.key}
+                onPress={() => setRange(r.key)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[s.chip, active && { backgroundColor: color.text, borderColor: color.text }]}
+              >
+                <Text style={[type.label, { color: active ? color.bg : color.textDim, fontFamily: font.bodyMedium }]}>
+                  {r.label}
+                </Text>
+              </Pressable>
+            )
+          })}
+        </ScrollView>
+
+        {trades.length === 0 ? (
           <Empty
-            title="No completed trades"
+            title="No trades match"
             detail={
-              trades.length === 0
+              total === 0 && agent === 'all' && !query
                 ? 'Closed trades appear here once your agent finishes its first position.'
-                : 'No trades match these filters. Try widening the date range.'
+                : 'Try another filter or search.'
             }
           />
         ) : (
-          filtered.map((t) => <TradeCard key={t.id} trade={t} />)
+          <>
+            {dayGroups.map((g) => (
+              <View key={g.date} style={{ marginBottom: space.md }}>
+                <View style={s.dayHeader}>
+                  <Text style={[type.label, { color: color.muted, fontFamily: font.bodyMedium }]}>
+                    {formatDayLabel(g.date)}
+                  </Text>
+                  <Text style={[type.label, { color: g.net >= 0 ? color.pos : color.neg, fontFamily: font.bodyMedium }]}>
+                    {signed(g.net)}
+                  </Text>
+                </View>
+                <Card>
+                  {g.trades.map((t, i) => (
+                    <TradeRow key={t.id} trade={t} last={i === g.trades.length - 1} onPress={() => openTrade(t)} />
+                  ))}
+                </Card>
+              </View>
+            ))}
+            {/* Load-on-scroll only (notifications.tsx pattern): older rows load silently
+                from the onScroll near-bottom check above. A spinner rather than a
+                tappable button keeps that invisible, while still telling a member
+                mid-fetch that more is on the way. */}
+            {agent !== 'ember' && loadingMore ? (
+              <View style={s.loadMore}>
+                <ActivityIndicator size="small" color={color.muted} />
+              </View>
+            ) : null}
+          </>
         )}
       </ScrollView>
+      {emberSheetTrade ? (
+        <EmberTradeSheet trade={emberSheetTrade} onClose={() => setEmberSheetTrade(null)} />
+      ) : null}
     </Shell>
   )
 }
 
-function TradeCard({ trade }: { trade: HistoryTrade }) {
+/** The 3-col summary card (10.4 app.html `.card.sum`): Net P&L / Trades / Up%,
+ *  over whatever population the active filters resolve to. `totals` is
+ *  undefined only while the FIRST page/response hasn't loaded yet. */
+function SummaryCard({ totals }: { totals: TradesTotals | undefined }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const loading = !totals
+  const net = totals?.net_pnl ?? 0
+  const upPct = totals && totals.completed_trades > 0 ? Math.round((totals.win_rate ?? 0)) : null
+
   return (
-    <Card style={{ marginBottom: space.md }}>
-      <View style={s.rowBetween}>
-        <AgentBadge name={trade.strategy} accent={agentAccent(trade.bot)} />
-        <Money value={trade.pnl} size="title" />
-      </View>
-      <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, marginTop: space.sm }]}>
-        {formatDate(trade.close_date)}
-      </Text>
-
-      <View style={s.divider} />
-
-      <View style={s.rowBetween}>
-        <Field label="Opened" value={trade.opened_ct ?? '—'} />
-        <Field label="Closed" value={trade.closed_ct ?? '—'} />
-        <View style={{ alignItems: 'center' }}>
-          <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>Outcome</Text>
-          <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
-        </View>
-      </View>
+    <Card style={{ marginBottom: space.lg, flexDirection: 'row' }}>
+      <SummaryCol label="Net P&L" value={loading ? '—' : signed(net)} tone={loading ? color.textDim : net >= 0 ? color.pos : color.neg} />
+      <View style={s.sumDivider} />
+      <SummaryCol label="Trades" value={loading ? '—' : String(totals?.completed_trades ?? 0)} tone={color.text} />
+      <View style={s.sumDivider} />
+      <SummaryCol label="Up" value={loading || upPct == null ? '—' : `${upPct}%`} tone={color.text} />
     </Card>
   )
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function SummaryCol({ label, value, tone }: { label: string; value: string; tone: string }) {
+  const { colors: color } = useTheme()
   return (
-    <View style={{ alignItems: 'center' }}>
-      <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>{label}</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={[type.label, { color: color.muted }]}>{label}</Text>
+      <Text style={[type.title, { color: tone, fontFamily: font.bodyBold, fontSize: 18, marginTop: 2 }]} numberOfLines={1}>
+        {value}
+      </Text>
+    </View>
+  )
+}
+
+function TradeRow({ trade, last, onPress }: { trade: HistoryTrade; last: boolean; onPress: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${trade.strategy} trade, ${formatDate(trade.close_date)}`}
+      style={[s.tradeRow, !last && { borderBottomWidth: 1, borderBottomColor: color.border }]}
+    >
+      <Mascot bot={trade.bot} size={34} />
+      <View style={{ flex: 1, marginLeft: space.md }}>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 15 }]}>
+          {trade.strategy}
+        </Text>
+        <Text style={[type.label, { color: color.muted, marginTop: 1 }]}>
+          {trade.opened_ct ?? '—'} – {trade.closed_ct ?? '—'}
+          {trade.contracts ? ` · ${trade.contracts} contract${trade.contracts > 1 ? 's' : ''}` : ''}
+        </Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Money value={trade.pnl} />
+        <View style={{ marginTop: 3 }}>
+          <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
+        </View>
+      </View>
+    </Pressable>
+  )
+}
+
+/**
+ * Ember closed-trade sheet (fidelity audit "Ember row tap → trade detail") — a
+ * styled bottom sheet instead of the native Alert.alert this used to open. Built
+ * entirely from the HistoryTrade row the Ledger list already has (there is no
+ * per-trade detail endpoint for Ember yet, so no sparkline/legs/timeline here —
+ * only the fields genuinely available: result, opened/closed, contracts, outcome).
+ */
+function EmberTradeSheet({ trade, onClose }: { trade: HistoryTrade; onClose: () => void }) {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  const accent = agentAccent('ember')
+  return (
+    <Sheet accent={accent} onClose={onClose}>
+      {(close) => (
+        <>
+          <SheetHeader title="Trade" onClose={close} />
+          <View style={{ padding: space.lg, paddingTop: 0 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+              <AgentBadge name="Ember" accent={accent} />
+              <OutcomeBadge kind={trade.outcome_kind} label={trade.outcome} />
+            </View>
+            <Text style={[type.title, { color: color.text, fontFamily: font.display, marginTop: space.md }]}>
+              {formatDate(trade.close_date)}
+            </Text>
+
+            <Card style={{ marginTop: space.lg }}>
+              <Text style={[type.label, { color: color.muted }]}>Result</Text>
+              <Money value={trade.pnl} size="hero" />
+              <View style={s.emberFactsRow}>
+                <EmberFact label="Opened" value={trade.opened_ct ?? '—'} />
+                <EmberFact label="Closed" value={trade.closed_ct ?? '—'} />
+              </View>
+              <View style={s.emberFactsRow}>
+                <EmberFact label="Contracts" value={String(trade.contracts)} />
+                <EmberFact
+                  label="Credit"
+                  value={trade.credit != null ? `$${trade.credit.toFixed(2)}` : '—'}
+                />
+              </View>
+            </Card>
+          </View>
+        </>
+      )}
+    </Sheet>
+  )
+}
+
+function EmberFact({ label, value }: { label: string; value: string }) {
+  const { colors: color } = useTheme()
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={[type.label, { color: color.muted, marginBottom: 2 }]}>{label}</Text>
       <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>{value}</Text>
     </View>
   )
 }
 
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function Shell({ children }: { children: React.ReactNode }) {
+  const { colors: color } = useTheme()
   return (
-    <Pressable
-      onPress={onPress}
-      style={[s.chip, active && { backgroundColor: color.accent, borderColor: color.accent }]}
-    >
-      <Text style={[type.label, { color: active ? color.text : color.textDim, fontFamily: font.bodyMedium }]}>
-        {label}
-      </Text>
-    </Pressable>
+    <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
+      <AppHeader />
+      {children}
+    </SafeAreaView>
   )
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>{children}</SafeAreaView>
+function signed(v: number): string {
+  const a = Math.abs(v).toFixed(2)
+  return v > 0 ? `+$${a}` : v < 0 ? `-$${a}` : '$0.00'
 }
 
 /** close_date is a plain CT date string from the server — parse as local, not UTC. */
@@ -190,27 +454,75 @@ function formatDate(d: string): string {
   })
 }
 
-const s = StyleSheet.create({
-  title: { ...type.title, color: color.text, fontFamily: font.display, marginBottom: space.lg },
+/** The day header's "Weekday, Month D" label (10.4 app.html day-h). */
+function formatDayLabel(d: string): string {
+  const [y, m, day] = d.split('-').map(Number)
+  if (!y || !m || !day) return d
+  return new Date(y, m - 1, day).toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+const makeStyles = (color: ColorTokens) =>
+  StyleSheet.create({
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    marginBottom: space.lg,
+  },
+  title: { ...type.title, color: color.text, fontFamily: font.display },
+  sumDivider: { width: 1, backgroundColor: color.border, marginHorizontal: space.md },
   search: {
-    marginTop: space.md,
-    backgroundColor: color.bg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    backgroundColor: color.card,
     borderColor: color.border,
     borderWidth: 1,
     borderRadius: radius.md,
     paddingHorizontal: space.md,
+    marginBottom: space.md,
+  },
+  searchInput: {
+    flex: 1,
     paddingVertical: space.md,
     color: color.text,
     fontSize: 15,
   },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginTop: space.md },
+  chipScroll: { marginBottom: space.md },
+  chipRow: { flexDirection: 'row', gap: space.sm, paddingRight: space.lg },
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
     borderWidth: 1,
     borderColor: color.border,
     borderRadius: radius.pill,
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
   },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  divider: { height: 1, backgroundColor: color.border, marginVertical: space.md },
-})
+  dayHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.xs,
+    paddingBottom: space.sm,
+  },
+  tradeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: space.md,
+  },
+  emberFactsRow: {
+    flexDirection: 'row',
+    gap: space.lg,
+    marginTop: space.lg,
+  },
+  loadMore: {
+    alignItems: 'center',
+    paddingVertical: space.md,
+    marginTop: space.sm,
+  },
+  })

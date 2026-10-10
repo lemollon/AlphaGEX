@@ -270,7 +270,14 @@ export async function GET(
             let tradierMarketValue: number | null = null
             let tradierGainLoss: number | null = null
             try {
-              const positions = await getSandboxAccountPositions(acct.apiKey, occSymbols)
+              // 🚨 PASS THE ACCOUNT'S OWN HOST. getSandboxAccountPositions defaults
+              // its baseUrl to SANDBOX_URL, so omitting it sends a PRODUCTION key
+              // and a production account number to the sandbox host, which answers
+              // "Invalid Access Token". This endpoint is polled by the dashboard,
+              // which is why it produced a 401 for 6YB71371 roughly twice a minute
+              // on both services all day — a wrong-host bug that reads exactly like
+              // a dead credential and cost a real diagnosis on 2026-08-20.
+              const positions = await getSandboxAccountPositions(acct.apiKey, occSymbols, acct.baseUrl)
               if (positions.length > 0) {
                 tradierCostBasis = positions.reduce((s, p) => s + p.cost_basis, 0)
                 tradierMarketValue = positions.reduce((s, p) => s + p.market_value, 0)

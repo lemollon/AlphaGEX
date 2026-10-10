@@ -68,6 +68,10 @@ const PII_ONLY_TABLES = [
 //     community_messages, which is handled explicitly below.
 //   community_moderation_events — the moderation history is worth keeping, but
 //     message_excerpt is the user's own words, so that column is nulled instead.
+//   community_message_reports / community_blocks — these have NO user_id column
+//     (reporter_id, and blocker_id/blocked_id). Adding them to the list above would
+//     throw on the first row and roll the whole purge back, exactly like
+//     community_forge_posts. Both are handled explicitly below.
 
 interface EligibleRow {
   request_id: string
@@ -205,6 +209,15 @@ export async function POST() {
             WHERE message_id IN (SELECT id FROM community_messages WHERE user_id = $1)`,
           [r.user_id],
         )
+
+        // UGC safety rows keyed by something other than user_id — deleted before
+        // community_messages so nothing is left pointing at a vanished author.
+        // Reports this user FILED are their own data. Reports ABOUT them ride the
+        // ON DELETE CASCADE from community_messages, so they need no handling here.
+        await q(`DELETE FROM community_message_reports WHERE reporter_id = $1`, [r.user_id])
+        // Blocks go both ways: their own list, and their entry in other people's
+        // lists — which is dead weight once every message of theirs is gone.
+        await q(`DELETE FROM community_blocks WHERE blocker_id = $1 OR blocked_id = $1`, [r.user_id])
 
         for (const table of PII_ONLY_TABLES) {
           await q(`DELETE FROM ${table} WHERE user_id = $1`, [r.user_id])

@@ -3,9 +3,10 @@ from backend.bots.registry import BOT_REGISTRY, get_bot, list_bots
 
 def test_bots_registered():
     assert set(BOT_REGISTRY.keys()) == {"surge", "splash", "ripple", "tide", "drift", "flow", "meadow", "undertow",
-         "delta", "ebb", "ebb_pm", "updraft", "backdraft", "reversal", "embreach", "embreachq",
-         "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
-         "afterglow", "ember", "squall", "tempest"}
+             "delta", "ebb", "ebb_pm", "updraft", "backdraft", "reversal", "embreach", "embreachq",
+             "afterburn", "weekender", "flashpoint", "thermal", "wildfire",
+             "afterglow", "ember", "squall", "tempest", "astra3",
+             "monarch_a", "monarch_b", "cinder"}
 
 
 def test_ripple_defaults():
@@ -141,10 +142,44 @@ def test_get_bot_unknown_raises():
 
 
 def test_list_bots_returns_keys():
-    assert sorted(list_bots()) == ["afterburn", "afterglow", "backdraft", "delta", "drift", "ebb", "ebb_pm", "ember",
-         "embreach", "embreachq", "flashpoint", "flow", "meadow", "reversal",
+    assert sorted(list_bots()) == ["afterburn", "afterglow", "astra3", "backdraft", "cinder", "delta", "drift", "ebb", "ebb_pm", "ember",
+             "embreach", "embreachq", "flashpoint", "flow", "meadow", "monarch_a", "monarch_b", "reversal",
          "ripple", "splash", "squall", "surge", "tempest", "thermal", "tide",
          "undertow", "updraft", "weekender", "wildfire"]
+
+
+def test_monarch_defaults(db_session):
+    # MONARCH-A/B — PAPER-ONLY forward validation of two UNCONFIRMED TRIAGE 29
+    # cells. Same SPY 0DTE ATM butterfly construction, differing only in wing
+    # delta target. Both must ship disarmed — this is the one invariant that
+    # must never silently flip.
+    from backend.bots.registry import get_bot
+    from sqlalchemy import text
+    a = get_bot("monarch_a")
+    b = get_bot("monarch_b")
+    for bot, target, peer in ((a, 0.05, "monarch_b"), (b, 0.25, "monarch_a")):
+        assert bot["strategy"] == "delta_butterfly"
+        assert bot["ticker"] == "SPY"
+        assert bot["front_dte"] == 0
+        assert bot["back_dte"] is None
+        assert bot["one_entry_per_day"] is True
+        assert bot["pt_ladder"] is False
+        assert bot["settle_at_expiry"] is True
+        assert bot["compare_with"] == peer
+        assert bot["defaults"]["wing_delta_target"] == target
+        assert bot["defaults"]["starting_capital"] == 10000.0
+        # PAPER ONLY — the one line that must never silently become True.
+        assert bot["defaults"]["enabled"] is False
+        assert bot["defaults"]["max_contracts"] == 1
+
+    eng = db_session.get_bind()
+    for table in ("monarch_a_config", "monarch_b_config"):
+        row = eng.connect().execute(
+            text(f"SELECT enabled, starting_capital FROM {table} WHERE id=1")
+        ).mappings().first()
+        assert row is not None
+        assert bool(row["enabled"]) is False
+        assert float(row["starting_capital"]) == 10000.0
 
 
 def test_undertow_registered():
@@ -203,20 +238,20 @@ def test_ebb_defaults(db_session):
     assert b["back_dte"] == 0
     assert b["one_entry_per_day"] is True
     assert b["settle_at_expiry"] is True
-    # RESTRUCTURED 2026-08-15 to match EBB PM. The two tranches are one
-    # strategy at two clocks and must share a spec; before this they did not,
-    # so the two-tranche book that was quoted did not exist in code.
-    assert b["params"]["short_otm_abs"] == 1.0
-    assert b["params"]["spread_abs"] == 2.0
+    # 🚨 SPARK's structure, NOT FLAME's. The AM (10:05) and PM (13:05) clocks
+    # are two different walk-forward cells: spot-$2/$5 for the AM clock,
+    # spot-$1/$2 for the PM clock. The 8/15 "share a spec" restructure put
+    # FLAME's structure at SPARK's clock (the worst AM cell); restored 9/2 to
+    # match the live scanner's 8/27 fix.
+    assert b["params"]["short_otm_abs"] == 2.0
+    assert b["params"]["spread_abs"] == 5.0
     assert b["params"]["min_credit"] == 0.10
-    # Bands MEASURED off this tranche's own gated stream (n=666): watch = p05
-    # of the rolling-60 sum, demote = p01, credit floor = p05 of the 20-trade
-    # average credit. The old -524/-1216/30.0 were the $5-wing distribution.
+    # The $5-wing bands, pre-registered 8/13 off #23b's own 930-day stream.
     bands = b["health_bands"]
-    assert bands["watch_roll60"] == -146.0
-    assert bands["demote_roll60"] == -401.0
+    assert bands["watch_roll60"] == -524.0
+    assert bands["demote_roll60"] == -1216.0
     assert bands["demote_roll120"] == 0.0
-    assert bands["min_credit20"] == 29.0
+    assert bands["min_credit20"] == 30.0
     # Carries the VIX decay gate too — ungated this tranche is t=+1.25.
     assert b["defaults"]["vix_decay_max"] == 0.90
     d = b["defaults"]
@@ -270,9 +305,10 @@ def test_ebb_pm_defaults(db_session):
     assert bands["demote_roll60"] == -196.0
     assert bands["demote_roll120"] == 0.0
     assert bands["min_credit20"] == 15.0
-    # VIX decay gate: skip the day when VIX(prior session) / 20d-max > 0.90.
-    # Prior session, never today's close — see bots/vix_regime.py.
-    assert b["defaults"]["vix_decay_max"] == 0.90
+    # VIX decay gate OFF since 2026-09-02 (0 = explicit off; None would be
+    # re-backfilled). On this cell the gate cost $509/yr and did not cut
+    # drawdown; SPARK/ebb keeps it. See the registry comment.
+    assert b["defaults"]["vix_decay_max"] == 0
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
     assert d["enabled"] is False        # no bot ships armed

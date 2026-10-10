@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { requireIdentityWithStepUp } from '@/lib/auth/mobile-step-up'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
 import { isStripeConfigured, cancelSubscription } from '@/lib/billing/stripe'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
@@ -83,7 +84,13 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   // Cookie OR mobile bearer, so this works identically from the app and the web.
-  const identity = await getCustomerIdentity()
+  // Mobile callers need a step-up token (stepUpActions includes 'billing_cancel' —
+  // this request cancels billing in step 2 below) — see mobile-step-up.ts. The web
+  // dashboard cookie flow is unaffected.
+  const { identity, error } = await requireIdentityWithStepUp()
+  if (error === 'step_up_required') {
+    return NextResponse.json({ ok: false, error: 'step_up_required' }, { status: 401 })
+  }
   if (!identity) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   if (!isCustomersDbConfigured()) {
     return NextResponse.json({ ok: false, error: 'unavailable' }, { status: 503 })

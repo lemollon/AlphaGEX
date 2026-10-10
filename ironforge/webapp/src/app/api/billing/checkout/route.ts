@@ -12,17 +12,12 @@ import {
   createSetupCheckout,
   isMissingCustomerError,
   retrieveSubscription,
-  upgradeSubscriptionToBundle,
   upgradeCommunityToBot,
-  cancelSubscription,
 } from '@/lib/billing/stripe'
 import {
   getBotPlan,
-  otherBotSlug,
-  BOTH_PLAN,
   TRIAL_DAYS,
   COMMUNITY_KEY,
-  COMMUNITY_PLAN,
   isCommunityKey,
 } from '@/lib/billing/plans'
 import { getEnrollmentForUser } from '@/lib/enrollment/service'
@@ -166,85 +161,57 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, url: setupUrl })
     }
 
-    // ── Community: standalone $15 chat/education plan, no bot, no bundle, no trial ──
+    // ── Community: FREE as of 2026-10-05 (Leron, binding) — no Stripe, no card, ever.
+    // No bundle, no trial (there is nothing to trial). This endpoint keeps its name and
+    // shape (POST bot:'community' -> {ok, url}) so every existing caller (the /enroll
+    // funnel, the legacy /community join CTA, /account/billing) needs no restructuring,
+    // but it no longer talks to Stripe for a NEW member — it writes the entitlement row
+    // directly, same as Ember's free grant. Existing PAID community_monthly subscribers
+    // are untouched by this branch (the idempotent check below returns before any write).
     if (isCommunity) {
       const origin = publicOrigin(req)
       const existing = await customerQuery<{ status: string }>(
         `SELECT status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
         [user.id, COMMUNITY_KEY],
       )
-      // Already a member → idempotent, just send them into the community (or the
-      // enrollment completion page when the funnel initiated this).
+      // Already a member (free or a grandfathered paid subscriber) → idempotent, just
+      // send them into the community (or the enrollment completion page).
       if (existing.some((s) => ['trialing', 'active', 'past_due'].includes(s.status))) {
         return NextResponse.json({
           ok: true,
-          url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/broker' : '/community', { welcome: 'community' }),
+          url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/done' : '/community', { welcome: 'community' }),
         })
       }
 
-      const communityPriceId = await findPriceIdByLookupKey(COMMUNITY_PLAN.lookupKey)
-      if (!communityPriceId) {
-        return NextResponse.json(
-          { ok: false, error: 'Community isn’t available yet. Please try again shortly.' },
-          { status: 503 },
-        )
-      }
-
-      const communityArgs = {
-        priceId: communityPriceId,
-        userId: user.id,
-        bot: COMMUNITY_KEY,
-        trialDays: 0, // charge immediately — it's a low-cost access plan, not a strategy trial
-        // The /enroll funnel returns to its own completion/billing pages so the
-        // server-owned enrollment can advance; the legacy join button keeps /community.
-        successUrl:
-          returnTo === 'enroll'
-            ? billingReturn(origin, client, '/enroll/broker', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' })
-            : billingReturn(origin, client, '/community', { welcome: 'community', session_id: '{CHECKOUT_SESSION_ID}' }),
-        // Back to where the join button is. The legacy path pointed at /pricing once,
-        // which has 308'd to /#memberships since the pricing page was retired — so
-        // abandoning checkout threw a signed-in customer out to the marketing homepage
-        // AND dropped the ?canceled flag on the redirect.
-        cancelUrl:
-          returnTo === 'enroll'
-            ? billingReturn(origin, client, '/enroll/broker', { checkout: 'canceled' })
-            : billingReturn(origin, client, '/community', { canceled: 'community' }),
-      }
-
-      let communityCustomerId = await getOrCreateCustomer({
-        existingId: user.stripe_customer_id,
-        email: user.email,
-        userId: user.id,
-      })
-      await persistCustomer(communityCustomerId)
-
-      let communityUrl: string
-      try {
-        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
-      } catch (e) {
-        if (!isMissingCustomerError(e)) throw e
-        communityCustomerId = await createCustomer({ email: user.email, userId: user.id })
-        await persistCustomer(communityCustomerId)
-        ;({ url: communityUrl } = await createSubscriptionCheckout({ customerId: communityCustomerId, ...communityArgs }))
-      }
-
       await customerExecute(
-        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'CHECKOUT_STARTED', $2)`,
+        `INSERT INTO customer_bot_subscriptions (user_id, bot, status, stripe_subscription_id, price_lookup_key, updated_at)
+         VALUES ($1, $2, 'active', NULL, NULL, now())
+         ON CONFLICT (user_id, bot) DO UPDATE SET
+           status = 'active', stripe_subscription_id = NULL, price_lookup_key = NULL, updated_at = now()`,
+        [user.id, COMMUNITY_KEY],
+      )
+      await customerExecute(
+        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'COMMUNITY_JOINED_FREE', $2)`,
         [user.id, JSON.stringify({ bot: COMMUNITY_KEY })],
       ).catch(() => {})
 
-      return NextResponse.json({ ok: true, url: communityUrl })
+      // No Stripe round trip, so no successUrl/cancelUrl distinction — just land them
+      // where a completed join always has: the enrollment completion page, or /community
+      // for the legacy join CTA.
+      return NextResponse.json({
+        ok: true,
+        url: billingReturn(origin, client, returnTo === 'enroll' ? '/enroll/done' : '/community', { welcome: 'community' }),
+      })
     }
 
     // Non-community: guaranteed a real bot by the top-of-handler validation.
     const plan = getBotPlan(bot)!
 
-    // ── Second bot = bundle upgrade, not a second $50 subscription ──────────────
-    // If this customer already has an active/trialing subscription to the OTHER bot,
-    // opening this one lifts that subscription to the two-bot bundle ($75) instead of
-    // adding a full second bot ($50). The increment is $25 (both − single), the card is
-    // already on file, so there is no second Checkout — we modify the existing sub and
-    // return straight to the Live page.
+    // No bundle for new purchases (Leron, 2026-10-04, binding): Spark and Flame are two
+    // separate $49.99/mo subscriptions. A customer who already owns the OTHER bot just
+    // falls through to the standard single-bot Checkout below for THIS bot — no price
+    // lift, no line-item swap. Existing both_monthly bundle subscribers are untouched
+    // (read-only paths: webhook.ts, membership.ts, membership-sync.ts).
     const LIVE_STATUSES = ['trialing', 'active', 'past_due']
     const existingSubs = await customerQuery<{
       bot: string
@@ -259,76 +226,6 @@ export async function POST(req: NextRequest) {
 
     // Already own this exact bot → idempotent, just send them to it.
     if (activeSubs.some((s) => s.bot === plan.slug)) {
-      return NextResponse.json({ ok: true, url: billingReturn(origin, client, '/live', { welcome: plan.slug }) })
-    }
-
-    const other = otherBotSlug(plan.slug)
-    const otherSub = activeSubs.find((s) => s.bot === other && s.stripe_subscription_id)
-    if (otherSub?.stripe_subscription_id) {
-      const bundlePriceId = await findPriceIdByLookupKey(BOTH_PLAN.lookupKey)
-      if (!bundlePriceId) {
-        return NextResponse.json(
-          { ok: false, error: 'The two-bot bundle isn’t available yet. Please try again shortly.' },
-          { status: 503 },
-        )
-      }
-      const sub = await retrieveSubscription(otherSub.stripe_subscription_id)
-      const itemId = sub.items?.data?.[0]?.id
-      if (!itemId) throw new Error('subscription has no line item to upgrade')
-
-      const updated = await upgradeSubscriptionToBundle({
-        subscriptionId: sub.id,
-        itemId,
-        bundlePriceId,
-        userId: user.id,
-        bots: `${plan.slug},${other}`,
-      })
-      const periodEnd =
-        typeof updated.current_period_end === 'number' && updated.current_period_end > 0
-          ? new Date(updated.current_period_end * 1000).toISOString()
-          : null
-      const status = updated.status || otherSub.status
-
-      // Grant BOTH bot entitlements from the one bundle subscription. (The webhook will
-      // reconcile the same rows when the subscription.updated event arrives — this write
-      // makes the Live page correct immediately without waiting on it.)
-      for (const b of [plan.slug, other]) {
-        await customerExecute(
-          `INSERT INTO customer_bot_subscriptions
-             (user_id, bot, status, stripe_subscription_id, price_lookup_key, current_period_end, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, now())
-           ON CONFLICT (user_id, bot) DO UPDATE SET
-             status = EXCLUDED.status,
-             stripe_subscription_id = EXCLUDED.stripe_subscription_id,
-             price_lookup_key = EXCLUDED.price_lookup_key,
-             current_period_end = EXCLUDED.current_period_end,
-             updated_at = now()`,
-          [user.id, b, status, sub.id, BOTH_PLAN.lookupKey, periodEnd],
-        )
-      }
-      await customerExecute(
-        `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, 'BUNDLE_UPGRADE', $2)`,
-        [user.id, JSON.stringify({ added: plan.slug, subscription: sub.id })],
-      ).catch(() => {})
-
-      // Pricing ladder (UAT-011): the bundle IS the whole $75 — a legacy PARALLEL
-      // Community subscription would keep charging $10 on top. Consolidate it.
-      const parallelCommunity = activeSubs.find(
-        (s) => s.bot === COMMUNITY_KEY && s.stripe_subscription_id && s.stripe_subscription_id !== sub.id,
-      )
-      if (parallelCommunity?.stripe_subscription_id) {
-        try {
-          await cancelSubscription(parallelCommunity.stripe_subscription_id)
-          await customerExecute(
-            `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
-              WHERE user_id = $1 AND bot = $2`,
-            [user.id, COMMUNITY_KEY],
-          )
-        } catch (e) {
-          console.error('[checkout] parallel community sub cancel failed:', e)
-        }
-      }
-
       return NextResponse.json({ ok: true, url: billingReturn(origin, client, '/live', { welcome: plan.slug }) })
     }
 
@@ -377,6 +274,19 @@ export async function POST(req: NextRequest) {
            updated_at = now()`,
         [user.id, plan.slug, status, sub.id, plan.lookupKey, periodEnd],
       )
+      // Same trading-day trial ledger the full enrollment funnel opens (gap audit
+      // #184/#216) — upgradeCommunityToBot set Stripe's trial_end to a far HOLD, not
+      // the real length; this is what lets trial-close.ts end it after exactly
+      // TRIAL_ELIGIBLE_DAYS eligible trading days. Guarded on 'not_started' so this can
+      // never reopen a trial this person already used for this agent.
+      await customerExecute(
+        `INSERT INTO trials (user_id, agent_code, activation_id, status, started_at, eligible_days_used)
+         VALUES ($1, $2, NULL, 'active', now(), 0)
+         ON CONFLICT (user_id, agent_code) DO UPDATE
+            SET status = 'active', started_at = now(), updated_at = now()
+          WHERE trials.status = 'not_started'`,
+        [user.id, plan.slug],
+      ).catch((e) => console.error('[billing/checkout] trials ledger insert failed:', e))
       await customerExecute(
         `UPDATE customer_bot_subscriptions SET status = 'canceled', updated_at = now()
           WHERE user_id = $1 AND bot = $2`,

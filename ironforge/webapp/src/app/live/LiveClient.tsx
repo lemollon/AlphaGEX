@@ -5,8 +5,10 @@ import { useState } from 'react'
 import { fetcher } from '@/lib/fetcher'
 import type { LiveSummary, LiveTrade } from '@/lib/live/types'
 import { LIVE_BOT_LABEL, type LiveBot } from '@/lib/live/bots'
+import { botTagline } from '@/lib/billing/plans'
 import { accentFor } from './components/accent'
 import { isSwingActive } from '@/lib/live/swing'
+import { useLivePositionsStream } from './useLivePositionsStream'
 import LiveHeader from './components/LiveHeader'
 import CustomerShell from '@/components/customer/CustomerShell'
 import CheckoutNotice from '@/components/customer/CheckoutNotice'
@@ -18,6 +20,10 @@ import NowTimelineCard from './components/NowTimelineCard'
 import MarketConditionsCard from './components/MarketConditionsCard'
 import TodayPerformanceChart from './components/TodayPerformanceChart'
 import PauseTradingPanel from './components/PauseTradingPanel'
+import RiskProtectionCard from './components/RiskProtectionCard'
+import ActivityFeedCard from './components/ActivityFeedCard'
+import MilestonesCard from './components/MilestonesCard'
+import WinLossStreakCard from './components/WinLossStreakCard'
 
 /** Non-customer /live conversion CTAs — one per strategy, Spark then Flame.
  *  Both link into the existing signup flow with the bot preselected. */
@@ -25,7 +31,7 @@ const SIGNUP_CTAS = [
   {
     slug: 'spark',
     name: 'Spark',
-    tagline: 'Next-day SPY spreads',
+    tagline: botTagline('spark'),
     pill: 'Live',
     mascot: '/home/spark-mascot-glow.png',
     cardClass: 'border-spark/40 bg-spark/5 hover:bg-spark/10',
@@ -35,7 +41,7 @@ const SIGNUP_CTAS = [
   {
     slug: 'flame',
     name: 'Flame',
-    tagline: 'Two-day SPY put credit spreads',
+    tagline: botTagline('flame'),
     pill: 'Paper',
     mascot: '/home/flame-mascot-glow.png',
     cardClass: 'border-flame/40 bg-flame/5 hover:bg-flame/10',
@@ -62,12 +68,19 @@ export default function LiveClient({ account }: { account: LiveBot }) {
   const { data: trade, error: tradeError } = useSWR<LiveTrade>(
     tradeKey, fetcher, { refreshInterval: 30_000 },
   )
+  // Sub-5s positions/P&L push (dev-handoff /ws/positions contract, served as
+  // SSE — see route for why). Additive on top of the 30s poll above: writes
+  // straight into the same `tradeKey` cache, so every reader of `trade`
+  // below benefits without a second data path to keep in sync. Only once the
+  // viewer's own account state has resolved to a real (non-empty) account —
+  // see the hook for why.
+  useLivePositionsStream(`/api/v1/stream/positions?account=${account}`, tradeKey, !!summary && !summary.empty)
   const [pausePending, setPausePending] = useState(false)
   // The whole surface takes the active bot's identity colour (Spark blue / Flame orange).
   const accent = accentFor(account)
 
   const ledgerSwitch = showLedgerSwitch ? (
-    <div className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1">
+    <div className="flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--bg-2)] p-1">
       {(['live', 'paper'] as const).map((m) => (
         <button
           key={m}
@@ -76,8 +89,8 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           aria-pressed={ledger === m}
           className={
             ledger === m
-              ? 'rounded-md bg-white/15 px-3 py-1 text-xs font-semibold text-white'
-              : 'rounded-md px-3 py-1 text-xs text-gray-400 transition-colors hover:text-white'
+              ? 'rounded-md bg-[var(--bg)] px-3 py-1 text-xs font-semibold text-[var(--fg)]'
+              : 'rounded-md px-3 py-1 text-xs text-[var(--muted)] transition-colors hover:text-[var(--fg)]'
           }
         >
           {m === 'live' ? 'Live account' : 'Paper $2,000'}
@@ -120,7 +133,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           {ledgerSwitch && (
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {ledgerSwitch}
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-[var(--muted)]">
                 {ledger === 'live'
                   ? 'Real brokerage account. Balance and positions come from Tradier.'
                   : 'Simulated $2,000 book. No real orders, no real money.'}
@@ -130,11 +143,11 @@ export default function LiveClient({ account }: { account: LiveBot }) {
           {/* Billing needs attention (audit M11): a failed payment previously produced
               NO customer-facing state anywhere in the workspace. */}
           {summary?.membership?.badge === 'Payment due' && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-600/40 bg-amber-950/25 px-4 py-3">
-              <p className="text-sm text-amber-200">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--warn)]/40 bg-[var(--warn-soft)] px-4 py-3">
+              <p className="text-sm text-[var(--warn)]">
                 Your last payment didn’t go through. Update your card to keep {LIVE_BOT_LABEL[account]} running.
               </p>
-              <a href="/account/billing" className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-amber-400">
+              <a href="/account/billing" className="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-ink)] transition hover:brightness-105">
                 Update payment
               </a>
             </div>
@@ -147,7 +160,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                state: authorized, waiting, account provisioning in progress. */
             <div className="mt-4 flex flex-col gap-4">
               <ActivationConfirmationCard confirmation={summary.activation_confirmation} />
-              <div className="rounded-xl border border-forge-border bg-forge-card/60 p-5 text-sm leading-relaxed text-gray-400">
+              <div className="rounded-xl border border-[var(--line)] bg-[var(--bg-2)] p-5 text-sm leading-relaxed text-[var(--muted)]">
                 Your dashboard is being provisioned — live trade data appears here once your account
                 is fully linked. Nothing is required from you.
               </div>
@@ -167,8 +180,8 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                /live/{bot}/open; this was the one that didn't. */
             <div className="mt-4">
               <div className="text-center">
-                <h2 className="font-display text-2xl tracking-wide text-white">Put a bot to work</h2>
-                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-gray-400">
+                <h2 className="font-display text-2xl tracking-wide text-[var(--fg)]">Put a bot to work</h2>
+                <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-[var(--muted)]">
                   Start a dedicated account for a strategy and it trades the same disciplined
                   rules every session.
                 </p>
@@ -186,14 +199,14 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                     <img src={c.mascot} alt="" className="h-14 w-14 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-base font-bold text-white">{c.name}</span>
+                        <span className="text-base font-bold text-[var(--fg)]">{c.name}</span>
                         <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${c.pillClass}`}>
                           {c.pill}
                         </span>
                       </div>
-                      <p className="mt-0.5 text-sm text-gray-400">{c.tagline}</p>
+                      <p className="mt-0.5 text-sm text-[var(--muted)]">{c.tagline}</p>
                     </div>
-                    <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-white transition ${c.btnClass}`}>
+                    <span className={`shrink-0 rounded-md px-4 py-2 text-sm font-semibold text-[var(--fg)] transition ${c.btnClass}`}>
                       {signedIn ? 'Open Account' : 'Sign up'}
                     </span>
                   </a>
@@ -201,7 +214,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
               </div>
             </div>
           ) : summaryError && !summary ? (
-            <div className="mt-4 rounded-xl border border-forge-border bg-forge-card/80 p-6 text-sm text-gray-400">
+            <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/80 p-6 text-sm text-[var(--muted)]">
               Live data is temporarily unavailable. We&apos;re on it — try refreshing in a moment.
             </div>
           ) : !summary ? (
@@ -213,12 +226,12 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                render. Skeletons carry no digits, so no figure is ever implied either. */
             <div className="mt-4 flex flex-col gap-4" aria-busy="true" aria-live="polite">
               <span className="sr-only">Loading your account…</span>
-              <div className="h-[104px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              <div className="h-[104px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
               <div className="grid gap-4 lg:grid-cols-[11fr_9fr]">
-                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-                <div className="h-[320px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+                <div className="h-[320px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
+                <div className="h-[320px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
               </div>
-              <div className="h-[132px] animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
+              <div className="h-[132px] animate-pulse rounded-2xl border border-[var(--line)] bg-[var(--bg-2)]" />
             </div>
           ) : (
             <div className="mt-4 flex flex-col gap-4">
@@ -231,7 +244,7 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   <span className="mt-px rounded bg-flame/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-flame">
                     Paper
                   </span>
-                  <p className="text-sm leading-relaxed text-gray-300">
+                  <p className="text-sm leading-relaxed text-[var(--muted)]">
                     {summary.account.disclosure}
                   </p>
                 </div>
@@ -247,33 +260,59 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   <SparkHeroCard state={summary?.state ?? null} market={summary?.market ?? null} bot={account} />
                 )}
               </div>
+              {/* Equity chart moved to the top of the content, right under the hero card —
+                  the customer's own money is the first thing below the headline state,
+                  ahead of every engagement/transparency card. Same position on mobile and
+                  desktop now, so it no longer needs the old lg: swap with Market Conditions. */}
+              <div className="order-2">
+                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
+              </div>
+              {/* Reframes a no-trade day as the strategy's protection rules working,
+                  not the bot doing nothing. Renders nothing when the count could not
+                  be honestly computed — see RiskProtectionCard. */}
+              <div className="order-3">
+                <RiskProtectionCard riskProtection={summary?.risk_protection ?? null} accent={accent} botLabel={LIVE_BOT_LABEL[account]} />
+              </div>
+              {/* Live gate/health activity feed — reuses the same {bot}_logs SCAN rows as
+                  RiskProtectionCard above, just scoped to today. Renders nothing when the
+                  query failed; an empty entries array (no scans yet today) still renders. */}
+              <div className="order-4">
+                <ActivityFeedCard activityFeed={summary?.activity_feed ?? null} accent={accent} />
+              </div>
+              {/* Non-P&L tenure/system-health badges — renders nothing when the
+                  viewer has no anchor for any of the three pills. */}
+              <div className="order-5">
+                <MilestonesCard milestones={summary?.milestones ?? null} accent={accent} />
+              </div>
+              {/* Last 10 closed trades as win/loss chips + the current streak, win
+                  OR losing — see WinLossStreakCard for the both-sides-always-shown
+                  requirement. */}
+              <div className="order-6">
+                <WinLossStreakCard streak={summary?.win_loss_streak ?? null} accent={accent} />
+              </div>
               {/* A SWING is live when two positions are open at once — yesterday's held
                   leg plus today's new one. Only SPARK swings, so only SPARK reaches this
                   branch; the single-position day is untouched below. Each card carries
                   its own timeline, so NowTimelineCard is not repeated here. */}
               {isSwingActive(trade?.positions) ? (
-                <div className="order-2">
+                <div className="order-7">
                   <SwingTradeCards positions={trade!.positions} accountValue={summary?.account?.value ?? null} />
                 </div>
               ) : (
-                <div className="order-2 grid gap-4 lg:grid-cols-[11fr_9fr]">
-                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} />
+                <div className="order-7 grid gap-4 lg:grid-cols-[11fr_9fr]">
+                  <LiveTradeCard trade={trade ?? null} error={Boolean(tradeError)} state={summary?.state ?? null} accent={accent} accountValue={summary?.account?.value ?? null} nextOpenLabel={summary?.market?.next_open_label ?? null} />
                   <NowTimelineCard state={summary?.state ?? null} openedAt={trade?.opened_at ?? null} accent={accent} />
                 </div>
               )}
-              {/* Mobile stacks Today Performance before Market Conditions; desktop reads Conditions first. */}
-              <div className="order-4 lg:order-3">
+              <div className="order-8">
                 <MarketConditionsCard market={summary?.market ?? null} accent={accent} />
-              </div>
-              <div className="order-3 lg:order-4">
-                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
               </div>
               {/* Pause is a PRODUCTION control. /api/{bot}/production-pause answers
                   400 for any paper bot, so rendering this on Flame or Spark paper
                   gave the owner a button whose only outcome was a generic failure.
                   There is nothing to pause on a simulated account. */}
               {summary?.account.mode === 'paper' ? null : (
-                <div className="order-5">
+                <div className="order-9">
                   <PauseTradingPanel
                     state={summary?.state ?? null}
                     pending={pausePending}

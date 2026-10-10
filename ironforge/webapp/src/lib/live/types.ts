@@ -6,6 +6,9 @@
  * this boundary.
  */
 
+import type { BacktestAnchor, compareToBacktestAnchor } from './backtestAnchor'
+import type { FeedEntry } from './activityFeed'
+
 export type CustomerStateKey =
   | 'WORKING_WAITING'
   | 'TRADE_ACTIVE'
@@ -85,6 +88,11 @@ export interface LiveSummary {
     value: number | null
     today_pnl: number | null
     today_pnl_pct: number | null
+    /** db-dash #205: same pair /performance's combined call already returns —
+     *  added here so an agent's own page (`/agents/{bot}`, reading this summary
+     *  directly) doesn't disagree with Overview about what's available. */
+    capital_available: number | null
+    held_for_open_trades: number | null
     source: 'tradier' | 'paper_account'
     /**
      * 'paper' = simulated money. The UI MUST render the paper badge/disclosure
@@ -116,6 +124,48 @@ export interface LiveSummary {
     trial_day: number
     trial_total: number
   } | null
+  /**
+   * "Risky setups skipped this month" — a count of distinct CT calendar days
+   * where a genuine protective/risk gate fired and the bot did NOT end up
+   * trading that day (see lib/live/riskProtection.ts). NEVER fabricated: null
+   * means the underlying queries could not be computed, and the card must
+   * render nothing rather than guess. A count of exactly 0 is a real value
+   * and must still render.
+   */
+  risk_protection: { skipped_count: number; period_label: string } | null
+  /**
+   * "Live gate/health activity feed" — today's scan activity as a short,
+   * plain-English list, so the page feels alive even on a 0-trade day. Every
+   * `FeedEntry.label` is ALREADY a curated string (see lib/live/activityFeed.ts)
+   * — the raw internal `reason` (e.g. "skip:vix_elevated(0.904>0.90)") never
+   * reaches this type. NEVER fabricated: null means the underlying query
+   * could not be computed. An empty `entries` array (no scans logged yet
+   * today) is a real, renderable state and must still render the card.
+   */
+  activity_feed: { scans_today: number; gates_held_today: number; entries: FeedEntry[] } | null
+  /**
+   * Last RECENT_TRADES_LIMIT closed trades as win/loss chips, oldest-first,
+   * plus the CURRENT streak (win OR losing — never suppressed). See
+   * lib/live/winLossStreak.ts. NEVER fabricated: null means the underlying
+   * query could not be computed. An empty `trades` array (no trades closed
+   * yet) is a real, renderable state.
+   */
+  win_loss_streak: {
+    trades: ('win' | 'loss')[]
+    winsCount: number
+    lossesCount: number
+    currentStreak: { count: number; type: 'win' | 'loss' } | null
+  } | null
+  /**
+   * Non-P&L tenure/system-health badges — days connected, cumulative scans,
+   * month number. See lib/live/milestones.ts. Route-populated (needs
+   * customerId, which getLiveSummary does not receive) — same pattern as
+   * `membership`/`activation_confirmation`: getLiveSummary returns null here
+   * as an inert placeholder, and the route merges the real value in. Each
+   * inner field is independently nullable (e.g. an operator view may only
+   * ever have `scanNumber`).
+   */
+  milestones: { daysConnected: number | null; scanNumber: number | null; monthNumber: number | null } | null
   as_of: string
 }
 
@@ -140,6 +190,20 @@ export interface LiveOpenPosition {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /**
+   * Lifecycle line (UAT round two, mock #1). Dollar profit at the configured
+   * profit target and dollar loss at the configured stop, derived from this
+   * position's own credit/contracts — not a percentage, so the card can show
+   * "$60 / −$120" without the customer doing the math themselves.
+   *
+   * `stop_dollars` is null when the strategy has no real stop (holds to
+   * settlement instead) — the UI must show "hold to close", never $0.
+   */
+  target_dollars: number | null
+  stop_dollars: number | null
+  /** ISO instant of today's EOD auto-close cutoff — null when this position
+   *  doesn't expire today (a swung leg), which the UI reads as "at close". */
+  auto_close_at: string | null
   /** Opened on an earlier CT date — i.e. this is the swung leg. */
   held_overnight: boolean
   /** 1 on the day it opened, 2 the next session, and so on. */
@@ -166,6 +230,20 @@ export interface LiveOpenPosition {
    * Shown beside capital_pct so "17% of 20%" is legible as a rule, not a coincidence.
    */
   regime_cap_pct: number | null
+  /**
+   * THIS position's intraday mark-to-market, minute-bucketed — the per-trade chart in
+   * UX-002/003.
+   *
+   * Distinct from LiveTrade.spark_series, which is the agent's whole day summed across
+   * every open position. With a swung leg open beside today's trade those two are
+   * different curves, and drawing the aggregate on a single trade's card would
+   * attribute one position's move to another.
+   *
+   * Empty until the scanner has written marks for it: unrealized P&L per position was
+   * never recorded before, so there is nothing to backfill. Gaps are real minutes where
+   * the mark failed — the writer deliberately skips those rather than recording a zero.
+   */
+  series: Array<{ timestamp: string; pnl: number }>
 }
 
 export interface LiveTrade {
@@ -179,9 +257,29 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Mirrors positions[0] — see LiveOpenPosition for the lifecycle-line contract. */
+  target_dollars: number | null
+  stop_dollars: number | null
+  auto_close_at: string | null
   spark_series: Array<{ timestamp: string; pnl: number }>
   /** Populated when today's trading is complete (realized result). */
   today_result: { pnl: number; pct: number | null } | null
+  /**
+   * OPT-IN, technical-trader-only. Populated only alongside a non-null
+   * `today_result` whose underlying position(s) have `contracts > 0` — never
+   * fabricated when there was no trade today. Strictly descriptive: compares
+   * today's PER-LOT realized result against the strategy's validated
+   * backtested range (see `lib/live/backtestAnchor.ts`). Must never be read as
+   * a forward projection — the UI's "Advanced" disclosure is the only place
+   * this belongs, and it must carry the "not a guarantee of future results"
+   * line every time it renders.
+   */
+  today_result_technical?: {
+    perLot: number
+    contracts: number
+    anchor: BacktestAnchor
+    comparison: ReturnType<typeof compareToBacktestAnchor>
+  } | null
   /**
    * EVERY open position, newest first. The scalar fields above describe positions[0]
    * and are kept so existing readers are unaffected; anything that must not hide a

@@ -84,6 +84,37 @@ class GexSnapshot(Base):
     captured_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class OpportunitySnapshot(Base):
+    """The single latest Opportunity Scanner snapshot, pushed whole by the
+    laptop script (dev/meltup/opportunity/build_opportunity_snapshot.py) —
+    ThetaData/Polygon/yfinance are all laptop-only, so the backend never
+    computes this itself, only stores and serves it. id is always the fixed
+    string "latest"; a push overwrites it in place (single row, no history).
+    """
+    __tablename__ = "opportunity_snapshots"
+
+    id = Column(String(16), primary_key=True, default="latest")
+    payload_json = Column(Text, nullable=False)
+    pushed_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class OpportunityFilingSenseRow(Base):
+    """One row per FilingSense ledger call pushed by the laptop pusher script
+    (dev/filingsense/push_to_spreadworks.py). id = "<ticker>|<posted_utc>" —
+    stable across re-pushes so a retry upserts instead of duplicating.
+    payload_json carries the row verbatim (same shape as ledger.jsonl) so the
+    Opportunity Scanner's wording logic never has to guess at a schema the
+    ledger evolves independently of this table.
+    """
+    __tablename__ = "opportunity_filingsense_rows"
+
+    id = Column(String(160), primary_key=True)
+    ticker = Column(String(16), nullable=False)
+    posted_utc = Column(String(40), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class DiscordPostLog(Base):
     """One row per (message_key, fire_date). Cross-process / cross-replica
     dedup for scheduled Discord posts — guarantees only one worker actually
@@ -95,6 +126,98 @@ class DiscordPostLog(Base):
     message_key = Column(String(64), primary_key=True)
     fire_date = Column(Date, primary_key=True)
     posted_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class QQQWatchRuntimeStatus(Base):
+    """Latest cross-service heartbeat for the Render QQQ watcher.
+
+    The dedicated worker writes one fixed row.  The web API reads it so the
+    public status endpoint remains useful even though the worker has no URL.
+    """
+    __tablename__ = "qqq_watch_runtime_status"
+
+    watcher_id = Column(String(32), primary_key=True, default="qqq-retest")
+    payload_json = Column(Text, nullable=False)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IntradayTradePlan(Base):
+    """Date-bound morning options plan supplied to the alert-only watcher."""
+    __tablename__ = "intraday_trade_plans"
+
+    trading_date = Column(Date, primary_key=True)
+    payload_json = Column(Text, nullable=False)
+    active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IntradaySelectedWatchlist(Base):
+    """Exact non-core roster selected by the morning report for one date."""
+    __tablename__ = "intraday_selected_watchlists"
+
+    trading_date = Column(Date, primary_key=True)
+    symbols_json = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IntradaySetup(Base):
+    """Durable rule definition and state for one advisory setup."""
+    __tablename__ = "intraday_setups"
+
+    setup_id = Column(String(64), primary_key=True)
+    trading_date = Column(Date, nullable=False, index=True)
+    symbol = Column(String(10), nullable=False, index=True)
+    strategy = Column(String(40), nullable=False)
+    thesis = Column(String(12), nullable=False)
+    state = Column(String(24), nullable=False, default="WAIT")
+    payload_json = Column(Text, nullable=False)
+    option_selection_json = Column(Text, nullable=True)
+    last_market_timestamp = Column(DateTime(timezone=True), nullable=True)
+    last_options_timestamp = Column(DateTime(timezone=True), nullable=True)
+    last_transition_at = Column(DateTime(timezone=True), nullable=True)
+    active = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("trading_date", "setup_id"),
+    )
+
+
+class IntradayAlertDedup(Base):
+    """Claimed alert transitions; persists across worker restarts."""
+    __tablename__ = "intraday_alert_dedup"
+
+    event_key = Column(String(160), primary_key=True)
+    trading_date = Column(Date, nullable=False, index=True)
+    setup_id = Column(String(64), nullable=False)
+    state = Column(String(24), nullable=False)
+    transition_at = Column(DateTime(timezone=True), nullable=False)
+    payload_json = Column(Text, nullable=True)
+    posted_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class IntradayWatchRuntimeStatus(Base):
+    """Latest generalized watcher heartbeat and public status payload."""
+    __tablename__ = "intraday_watch_runtime_status"
+
+    watcher_id = Column(String(32), primary_key=True, default="intraday-watch")
+    payload_json = Column(Text, nullable=False)
+    heartbeat_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Position(Base):

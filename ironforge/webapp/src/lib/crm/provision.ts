@@ -343,5 +343,65 @@ export async function provisionCrmSchema(dryRun: boolean): Promise<ProvisionRepo
   }
 }
 
+/**
+ * Reconcile ONLY the named attributes of one object (e.g. the two waitlist drip mirror fields on
+ * People) — the scoped, boot-time variant of provisionCrmSchema. Same rules: additive only,
+ * idempotent, never touches an attribute that already exists. Options are reconciled for any
+ * attribute that declares them. Unknown slugs (not in schema.ts) are reported as errors rather
+ * than guessed at.
+ */
+export async function provisionObjectAttributes(objectSlug: string, attributeSlugs: readonly string[]): Promise<ProvisionReport> {
+  const items: ProvisionItem[] = []
+  const empty = (configured: boolean): ProvisionReport => ({
+    configured,
+    dryRun: false,
+    items,
+    created: items.filter((i) => i.outcome === 'created').length,
+    existing: items.filter((i) => i.outcome === 'exists').length,
+    errors: items.filter((i) => i.outcome === 'error').length,
+    manualFollowUps: [],
+  })
+  if (!isAttioConfigured()) return empty(false)
+
+  const obj = CRM_OBJECTS.find((o) => o.apiSlug === objectSlug)
+  if (!obj) {
+    push(items, { action: 'create-attribute', target: `${objectSlug}.*`, outcome: 'error', error: 'object not in schema.ts' })
+    return empty(true)
+  }
+  const wanted: CrmAttribute[] = []
+  for (const slug of attributeSlugs) {
+    const attr = obj.attributes.find((a) => a.apiSlug === slug)
+    if (attr) wanted.push(attr)
+    else push(items, { action: 'create-attribute', target: `${objectSlug}.${slug}`, outcome: 'error', error: 'attribute not in schema.ts' })
+  }
+  if (wanted.length === 0) return empty(true)
+
+  const live = await listAttributes(objectSlug)
+  if (!live.ok) {
+    push(items, { action: 'create-attribute', target: `${objectSlug}.*`, outcome: 'error', error: live.error })
+    return empty(true)
+  }
+  const have = new Set((live.data?.data ?? []).map((a) => a.api_slug ?? ''))
+  for (const attr of wanted) {
+    const target = `${objectSlug}.${attr.apiSlug}`
+    if (have.has(attr.apiSlug)) {
+      push(items, { action: 'create-attribute', target, outcome: 'exists' })
+    } else {
+      const res = await createAttribute(objectSlug, {
+        apiSlug: attr.apiSlug,
+        title: attr.title,
+        type: attr.type,
+        description: attr.description,
+        isUnique: attr.isUnique,
+        referenceTarget: attr.referenceTarget,
+      })
+      push(items, { action: 'create-attribute', target, outcome: res.ok ? 'created' : 'error', error: res.ok ? undefined : res.error })
+      if (!res.ok) continue
+    }
+    await reconcileOptions(items, false, objectSlug, attr)
+  }
+  return empty(true)
+}
+
 /** Re-exported so the runtime mappers and the route agree on the matching attribute per object. */
 export { MATCHING_ATTRIBUTE }

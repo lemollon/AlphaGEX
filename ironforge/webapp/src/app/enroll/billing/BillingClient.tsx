@@ -6,22 +6,35 @@ import { useSearchParams } from 'next/navigation'
 import EnrollShell from '../EnrollShell'
 import { useEnrollment } from '../useEnrollment'
 import { PAGE_RANK, routeForNextStep } from '../steps'
+import StripeCardForm from './StripeCardForm'
 import { MARKETING_TIERS, TRIAL_DAYS } from '@/lib/billing/plans'
+import { track } from '@/lib/analytics/track'
+import { trackEnrollStepComplete } from '@/lib/analytics/enroll'
 
 /**
- * BILL-COMM-01 / BILL-AUTO-01 — billing (July 29 handoff).
+ * BILL-COMM-01 / BILL-AUTO-01 — Billing (10/5 reorder: step 5, right after Connect
+ * brokerage; Community made free 2026-10-05).
  *
- * Payment fields are HOSTED BY STRIPE (accepted deviation from the embedded-field
- * mockups): this screen is the order summary + the binding acceptance language, and
- * the CTA redirects to Stripe Checkout. Community pays $10 today (subscription mode);
- * Automate saves a card at $0 due (setup mode via the server-validated
- * `enrollment_setup` intent — the trial begins only at activation, never here).
+ * Automate (Spark/Flame; Ember never reaches this screen — see plan/PlanClient.tsx
+ * and broker/BrokerClient.tsx): an EMBEDDED Stripe Elements Payment Element,
+ * server-created via a SetupIntent (POST /api/billing/setup-intent) — $0 due today,
+ * the trial begins only at activation, never here (unchanged from before this
+ * reorder; see lib/billing/stripe.ts createSetupIntent). Falls back to the previous
+ * hosted-Checkout redirect (saveAutomateCard) when
+ * NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not configured on this deployment, so a
+ * missing env var degrades gracefully instead of breaking enrollment.
  *
- * Community has no standalone legal screen: its Terms / Privacy / Refund acceptance
- * is recorded as a clickwrap at THIS submit, before the Stripe redirect.
+ * Community branch is effectively a RESUME FALLBACK now — PlanClient finalizes the
+ * free join immediately after the "Choose agent" screen, so a normal flow never
+ * visits this screen for Community. An enrollment migrated from before this reorder
+ * (or any resumed Community row that never got the fast-forward) still lands here and
+ * still works: it records the Terms/Privacy/Refund clickwrap, then
+ * POST /api/billing/checkout writes the free entitlement and hands back an internal
+ * url, not a Stripe redirect.
  *
- * Returning from Stripe (?checkout=success) re-resumes; the server re-derives billing
- * completion from Stripe state directly, so this works even before the webhook lands.
+ * Returning from Stripe (?checkout=success, hosted-Checkout fallback only) re-resumes;
+ * the server re-derives billing completion from Stripe state directly, so this works
+ * even before the webhook lands.
  */
 
 interface LegalDoc {
@@ -30,16 +43,24 @@ interface LegalDoc {
   contentUri: string
 }
 
+const STRIPE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+
 export default function BillingClient() {
   const { enrollment, busy, setBusy, error, setError, call, resume, router } = useEnrollment('billing')
   const params = useSearchParams()
   const checkout = params.get('checkout')
   const [finalizing, setFinalizing] = useState(checkout === 'success')
+  const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [loadingSecret, setLoadingSecret] = useState(false)
 
   const isCommunity = enrollment?.selected_plan === 'community'
+  const canEmbed = Boolean(STRIPE_PUBLISHABLE_KEY)
+  // "Card saved" recap (gap audit MISSING — previously advanced straight to Review).
+  const [savedCard, setSavedCard] = useState<{ brand: string; last4: string } | null>(null)
 
-  // Back from Stripe: follow the server's position FORWARD. The resume endpoint checks
-  // Stripe directly (webhook-lag immune), so success normally advances immediately.
+  // Back from Stripe (hosted-Checkout fallback): follow the server's position FORWARD.
+  // The resume endpoint checks Stripe directly (webhook-lag immune), so success
+  // normally advances immediately.
   useEffect(() => {
     if (checkout !== 'success' || !enrollment) return
     ;(async () => {
@@ -55,14 +76,30 @@ export default function BillingClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkout, enrollment?.id])
 
+  // Fetch the SetupIntent client_secret as soon as it's clear this is the embedded
+  // Automate path — never for Community, never when the fallback env var is unset.
+  useEffect(() => {
+    if (!enrollment || isCommunity || !canEmbed || finalizing || clientSecret) return
+    setLoadingSecret(true)
+    call('/api/billing/setup-intent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ enrollment_id: enrollment.id }),
+    })
+      .then((d) => setClientSecret(d.client_secret))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not start billing setup.'))
+      .finally(() => setLoadingSecret(false))
+  }, [enrollment, isCommunity, canEmbed, finalizing, clientSecret, call, setError])
+
   async function payCommunity() {
     if (!enrollment) return
     setBusy(true)
     setError(null)
     try {
-      // Clickwrap: record the core acceptances (Terms / Privacy / Refund) BEFORE the
-      // Stripe redirect — the doc requires binding acceptance at submit, and the
-      // acceptance moving the enrollment to billing_pending is what checkout expects.
+      // Clickwrap: record the core acceptances (Terms / Privacy / Refund) BEFORE
+      // joining — the doc requires binding acceptance at submit. Community is free, so
+      // this call writes the entitlement directly and returns an internal url; there is
+      // no card and no Stripe redirect.
       const legal = await call(`/api/v1/enrollments/${enrollment.id}/legal`)
       const codes = (legal.documents as LegalDoc[]).map((d) => d.code)
       await call(`/api/v1/enrollments/${enrollment.id}/acceptances`, {
@@ -77,11 +114,12 @@ export default function BillingClient() {
       })
       window.location.assign(d.url)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not start checkout.')
+      setError(e instanceof Error ? e.message : 'Could not join Community.')
       setBusy(false)
     }
   }
 
+  /** Fallback only — used when NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY is not configured. */
   async function saveAutomateCard() {
     if (!enrollment) return
     setBusy(true)
@@ -99,136 +137,151 @@ export default function BillingClient() {
     }
   }
 
+  /** The embedded form's card was saved. Show the "card saved" recap (gap audit
+   *  MISSING) rather than advancing straight to Review — `continueToReview` below is
+   *  what actually re-resumes and moves on. */
+  async function onCardSaved() {
+    setBusy(true)
+    setError(null)
+    try {
+      const d = await call('/api/billing/payment-method')
+      setSavedCard(d.paymentMethod ?? { brand: 'card', last4: '••••' })
+    } catch {
+      // The card is already saved with Stripe regardless — show a generic recap
+      // rather than block the customer behind a read that failed.
+      setSavedCard({ brand: 'card', last4: '••••' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Recap confirmed — re-resume so the server (which re-derives billing completion
+   *  from Stripe directly) advances us to Review. */
+  async function continueToReview() {
+    setBusy(true)
+    setError(null)
+    try {
+      const r = await resume()
+      if (!r) return
+      track('billing_trial_started', { agent: r.enrollment.selected_plan ?? undefined })
+      trackEnrollStepComplete('billing')
+      const canonical = routeForNextStep(r.next_step, r.enrollment.selected_plan)
+      router.push(canonical.route)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Your card was saved, but we could not continue automatically. Please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const headline = isCommunity ? 'One final step.' : 'Prepare to automate.'
   const subline = isCommunity
-    ? 'Set up billing to activate your Forge Community membership.'
-    : 'Add a payment method, then complete your trading setup.'
+    ? 'Accept the agreements below to activate your free Forge Community membership.'
+    : 'Add a payment method to finish setting up your trading agent.'
+  const backHref = isCommunity ? '/enroll/plan' : '/enroll/broker'
 
   return (
-    <EnrollShell headline={headline} subline={subline} maxWidthClass="max-w-3xl">
-      <div className="rounded-2xl border border-forge-border bg-forge-card/60 p-6 lg:p-8">
-        <h2 className="text-2xl font-bold text-white">Set up billing</h2>
-        <p className="mt-1 text-sm text-gray-400">
-          {isCommunity
-            ? 'Your Forge Community membership begins today.'
-            : 'Your card will not be charged until your free trial is complete.'}
-        </p>
+    <EnrollShell headline={headline} subline={subline} maxWidthClass="max-w-3xl" step="billing" enrollment={enrollment}>
+      {checkout === 'canceled' ? (
+        <p className="help" style={{ marginBottom: 14 }}>Checkout was canceled — your card was not charged. Pick up where you left off below.</p>
+      ) : null}
+      {error ? <p className="err" style={{ marginBottom: 14 }}>{error}</p> : null}
 
-        {checkout === 'canceled' ? (
-          <p className="mt-4 rounded-md border border-white/15 bg-black/30 px-3 py-2 text-sm text-gray-300">
-            Checkout was canceled — your card was not charged. Pick up where you left off below.
-          </p>
-        ) : null}
-        {error ? (
-          <p className="mt-4 rounded-md border border-red-700/40 bg-red-950/30 px-3 py-2 text-sm text-red-300">{error}</p>
-        ) : null}
+      {!enrollment && !error ? <div className="card pad" style={{ height: 220 }} /> : null}
 
-        {!enrollment && !error ? (
-          <div className="mt-6 h-56 animate-pulse rounded-2xl border border-forge-border bg-forge-card/40" />
-        ) : null}
+      {enrollment && finalizing ? (
+        <div className="card pad">
+          Confirming your payment method with Stripe…{' '}
+          <button type="button" onClick={() => resume()} className="link">Check again</button>
+        </div>
+      ) : null}
 
-        {enrollment && finalizing ? (
-          <div className="mt-6 rounded-xl border border-forge-border bg-black/20 p-6 text-sm text-gray-300">
-            Confirming your payment method with Stripe…{' '}
-            <button type="button" onClick={() => resume()} className="font-semibold text-amber-500 hover:text-amber-400">
-              Check again
-            </button>
-          </div>
-        ) : null}
-
-        {enrollment && !finalizing ? (
-          <>
-            {/* Order summary */}
-            <div className="mt-6 rounded-xl border border-forge-border bg-black/20 p-5">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-gray-400">Order summary</h3>
-              {isCommunity ? (
-                <>
-                  <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-sm text-gray-200">Forge Community</span>
-                    <span className="text-sm font-semibold text-white">
-                      ${MARKETING_TIERS.community.priceMonthly.toFixed(2)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">Community included · Renews monthly · No free trial</p>
-                  <div className="mt-4 flex items-baseline justify-between border-t border-forge-border pt-4">
-                    <span className="text-sm font-semibold text-gray-200">Due today</span>
-                    <span className="text-2xl font-bold text-white">
-                      ${MARKETING_TIERS.community.priceMonthly.toFixed(2)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">Cancel anytime.</p>
-                </>
-              ) : (
-                <>
-                  <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-sm text-gray-200">Forge Automate</span>
-                    <span className="text-sm font-semibold text-white">
-                      ${MARKETING_TIERS.starter.priceMonthly.toFixed(2)} / month
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    {TRIAL_DAYS} trading-day free trial · Begins at activation
-                  </p>
-                  <div className="mt-4 flex items-baseline justify-between border-t border-forge-border pt-4">
-                    <span className="text-sm font-semibold text-gray-200">Due today</span>
-                    <span className="text-2xl font-bold text-white">$0.00</span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Then ${MARKETING_TIERS.starter.priceMonthly}/month after your trial.
-                  </p>
-                  <span className="mt-3 inline-block rounded-md border border-emerald-500/50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-400">
-                    Card required · No charge today
-                  </span>
-                </>
-              )}
-              <p className="mt-4 flex items-center gap-1.5 text-xs text-gray-500">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-3.5 w-3.5 shrink-0" aria-hidden="true">
+      {enrollment && !finalizing ? (
+        <>
+          {/* Order summary */}
+          <div className="card pad">
+            <h3>Order summary</h3>
+            {isCommunity ? (
+              <div className="today" style={{ marginTop: 14 }}>
+                <div><span>Forge Community</span><span><b>Free</b></span></div>
+                <div><span className="help">No card · No Stripe subscription · Cancel anytime</span><span /></div>
+                <div><span>Due today</span><span>$0.00</span></div>
+              </div>
+            ) : (
+              <div className="today" style={{ marginTop: 14 }}>
+                <div><span>Forge Automate</span><span>${MARKETING_TIERS.starter.priceMonthly.toFixed(2)}/month</span></div>
+                <div><span className="help">{TRIAL_DAYS} trading-day free trial · Begins at activation</span><span /></div>
+                <div><span>Due today</span><span>$0.00</span></div>
+              </div>
+            )}
+            {isCommunity ? (
+              <span className="badge ok" style={{ marginTop: 12, display: 'inline-block' }}>Free · No card required</span>
+            ) : (
+              <span className="badge ok" style={{ marginTop: 12, display: 'inline-block' }}>Card required · No charge today</span>
+            )}
+            {!isCommunity ? (
+              <p className="powered" style={{ marginTop: 14 }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                   <rect x="5" y="10.5" width="14" height="9" rx="2" />
                   <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
                 </svg>
                 Payments are securely processed by Stripe.
               </p>
+            ) : null}
+          </div>
+
+          {isCommunity ? (
+            <>
+              <button type="button" disabled={busy} onClick={payCommunity} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 20 }}>
+                {busy ? 'Joining…' : 'Join Community — Free'}
+              </button>
+              <p className="help" style={{ marginTop: 12, lineHeight: 1.5 }}>
+                By continuing, you accept the{' '}
+                <Link href="/terms" target="_blank" className="link">Terms of Service</Link>,{' '}
+                <Link href="/privacy" target="_blank" className="link">Privacy Policy</Link>, and{' '}
+                <Link href="/legal/refund-policy" target="_blank" className="link">Refund Policy</Link>.
+              </p>
+            </>
+          ) : canEmbed && savedCard ? (
+            <div className="card pad" style={{ marginTop: 20 }}>
+              <h3>Payment method saved</h3>
+              <div className="check-row ok" style={{ marginTop: 14 }}>
+                <strong>
+                  {savedCard.brand.charAt(0).toUpperCase() + savedCard.brand.slice(1)} ending in {savedCard.last4}
+                </strong>
+                <p style={{ marginTop: 4 }}>Saved securely with Stripe. You will not be charged today.</p>
+              </div>
+              <button type="button" disabled={busy} onClick={continueToReview} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 16 }}>
+                {busy ? 'Continuing…' : 'Continue to Review'}
+              </button>
             </div>
+          ) : canEmbed ? (
+            <div className="card pad" style={{ marginTop: 20 }}>
+              <h3>Payment method</h3>
+              {loadingSecret && !clientSecret ? <div style={{ height: 120 }} /> : null}
+              {clientSecret && STRIPE_PUBLISHABLE_KEY ? (
+                <StripeCardForm publishableKey={STRIPE_PUBLISHABLE_KEY} clientSecret={clientSecret} onSaved={onCardSaved} />
+              ) : null}
+              <p className="help" style={{ marginTop: 12 }}>
+                Your trial begins only after you activate trading on the next screen.
+              </p>
+            </div>
+          ) : (
+            <>
+              <button type="button" disabled={busy} onClick={saveAutomateCard} className="btn btn-accent btn-block btn-lg" style={{ marginTop: 20 }}>
+                {busy ? 'Starting checkout…' : 'Save Payment & Continue'}
+              </button>
+              <p className="help" style={{ marginTop: 12 }}>
+                Your trial begins only after you activate trading on the next screen.
+              </p>
+            </>
+          )}
 
-            {isCommunity ? (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={payCommunity}
-                  className="mt-6 w-full rounded-lg bg-amber-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {busy ? 'Starting checkout…' : `Pay $${MARKETING_TIERS.community.priceMonthly} & Join Community`}
-                </button>
-                <p className="mt-3 text-xs leading-relaxed text-gray-500">
-                  By continuing, you agree to recurring monthly billing until canceled and accept the{' '}
-                  <Link href="/terms" target="_blank" className="text-amber-500 hover:underline">Terms of Service</Link>,{' '}
-                  <Link href="/privacy" target="_blank" className="text-amber-500 hover:underline">Privacy Policy</Link>, and{' '}
-                  <Link href="/legal/refund-policy" target="_blank" className="text-amber-500 hover:underline">Refund Policy</Link>.
-                </p>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={saveAutomateCard}
-                  className="mt-6 w-full rounded-lg bg-emerald-500 px-5 py-3 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {busy ? 'Starting checkout…' : 'Save Payment & Continue'}
-                </button>
-                <p className="mt-3 text-xs text-gray-500">
-                  Your trial begins only after you connect a brokerage, configure an agent, and activate trading.
-                </p>
-              </>
-            )}
-
-            <Link href="/enroll/plan" className="mt-5 inline-block text-sm text-gray-400 hover:text-white">
-              ← Back to membership selection
-            </Link>
-          </>
-        ) : null}
-      </div>
+          <div className="nav-row">
+            <Link href={backHref} className="btn">← Back</Link>
+          </div>
+        </>
+      ) : null}
     </EnrollShell>
   )
 }

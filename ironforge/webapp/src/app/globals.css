@@ -1,3 +1,9 @@
+@import '../styles/forge-tokens.css';
+@import '../styles/forge-marketing.css';
+/* 10.4 enrollment + dashboard visual systems — scoped under .if-enroll / .if-dash. */
+@import '../styles/forge-enroll.css';
+@import '../styles/forge-dashboard.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -98,8 +104,10 @@ body {
 }
 
 /* Visible keyboard focus everywhere (7/31 audit: zero focus-visible styles existed).
-   Brand ring on the dark ground; inputs keep their own focus borders on top. */
+   Brand ring on the dark ground; inputs keep their own focus borders on top.
+   Uses the design-system accent token (ds-a11y: "visible focus ring, 2px
+   --accent") instead of a hardcoded hex so it tracks the token, light/dark. */
 :focus-visible {
-  outline: 2px solid #EE5A24;
+  outline: 2px solid var(--accent, #EE5A24);
   outline-offset: 2px;
 }

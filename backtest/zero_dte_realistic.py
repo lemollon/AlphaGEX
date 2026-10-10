@@ -40,6 +40,16 @@ except ImportError:
     YFINANCE_AVAILABLE = False
     print("Warning: yfinance not installed")
 
+# Optional: real intraday VIX at the actual 0DTE entry time (market open) via
+# thetadata-proxy, instead of yfinance's end-of-day close. Only covers dates
+# from ~2022-01-01 onward (Standard-tier ThetaData) - falls back to the
+# yfinance daily close below when unavailable.
+try:
+    from data.vix_minute_fetcher import get_vix_at_open
+    VIX_MINUTE_AVAILABLE = True
+except ImportError:
+    VIX_MINUTE_AVAILABLE = False
+
 
 @dataclass
 class IronCondorTrade:
@@ -209,6 +219,18 @@ class RealisticBacktester:
             print(f"  Loaded {len(self.vix_data)} days of VIX data")
         except Exception as e:
             print(f"  Failed to load VIX: {e}")
+
+        # Overlay real intraday VIX at the open where available - this bot
+        # enters at the open, so the yfinance EOD close above misrepresents
+        # the VIX level the trade actually saw at entry.
+        if VIX_MINUTE_AVAILABLE:
+            try:
+                intraday_vix = get_vix_at_open(self.start_date, self.end_date)
+                if intraday_vix:
+                    self.vix_data.update(intraday_vix)
+                    print(f"  Overlaid {len(intraday_vix)} days of real intraday (open) VIX from thetadata-proxy")
+            except Exception as e:
+                print(f"  Warning: Intraday VIX overlay failed, using yfinance daily close only: {e}")
 
     def get_trading_days(self) -> List[str]:
         """Get ALL trading days with 0DTE options"""

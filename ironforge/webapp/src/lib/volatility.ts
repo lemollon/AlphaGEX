@@ -151,7 +151,7 @@ export function stanceLabel(stance?: Stance | string | null): string {
     case 'lean_calls':
       return 'Lean calls'
     case 'lean_puts':
-      return 'Lean puts'
+      return 'Go short'
     case 'reduce_risk':
       return 'Cut risk'
     case 'neutral':
@@ -398,7 +398,7 @@ function briefStanceText(stance?: string | null): string {
     case 'lean_calls':
       return 'lean calls'
     case 'lean_puts':
-      return 'lean puts'
+      return 'vol expansion / go short'
     case 'reduce_risk':
       return 'cut short-premium size'
     case 'neutral':

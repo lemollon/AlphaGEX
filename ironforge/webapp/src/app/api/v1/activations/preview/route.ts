@@ -75,6 +75,12 @@ export async function POST(req: NextRequest) {
         legal_versions: ctx.snapshot.legalVersions,
         plan: plan ? { name: plan.productName, price_monthly: plan.priceMonthly, interval: 'month' } : null,
         trial: { eligible_days_total: TRIAL_ELIGIBLE_DAYS, counts: 'eligible trading days' },
+        // Own account, own screen — safe to return in full so the review step can offer
+        // "Resend verification email" without a second round trip (en-1 go-live gate).
+        email: ctx.email,
+        // Display-only (en-6 #128 "Agreements: signer + timestamp") — not part of the
+        // hashed snapshot above, see context.ts's ActivationContext.legalSignedAt.
+        legal_signed_at: ctx.legalSignedAt,
       },
       can_activate: decision.ok,
       blockers: decision.blockers,

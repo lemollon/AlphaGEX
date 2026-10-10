@@ -431,9 +431,9 @@ if PYTEST_AVAILABLE:
         def test_overnight_hybrid_defaults(self, config):
             """Overnight hybrid has correct default values"""
             assert config.use_overnight_hybrid == True
-            assert config.overnight_stop_points == 1.5
-            assert config.overnight_target_points == 3.0
-            assert config.overnight_emergency_stop == 10.0
+            assert config.overnight_stop_points == 1.25
+            assert config.overnight_target_points == 2.0
+            assert config.overnight_emergency_stop == 8.0
 
         def test_signal_generator_accepts_is_overnight(self, signal_generator):
             """Signal generator accepts is_overnight parameter"""

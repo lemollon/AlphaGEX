@@ -330,6 +330,7 @@ export async function POST(
         await dbExecute(
           `UPDATE ${escapeSql('spark')}_paper_account
            SET current_balance = current_balance + $1,
+               high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                cumulative_pnl  = cumulative_pnl + $1,
                buying_power    = buying_power + $1,
                updated_at = NOW()
@@ -340,6 +341,7 @@ export async function POST(
         await dbExecute(
           `UPDATE ${escapeSql('spark')}_paper_account
            SET current_balance = current_balance + $1,
+               high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                cumulative_pnl  = cumulative_pnl + $1,
                buying_power    = buying_power + $1,
                updated_at = NOW()

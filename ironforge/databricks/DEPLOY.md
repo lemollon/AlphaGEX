@@ -1,5 +1,9 @@
 # IronForge Databricks Deployment Guide
 
+> **Retired deployment guide.** Databricks is not the current Spark/Flame runtime. Do not deploy the old 1DTE/2DTE bots from these instructions. Use [September 28 current state](../SPARK_FLAME_CURRENT_STATE_2026-09-28.md) for the Render webapp, 0DTE EBB rules, customer execution and optional features. The original steps below are retained as historical reference.
+
+## Historical content
+
 ## Architecture
 
 ```

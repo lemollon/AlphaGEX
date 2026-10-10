@@ -5,7 +5,20 @@
  *
  * If a field here drifts from the server, the screen renders undefined rather than
  * throwing, so treat every optional as genuinely optional.
+ *
+ * The Community types below (#225) are the exception: they now come from
+ * ironforge/shared/api-types.ts, the one real shared module between this app
+ * and the webapp — see that file's comment for why Community specifically was
+ * the first migration, and tsconfig.json's "paths" / metro.config.js's
+ * watchFolders for how this app resolves it.
  */
+import type {
+  CommunitySenderType,
+  CommunityMessage as SharedCommunityMessage,
+  CommunityFeed as SharedCommunityFeed,
+  ThreadRepliesResponse,
+  BlockedMember as SharedBlockedMember,
+} from '@ironforge/shared/api-types'
 
 export type CustomerStateKey =
   | 'WORKING_WAITING'
@@ -57,6 +70,50 @@ export interface LiveSummary {
   as_of: string
 }
 
+/**
+ * ONE open position. Mirrors LiveOpenPosition in webapp/src/lib/live/types.ts.
+ *
+ * 🚨 There can be more than one. SPARK swings — yesterday's condor is held to expiry
+ * rather than stopped out, so on any day it opens a new trade there are TWO open at
+ * once. The web page had a bug where it described only the newest, so the older leg
+ * with the customer's money in it appeared nowhere; the mobile app inherited that
+ * shape by only ever reading the scalar fields.
+ */
+export interface LiveOpenPosition {
+  position_id: string
+  opened_at: string | null
+  /** "Jul 28", already in CT — do not re-format from opened_at. */
+  opened_date_label: string
+  expires_label: string | null
+  unrealized_pnl: number | null
+  unrealized_pnl_pct: number | null
+  pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /**
+   * Lifecycle line's "Target / Stop" caption — dollar profit at the configured
+   * profit target, dollar loss at the configured stop. `stop_dollars` is null
+   * when the strategy holds to settlement instead of stopping out; render
+   * "hold to close" in that case, never $0.
+   */
+  target_dollars?: number | null
+  stop_dollars?: number | null
+  /** ISO instant of today's EOD auto-close cutoff; null when this position
+   *  doesn't expire today (a swung leg) — render "at close" in that case. */
+  auto_close_at?: string | null
+  /** Opened on an earlier CT date — this is the swung leg. */
+  held_overnight: boolean
+  /** 1 on the day it opened, 2 the next session, and so on. */
+  day_number: number
+  /**
+   * THIS trade's intraday P&L, minute-bucketed — the per-trade chart in UX-002/003.
+   *
+   * Not the same as LiveTrade.spark_series, which sums the agent's whole day across
+   * every open position; with a swung leg open beside today's trade those are two
+   * different curves. Empty until the scanner has recorded marks for the position —
+   * there is nothing to backfill — and gaps are real minutes where the mark failed.
+   */
+  series?: Array<{ timestamp: string; pnl: number }>
+}
+
 export interface LiveTrade {
   active: boolean
   opened_at: string | null
@@ -65,16 +122,84 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Mirrors positions[0] — see LiveOpenPosition. Drives the lifecycle line. */
+  target_dollars?: number | null
+  stop_dollars?: number | null
+  auto_close_at?: string | null
   /** Today's intraday P&L series — the source for the UX-003 chart. */
   spark_series: Array<{ timestamp: string; pnl: number }>
   today_result: { pnl: number; pct: number | null } | null
+  /**
+   * EVERY open position, newest first — the source for UX-002's per-trade rails.
+   *
+   * The scalar fields above describe `positions[0]`. Optional because an installed app
+   * can be older than the API and vice versa; when it is absent the tile falls back to
+   * the single-trade rendering rather than showing nothing.
+   */
+  positions?: LiveOpenPosition[]
 }
 
+/**
+ * Mirrors webapp/src/lib/live/home.ts's getHomeData() return shape exactly —
+ * there is no shared package between the two apps, so this is hand-kept in
+ * sync. It previously wasn't: this declared flat `week_income` while the
+ * route has always returned nested `wealth.weekly_income`, so This
+ * Week/Month/Lifetime rendered "—" forever on the Forge tab. See
+ * src/live/period-stats.test.ts's `satisfies` fixture, checked by
+ * `tsc --noEmit`, for the guard against that drift recurring silently.
+ */
 export interface HomeData {
-  week_income?: number | null
-  month_income?: number | null
-  lifetime_return_pct?: number | null
-  lifetime_income?: number | null
+  wealth: {
+    weekly_income: number | null
+    monthly_income: number | null
+    lifetime_income: number | null
+    lifetime_return_pct: number | null
+  }
+  recent_trades: Array<{
+    closed_at: string
+    strategy: string
+    contract: string
+    premium: number
+    status: string
+  }>
+  yesterday_trades: number
+  as_of: string
+}
+
+/**
+ * GET /api/live/performance — mirrors webapp/src/lib/live/performance.ts's
+ * PerformanceData exactly. Only `equity_curve` and `combined` are read today
+ * (the Forge hero chart's Week/Month/Lifetime source, built from real closed
+ * trades — never a fabricated series); `bots` is kept so the shape matches
+ * the server one-for-one and a later screen can read per-bot curves without
+ * a second hand-mirrored type.
+ */
+export interface LiveEquityPoint {
+  t: string
+  equity: number
+}
+
+export interface LivePerformance {
+  empty?: boolean
+  bots: Array<{
+    bot: string
+    label: string
+    weekly: number
+    monthly: number
+    curve: LiveEquityPoint[]
+  }>
+  combined: {
+    starting_capital: number
+    account_value: number
+    total_pnl: number
+    total_return_pct: number | null
+    win_rate: number | null
+    total_trades: number
+    weekly: number
+    monthly: number
+  }
+  equity_curve: LiveEquityPoint[]
+  as_of: string
 }
 
 export type OutcomeKind = 'profit' | 'auto' | 'stop' | 'manual' | 'expired' | 'other'
@@ -96,20 +221,145 @@ export interface HistoryTrade {
   outcome_kind: OutcomeKind
 }
 
-export interface CommunityMessage {
+// Community wire types now live in ironforge/shared/api-types.ts (#225) — the
+// names below are re-exported unchanged so every existing `@/api/types` import
+// in this app keeps working.
+export type { CommunitySenderType }
+export type CommunityMessage = SharedCommunityMessage
+export type BlockedMember = SharedBlockedMember
+export type CommunityFeed = SharedCommunityFeed
+
+/**
+ * GET /api/brokerage/connections (APP-040/041).
+ *
+ * `broker` is the real institution; `provider` is the aggregator. Label with `broker`
+ * and fall back — see brokerLabel(). `mask` is the ONLY account identifier the server
+ * ever returns; the full number stays in an encrypted column.
+ */
+export interface BrokerageAccount {
   id: string
-  sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
-  message: string
-  created_at: string
-  reactions: Array<{ emoji: string; count: number; mine: boolean }>
+  mask: string | null
+  eligibility: string | null
+  ineligible_reason: string | null
+  buying_power_cents: number | null
 }
 
-export interface CommunityFeed {
-  channels: Array<{ slug: string; name: string }>
-  messages: CommunityMessage[]
-  online_count: number
-  members: Array<{ name: string; you: boolean }>
+export interface BrokerageConnection {
+  id: string
+  provider: string
+  /**
+   * The handle DELETE /api/brokerage/connection requires. Absent from the payload until
+   * the server started returning it, which is why disconnect could not be offered.
+   */
+  authorization_id: string | null
+  broker: string | null
+  status: string
+  connected_on: string
+  last_synced_at: string | null
+  accounts: BrokerageAccount[]
+}
+
+export interface BrokerageConnections {
+  ok: boolean
+  /** false when the customers DB isn't wired — an honest "can't tell", not "none". */
+  configured?: boolean
+  connections: BrokerageConnection[]
+}
+
+/**
+ * Forge agent-card stat row (handoff/ledger-kpis.md PART 2) — Capital,
+ * Growth, Last 10, Best Trade, all LIFETIME (no filter). Cents/percent so the
+ * screen never re-derives money from a float. `null` when the server couldn't
+ * compute it (both the starting-capital and closed-trades queries must
+ * succeed) — the tile shows "—" in that case, never a fabricated number.
+ */
+export interface AgentCardStats {
+  /** Starting capital — unchanged meaning, still the Growth denominator. Rendered as the
+   *  Capital tile's "Started: $X" sub-line, not the tile's headline value anymore. */
+  account_capital_cents: number | null
+  /** The agent's CURRENT live balance — same source as LiveSummary['account'].value (the
+   *  header "Total Account Capital"), so with one agent the two match. This is the Capital
+   *  tile's headline value. `null` when the live-summary half failed — never fabricated. */
+  balance_cents: number | null
+  growth_pct: number | null
+  last10: { wins: number; losses: number }
+  best_trade_cents: number | null
+}
+
+/**
+ * GET /api/live/agents — every agent this viewer owns (UX-002 shows two side by side).
+ *
+ * Replaces composing /api/live/summary + /api/live/trade, which between them could only
+ * ever describe ONE agent. `state` or `trade` may be null for a single agent without the
+ * others failing — the server settles each independently — so every field is optional and
+ * `error` says which half did not load.
+ */
+export interface LiveAgent {
+  bot: string
+  label: string
+  paper: boolean
+  state: CustomerState | null
+  account: LiveSummary['account'] | null
+  trade: LiveTrade | null
+  stats: AgentCardStats | null
+  /** Agent sheet KPI 2x2 grid — null when its source queries failed, absent
+   *  entirely when talking to a server from before this field existed. */
+  kpis?: AgentPeriodKpis | null
+  /** Agent sheet "last 20 trading days" bars — null on a query failure
+   *  (distinct from an empty array, which means no closed trades yet), absent
+   *  entirely against an older server. */
+  daily20?: AgentDailyBar[] | null
+  error: 'state' | 'trade' | null
+}
+
+export interface LiveAgents {
+  empty?: boolean
+  viewer?: LiveSummary['viewer']
+  agents: LiveAgent[]
+  as_of?: string
+}
+
+/** GET /api/billing/membership — APP-038. `membership` is null when there is none. */
+export interface MembershipResponse {
+  ok: boolean
+  configured?: boolean
+  membership: {
+    plan: string
+    status: string
+    badge: string
+    price_monthly: number
+    /** YYYY-MM-DD, or null when Stripe has not written a period end yet. */
+    next_billing_date: string | null
+    bots: string[]
+    /**
+     * Which billing rail wrote this membership (Apple IAP handoff, "Mobile
+     * contract" §4). 'apple' when any live row came from StoreKit; 'stripe' for the
+     * original rail; null only if the server has rows but genuinely can't tell —
+     * treated the same as 'stripe' on iOS (plain sentence, no link).
+     */
+    provider: 'stripe' | 'apple' | null
+    /** db-states "Trial ending ... Banner 1 trading day before trial end" (gap audit
+     *  #212). Absent on older servers — callers must treat missing as false. */
+    trial_ending_soon?: boolean
+  } | null
+}
+
+/** GET /api/billing/payment-method — masked card on file (fidelity audit "Payment
+ *  method row"). `paymentMethod` is null for every normal reason: no card on file,
+ *  billed through Apple instead of Stripe, or billing not provisioned. */
+export interface PaymentMethodResponse {
+  ok: boolean
+  paymentMethod: { brand: string; last4: string } | null
+}
+
+export interface ProfileResponse {
+  ok: boolean
+  profile: {
+    firstName: string
+    lastName: string
+    displayName: string
+    initials: string
+  }
 }
 
 export interface MobileMe {
@@ -127,4 +377,344 @@ export interface MobileMe {
     onboardingStep: string | null
     memberSince: string
   }
+}
+
+/**
+ * Account deletion (GET /api/account/deletion-request).
+ *
+ * `pending` is the authority, not the presence of `requestedAt` — a cancelled request
+ * still has a timestamp, and treating "has a date" as "is deleting" would show a
+ * permanent scare banner to someone who already called it off.
+ */
+export interface DeletionStatusResponse {
+  ok: boolean
+  pending: boolean
+  requestedAt: string | null
+  gracePeriodDays: number
+}
+
+/** POST /api/account/deletion-request. */
+export interface DeletionRequestResponse {
+  ok: boolean
+  alreadyRequested?: boolean
+  requestedAt: string
+  gracePeriodDays: number
+  steps?: Record<string, string>
+}
+
+// ---- WP-B types ----
+
+/** The Ledger KPI strip (completed trades / win rate), over the same filtered
+ *  population as `total` — bot/days/q, ignoring cursor/limit. */
+export interface TradesTotals {
+  completed_trades: number
+  win_rate: number | null
+  /** Sum of realized_pnl over the same filtered population — the Ledger
+   *  redesign's 3-col summary card (Net P&L / Trades / Up%). Optional for
+   *  the same forward/backward-compat reason as other additive fields in
+   *  this file — an installed app can be newer than the API it talks to. */
+  net_pnl?: number
+}
+
+/** Agent sheet KPI 2x2 grid (mobile addendum §2 "Agent sheet") — Today comes
+ *  from the agent's own account.today_pnl (includes an open position's
+ *  unrealized P&L), null only when that half of the server failed. Week and
+ *  Month are calendar CT, matching the Forge tab's own period tiles. */
+export interface AgentPeriodKpis {
+  today: number | null
+  week: number
+  month: number
+  life: number
+}
+
+/** "Last 20 trading days" bar chart (mobile addendum §2 "Agent sheet"),
+ *  oldest to newest. */
+export interface AgentDailyBar {
+  date: string
+  pnl: number
+}
+
+/**
+ * GET /api/live/trades — now cursor-paginated (APP-020). `trades` is still the
+ * top-level array (unchanged shape for anything reading it pre-pagination);
+ * `next_cursor` is opaque and only meaningful passed straight back as `cursor`
+ * on the next request. `total` counts every row matching the current filters.
+ * `totals` is optional for the same forward/backward-compat reason as other
+ * additive fields in this file — an installed app can be older than the API.
+ */
+export interface TradesPageResponse {
+  empty?: boolean
+  viewer?: LiveSummary['viewer']
+  trades: HistoryTrade[]
+  next_cursor: string | null
+  total: number
+  totals?: TradesTotals
+}
+
+export type TradeLegSide = 'buy' | 'sell'
+export type TradeLegRight = 'put' | 'call'
+
+export interface TradeLeg {
+  side: TradeLegSide
+  right: TradeLegRight
+  strike: number
+  expiry: string
+  qty: number
+}
+
+export interface TradeLifecycleEntry {
+  at_ct: string
+  event: string
+  note: string | null
+}
+
+export type ExitReasonCode = 'profit_target' | 'stop_loss' | 'manual_close' | 'expired' | 'auto_close' | 'other'
+
+/**
+ * GET /api/live/trades/:id — trade detail (APP-019/022). Every field is
+ * independently nullable: the server sources each ONLY from a column that
+ * actually exists, so a field with nothing to source it from is null, never
+ * fabricated. `legs`/`lifecycle` are whole-array-or-null rather than an empty
+ * array, so the screen can tell "nothing happened" apart from "not available".
+ */
+export interface TradeDetail {
+  legs: TradeLeg[] | null
+  entry_at_ct: string | null
+  credit: number | null
+  buying_power_used: number | null
+  current_pnl: number | null
+  lifecycle: TradeLifecycleEntry[] | null
+  exit_reason_code: ExitReasonCode | null
+  exit_reason_text: string | null
+  monitoring_message: string | null
+  /**
+   * This trade's own minute-bucketed P&L history, from the same
+   * `{bot}_position_snapshots` rows the OPEN-position chart reads (see
+   * LiveOpenPosition.series) — the trade sheet's sparkline (10.4 design's
+   * closed-trade sheet). `null`/absent/empty all mean the same thing: no
+   * snapshot rows exist for this position (an older trade from before this
+   * table existed, for example) — render no chart rather than a flat line.
+   * Optional for the same forward/backward compatibility reason as every
+   * other optional field on this response.
+   */
+  series?: Array<{ timestamp: string; pnl: number }> | null
+}
+
+export interface TradeDetailResponse {
+  trade: HistoryTrade
+  detail: TradeDetail
+}
+
+// ---- WP-E types ----
+
+/** GET/PUT /api/notifications/preferences (APP-036). */
+export interface NotificationPreferences {
+  trade_opened: boolean
+  trade_closed: boolean
+  trade_approval: boolean
+  brokerage_health: boolean
+  billing: boolean
+  community: boolean
+  show_amounts_on_lockscreen: boolean
+}
+
+export interface NotificationPreferencesResponse {
+  ok: boolean
+  preferences: NotificationPreferences
+}
+
+/** One batched analytics event, as sent to POST /api/v1/analytics/events (APP-048). */
+export interface AnalyticsEvent {
+  event: string
+  props?: Record<string, string | number | boolean | null>
+  ts: number
+  app_version: string
+  platform: string
+}
+
+export interface AnalyticsEventsResponse {
+  ok: boolean
+  accepted: number
+}
+
+// ---- WP-C types ----
+
+/** GET /api/billing/entitlements — bots this customer's membership currently owns. */
+export interface EntitlementsResponse {
+  ok: boolean
+  bots: string[]
+}
+
+/** One row from GET/POST /api/v1/automation/pause. */
+export interface AutomationActivation {
+  activation_id: string
+  agent: string
+  paused: boolean
+  paused_at: string | null
+}
+
+export interface AutomationPauseResponse {
+  ok: boolean
+  updated?: number
+  activations: AutomationActivation[]
+}
+
+/** POST /api/v1/agent-configs — a new draft/valid configuration for one agent. */
+export interface AgentConfigResponse {
+  id: string
+  agent_code: string
+  rule_version: string
+  status: 'draft' | 'valid'
+  limits: { max_deployment_cents: number | null; buying_power_cents: number | null }
+  violations: Array<{ field?: string; message: string }>
+  warnings: Array<{ field?: string; message: string }>
+}
+
+/** One reason POST /api/v1/activations would refuse — see evaluateActivation server-side. */
+export interface ActivationBlocker {
+  code: string
+  message: string
+  field?: string
+  remediable: boolean
+}
+
+/** POST /api/v1/activations/preview — the immutable review snapshot. */
+export interface ActivationPreviewResponse {
+  preview_hash: string
+  expires_in_seconds: number
+  snapshot: {
+    agent: string
+    rule_version: string
+    account_mask: string | null
+    max_deployment_cents: number | null
+    buying_power_cents: number | null
+    legal_versions: Record<string, string> | null
+    plan: { name: string; price_monthly: number; interval: string } | null
+    trial: { eligible_days_total: number; counts: string }
+  }
+  can_activate: boolean
+  blockers: ActivationBlocker[]
+}
+
+/** POST /api/v1/activations — success body. Only ever rendered after a 2xx. */
+export interface ActivationResponse {
+  ok: boolean
+  activation_id: string
+  agent: string
+  account_mask: string | null
+  trial: { status: string; eligible_days_used: number; eligible_days_total: number }
+}
+
+// ---- WP-F types ----
+// CommunityMessageV2/CommunityFeedV2 used to extend the base types above with
+// `reply_count`/`parent_id` locally. Both fields now live on the shared
+// CommunityMessage itself (#225), so these are plain aliases kept only so
+// existing imports of the V2 names keep resolving.
+
+/** A Community post carrying thread data (APP-055) — reply count and, on a reply, its parent. */
+export type CommunityMessageV2 = CommunityMessage
+
+/** GET /api/community/messages?channel=… response, with thread-carrying messages. */
+export type CommunityFeedV2 = CommunityFeed
+
+/** GET /api/community/messages/[id]/replies?cursor&limit — one thread, oldest first. */
+export type ThreadReplies = ThreadRepliesResponse
+
+/** POST /api/community/assist {draft, channel} — AI-assist composer suggestion (APP-031). */
+export interface AssistResponse {
+  ok: true
+  suggestion: string
+}
+
+// ---- EMBER (PR #3177, mirrors webapp's lib/ember-trades.ts) ----
+//
+// EMBER's own trade book, synced in read-only from REFLEX by reflex_sync.py.
+// This is NOT a read of the customer's brokerage account — see
+// EmberWorkspaceClient.tsx on web for the matching copy/reasoning this mobile
+// wiring must stay consistent with.
+
+/** One REFLEX symbol|signal_date slot — may still be open (closed_at null). */
+export interface EmberTradeRow {
+  id: number
+  opened_at: string | null
+  closed_at: string | null
+  symbol: string
+  legs: unknown
+  /** NUMERIC columns come back as strings from pg — parse before formatting. */
+  qty: string | null
+  entry_price: string | null
+  exit_price: string | null
+  pnl: string | null
+  status: string
+  source_ref: string
+}
+
+export interface EmberStatusRow {
+  state: string | null
+  last_heartbeat: string | null
+  open_positions: unknown
+}
+
+/** GET /api/ember/trades — 403 (not 401) when signed in but not entitled. */
+export interface EmberTradesResponse {
+  ok: boolean
+  trades: EmberTradeRow[]
+  error?: string
+}
+
+/** GET /api/ember/status — same 403-not-401 contract as /api/ember/trades. */
+export interface EmberStatusResponse {
+  ok: boolean
+  status: EmberStatusRow | null
+  error?: string
+}
+
+// ---- Notification history (10.4 gap audit) ----
+
+/** Mirrors the webapp's NotificationCategory (lib/push/types.ts) — kept as a plain
+ *  string here rather than a union so an older/newer build never fails to render a
+ *  row whose kind this client doesn't know about yet. */
+export type NotificationKind =
+  | 'trade_opened'
+  | 'trade_closed'
+  | 'trade_approval'
+  | 'brokerage_health'
+  | 'billing'
+  | 'community'
+  | string
+
+/** One row from GET /api/v1/notifications. `data` is the same deep-link payload the
+ *  push itself carried (route/params/amount/trade_id/agent/kind) — see render.ts on
+ *  the server — so a tapped row can reuse routeFor() instead of a second nav table. */
+export interface NotificationItem {
+  id: string
+  kind: NotificationKind
+  title: string
+  body: string
+  data: {
+    trade_id?: string
+    agent?: string
+    kind?: string
+    /** #269: a precomputed in-app href, same priority as trade_id/agent/kind
+     *  below — see routeFor() and render.ts's deriveLink(). */
+    link?: string
+    amount?: number
+    [key: string]: unknown
+  } | null
+  created_at: string
+  read_at: string | null
+}
+
+/** GET /api/v1/notifications — cursor-paginated, newest first. */
+export interface NotificationsPageResponse {
+  ok: true
+  notifications: NotificationItem[]
+  next_cursor: string | null
+  unread_count: number
+}
+
+/** POST /api/v1/notifications/read */
+export interface NotificationsReadResponse {
+  ok: true
+  unread_count: number
 }

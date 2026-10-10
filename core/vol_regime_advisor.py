@@ -5,7 +5,7 @@ Pure functions operate on an injected history DataFrame (columns: vix, vvix,
 vix3m, vix9d) whose LAST row is "today". Live wrapper fetches CBOE data.
 Backtest evidence (hit-rates + timing) is loaded from evidence.json.
 """
-import json, math, os
+import json, math, os, re
 from typing import Dict, Optional
 import numpy as np
 import pandas as pd
@@ -134,26 +134,71 @@ def compute_signals(history: pd.DataFrame) -> Dict[str, dict]:
     }
 
 
+def _horizon_sessions(hz) -> str:
+    """'3d' -> '3 sessions', 'intraday' -> 'the session', None -> '3 sessions'."""
+    if not hz or hz == "intraday":
+        return "the session" if hz == "intraday" else "3 sessions"
+    m = re.match(r"(\d+)d", str(hz))
+    if m:
+        n = int(m.group(1))
+        return "1 session" if n == 1 else f"{n} sessions"
+    return str(hz)
+
+def _direction_phrase(sig: dict) -> str:
+    """Per-episode, next-open evidence for the ONE directional signal, read from the
+    measured numbers when compute_report has attached them (fallback = the 2026-08-12
+    re-measure, so a bare build_recommendation() still tells the truth)."""
+    ex = sig.get("horizon_excess"); t = sig.get("horizon_t"); n = sig.get("n_episodes")
+    hz = _horizon_sessions(sig.get("horizon") or "3d")
+    if isinstance(ex, (int, float)) and isinstance(t, (int, float)) and n:
+        return (f"SPY runs {ex * 100:+.2f}% against its own base over the next ~{hz} "
+                f"(t {t:+.2f}, {n} episodes)")
+    return "SPY runs -0.93% against its own base over the next ~3 sessions (t -3.89, 77 episodes)"
+
+def _tail_phrase(sig: dict, fallback: float) -> str:
+    tail = sig.get("tail_lift_1d")
+    if not isinstance(tail, (int, float)):
+        tail = fallback
+    return f"the next session's move is {tail:.1f}x more likely to exceed 1.5%"
+
 def build_recommendation(signals: Dict[str, dict]) -> dict:
-    """Deterministic precedence -> stance + conviction + rationale."""
+    """Deterministic precedence -> stance + conviction + rationale.
+
+    Precedence follows the 2026-08-12 per-EPISODE, next-OPEN re-measure, not the
+    old per-day averages that inverted the signs:
+      * ts_flattening is the ONE signal with a real direction (SPY -0.93% vs its
+        own base over ~3 sessions, t -3.89, 77 episodes; gone by day 5-10). It is
+        a SHORT, and it outranks the tail signals because a direction is a trade
+        and a tail warning is only a size modifier that rides along in the text.
+      * backwardation (2.0x next-day tail) and exhaustion (3.6x) are NOT
+        directional at any horizon. They are sizing signals: cut short premium,
+        do not pick a side. The old "fade the spike, go long (+0.9%/5d, 64%)"
+        text was the per-day artefact and is retired.
+    """
     def on(k): return signals[k]["active"]
-    if on("backwardation"):
-        return {"stance": "buy_the_bounce", "conviction": "high",
-                "rationale": "Backwardation: spike is present but historically fades (VIX -8%/5d) "
-                             "and SPY recovers (+0.9%/5d). Stress is real — size carefully."}
-    if on("exhaustion"):
-        return {"stance": "buy_the_bounce", "conviction": "medium",
-                "rationale": "Exhaustion: VIX high but VVIX won't confirm — vol fades, SPY bounces."}
     if on("ts_flattening"):
-        # NOT a direction call. Measured 2006-2026 (355 firing days / 132 episodes):
-        # forward VIX is -6.1% at 5d (t=-5.9) and forward SPY is +0.36% (t=+0.74,
-        # indistinguishable from base) — so "buy puts to profit" is refuted twice
-        # over. What DOES hold is a fatter next-day tail (|SPY|>=1.5% on 23.9% of
-        # days vs a 13.4% base = 1.79x), which is a SIZING signal, not a direction.
+        sig = signals["ts_flattening"]
+        hold = _horizon_sessions(sig.get("horizon") or "3d")
+        tail = ""
+        if on("backwardation"):
+            tail = (" VIX is also above VIX3M (backwardation), so "
+                    + _tail_phrase(signals["backwardation"], 2.0)
+                    + " — that argues for a SMALL put, not for skipping it.")
+        return {"stance": "lean_puts", "conviction": "medium",
+                "rationale": "Volatility expansion — go short. Term structure flattening is the one vol "
+                             f"signal with a measured direction: {_direction_phrase(sig)}, fading by day 5. "
+                             f"Buy SPY puts or a put debit spread and be out within ~{hold}." + tail}
+    if on("backwardation"):
+        return {"stance": "reduce_risk", "conviction": "high",
+                "rationale": "Backwardation: VIX above VIX3M. NOT directional at any horizon once measured "
+                             f"against SPY's own drift; the content is the TAIL — "
+                             f"{_tail_phrase(signals['backwardation'], 2.0)}. Cut short-premium size; "
+                             "do not pick a side."}
+    if on("exhaustion"):
         return {"stance": "reduce_risk", "conviction": "medium",
-                "rationale": "Term structure flattening — next-day moves run ~1.8x fatter than base, so "
-                             "short premium is the exposure to cut. This is NOT a directional call: "
-                             "historically VIX falls (-6.1%/5d) and SPY is flat after it fires."}
+                "rationale": "Exhaustion: VIX at a 10-day high without VVIX confirming. NOT directional, "
+                             f"but {_tail_phrase(signals['exhaustion'], 3.6)}. Cut short-premium size; "
+                             "do not bet the bounce."}
     if on("double_floor"):
         return {"stance": "neutral", "conviction": "low",
                 "rationale": "Floor/complacent — vol is cheap and drifts up slowly; favor owning optionality."}
@@ -168,7 +213,9 @@ def _regime_label(signals: Dict[str, dict]) -> str:
     return "contango_calm"
 
 def _primary_signal(signals: Dict[str, dict]) -> Optional[str]:
-    for k in ("backwardation", "exhaustion", "ts_flattening", "double_floor"):
+    # Same precedence as build_recommendation: the directional signal first, so
+    # timing/DTE/outlook describe the trade the action actually recommends.
+    for k in ("ts_flattening", "backwardation", "exhaustion", "double_floor"):
         if signals[k]["active"]: return k
     return None
 
@@ -209,6 +256,25 @@ def _evidence_note(ev_k: dict) -> str:
 
 
 def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dict:
+    # Attach the measured evidence to each signal FIRST so the recommendation and
+    # action text read the numbers instead of restating stale copies of them.
+    for k, s in signals.items():
+        ev_k = (evidence.get("signals", {}) or {}).get(k, {})
+        s["hit_rate"] = ev_k.get("hit_rate")
+        # Horizon + direction come FROM the measured evidence, never hardcoded.
+        # The hardcoded strings drifted twice: ts_flattening shipped "buy puts"
+        # against its own evidence, and then shipped a "~1.8x fatter next-day
+        # move" that belongs to 2-3 SESSIONS (next-day lift is 1.08). Reading the
+        # numbers means a re-measure updates the UI instead of silently
+        # disagreeing with it.
+        s["horizon"] = ev_k.get("best_horizon")
+        s["horizon_excess"] = ev_k.get("best_horizon_excess")
+        s["horizon_t"] = ev_k.get("best_horizon_t")
+        s["is_directional"] = ev_k.get("directional")
+        h1 = (ev_k.get("horizons") or {}).get("1d") or {}
+        s["tail_lift_1d"] = h1.get("tail_lift")
+        s["n_episodes"] = ev_k.get("n_episodes_gap5")
+        s["evidence_note"] = _evidence_note(ev_k)
     rec = build_recommendation(signals)
     primary = _primary_signal(signals)
     ev_sig = (evidence.get("signals", {}) or {}).get(primary, {}) if primary else {}
@@ -228,24 +294,13 @@ def compute_report(signals: Dict[str, dict], curve: dict, evidence: dict) -> dic
         "hit_rate": ev_sig.get("hit_rate"),
         "sample_n": ev_sig.get("n"),
     }
-    # attach per-signal hit_rate for the signals panel
+    # Per-signal action, so an alert for signal X carries X's own advice. The
+    # scanner used to staple the REPORT-level headline onto every alert, which
+    # is how a bearish ts_flattening early warning went out reading "Fade the
+    # spike — go long" (backwardation's old headline) on 2026-09-03.
     for k, s in signals.items():
         ev_k = (evidence.get("signals", {}) or {}).get(k, {})
-        s["hit_rate"] = ev_k.get("hit_rate")
-        # Horizon + direction come FROM the measured evidence, never hardcoded.
-        # The hardcoded strings drifted twice: ts_flattening shipped "buy puts"
-        # against its own evidence, and then shipped a "~1.8x fatter next-day
-        # move" that belongs to 2-3 SESSIONS (next-day lift is 1.08). Reading the
-        # numbers means a re-measure updates the UI instead of silently
-        # disagreeing with it.
-        s["horizon"] = ev_k.get("best_horizon")
-        s["horizon_excess"] = ev_k.get("best_horizon_excess")
-        s["horizon_t"] = ev_k.get("best_horizon_t")
-        s["is_directional"] = ev_k.get("directional")
-        h1 = (ev_k.get("horizons") or {}).get("1d") or {}
-        s["tail_lift_1d"] = h1.get("tail_lift")
-        s["n_episodes"] = ev_k.get("n_episodes_gap5")
-        s["evidence_note"] = _evidence_note(ev_k)
+        s["action"] = _signal_action(k, signals, ev_k.get("suggested_dte"), curve)
     return {
         "regime_label": _regime_label(signals),
         "recommendation": rec,
@@ -389,6 +444,66 @@ def _watch_line(signals: Dict[str, dict], dte_txt: str) -> Optional[str]:
                 f"If it fires, buy SPY calls or a call debit spread {dte_txt}.")
     return None
 
+SHORT_HEADLINE = "Volatility expansion — go short"
+CUT_SIZE_HEADLINE = "Vol spike — cut short-premium size, no direction"
+
+def _short_action(signals: Dict[str, dict], dte_txt: str, curve: dict) -> dict:
+    """ts_flattening: the one directional vol signal. A SHORT with a short clock."""
+    vix = curve.get("vix")
+    sig = signals.get("ts_flattening", {}) or {}
+    bw = (signals.get("backwardation", {}) or {}).get("active")
+    hold = _horizon_sessions(sig.get("horizon") or "3d")
+    watch = _watch_line(signals, dte_txt)
+    put_note = ("VIX is elevated, so use a put DEBIT SPREAD (buy 1 ATM, sell 1 OTM) rather than naked "
+                "long puts — it blunts the IV crush if vol snaps back."
+                if (_num(vix) >= 22) else "Long puts or a put debit spread both work here — puts are still cheap at this VIX.")
+    tail_note = ""
+    if bw:
+        tail_note = (" VIX is also above VIX3M (backwardation), so "
+                     + _tail_phrase(signals["backwardation"], 2.0)
+                     + " — that argues for a SMALL put, not for skipping it.")
+    plain = (f"Volatility is expanding — the term structure is flattening out of contango"
+             f"{', and the curve has inverted' if bw else ''}. This is the one vol signal with a measured "
+             f"direction: {_direction_phrase(sig)}, and the edge is gone by day 5, so it is a SHORT trade "
+             f"with a short clock. Go short: buy SPY puts or a put debit spread {dte_txt} and take it off "
+             f"within ~{hold} — do not hold it for a week. Do NOT sell premium into this.{tail_note} {put_note}")
+    return {
+        "headline": SHORT_HEADLINE,
+        "do": f"Buy SPY puts or a put debit spread; exit within ~{hold}",
+        "dte_text": dte_txt,
+        "plain": plain,
+        "watch": watch,
+    }
+
+def _cut_size_action(key: str, signals: Dict[str, dict], dte_txt: str, curve: dict) -> dict:
+    """backwardation / exhaustion: NOT directional. The content is the next-day tail."""
+    sig = signals.get(key, {}) or {}
+    watch = _watch_line(signals, dte_txt)
+    fallback = 2.0 if key == "backwardation" else 3.6
+    cause = ("VIX is above VIX3M — the curve has inverted" if key == "backwardation"
+             else "VIX is at a 10-day high but VVIX will not confirm it")
+    plain = (f"{cause}. This is a TAIL signal, not a direction: measured per episode from the next open, "
+             f"SPY shows no edge either way, but {_tail_phrase(sig, fallback)}. The exposure to cut is "
+             f"SHORT PREMIUM — trim or skip iron condors and credit spreads, or widen wings. Do NOT buy "
+             f"calls to fade the spike and do NOT buy puts to chase it; if you stay short premium, hedge "
+             f"the tail rather than betting on direction.")
+    return {
+        "headline": CUT_SIZE_HEADLINE,
+        "do": "Trim/skip iron condors and credit spreads; hedge the tail if you stay short premium",
+        "dte_text": dte_txt,
+        "plain": plain,
+        "watch": watch,
+    }
+
+def _signal_action(key: str, signals: Dict[str, dict], dte, curve: dict) -> Optional[dict]:
+    """The advice that belongs to ONE signal, for alerts about that signal."""
+    dte_txt = f"~{dte} DTE" if dte else "~2 weeks out (10–14 DTE)"
+    if key == "ts_flattening":
+        return _short_action(signals, dte_txt, curve)
+    if key in ("backwardation", "exhaustion"):
+        return _cut_size_action(key, signals, dte_txt, curve)
+    return None
+
 def _build_action(signals: Dict[str, dict], recommendation: dict, timing: dict, curve: dict) -> dict:
     """Blunt, plain-English 'what to do' — the advice layer. NOT financial advice,
     but no hedging: it states a concrete trade, structure, DTE, and what to watch."""
@@ -397,42 +512,23 @@ def _build_action(signals: Dict[str, dict], recommendation: dict, timing: dict, 
     dte = timing.get("suggested_dte")
     dte_txt = f"~{dte} DTE" if dte else "~2 weeks out (10–14 DTE)"
     watch = _watch_line(signals, dte_txt)
-    iv_note = ("VIX is elevated, so use a call DEBIT SPREAD (buy 1 ATM, sell 1 OTM) rather than naked "
-               "long calls — it blunts the IV crush when vol falls."
-               if (_num(vix) >= 22) else "Long calls or a call debit spread both work here.")
 
+    if stance == "lean_puts":
+        return _short_action(signals, dte_txt, curve)
     if stance == "reduce_risk":
-        return {
-            "headline": "Cut short-premium size — no directional trade",
-            "do": "Trim/skip iron condors and credit spreads; hedge the tail if you stay short premium",
-            "dte_text": dte_txt,
-            "plain": ("The VIX curve is flattening out of contango. Next-day moves run about 1.8x fatter than "
-                      "normal (|SPY| >= 1.5% on 23.9% of days vs a 13.4% base), so the exposure to cut is "
-                      "SHORT PREMIUM — trim or skip iron condors and credit spreads, or widen wings. "
-                      "Do NOT buy puts as a profit trade on this signal: over 2009-2026 VIX FELL 6.1% in the "
-                      "five days after it fired and SPY was flat, so long downside has been a losing bet here. "
-                      "If you stay short premium, hedge the tail rather than betting on direction."),
-            "watch": watch,
-        }
+        key = "backwardation" if (signals.get("backwardation", {}) or {}).get("active") else "exhaustion"
+        return _cut_size_action(key, signals, dte_txt, curve)
     if stance in ("buy_the_bounce", "lean_calls"):
-        if signals["backwardation"]["active"]:
-            return {
-                "headline": "Fade the spike — go long, size small",
-                "do": "Buy SPY calls or a call debit spread (small size)",
-                "dte_text": dte_txt,
-                "plain": (f"The curve is in backwardation — historically the spike is near its peak and vol fades "
-                          f"while SPY recovers (+0.9%/5d, 64% hit). Go long: buy SPY calls or a call debit spread "
-                          f"{dte_txt}, but keep size SMALL — the stress is real and you can't pick the exact bottom. "
-                          f"Do NOT sell premium into this. {iv_note}"),
-                "watch": watch,
-            }
+        # No live signal emits this any more (no vol signal measured bullish), but
+        # the stance stays valid for the UI type and any future re-measure.
+        iv_note = ("VIX is elevated, so use a call DEBIT SPREAD (buy 1 ATM, sell 1 OTM) rather than naked "
+                   "long calls — it blunts the IV crush when vol falls."
+                   if (_num(vix) >= 22) else "Long calls or a call debit spread both work here.")
         return {
             "headline": "Buy the bounce — go long",
             "do": "Buy SPY calls or a call debit spread",
             "dte_text": dte_txt,
-            "plain": (f"VIX is high but VVIX won't confirm the move — a classic exhaustion. Vol tends to fade and "
-                      f"SPY bounces over the next few days (67% hit). Buy SPY calls or a call debit spread {dte_txt}. "
-                      f"{iv_note}"),
+            "plain": f"Buy SPY calls or a call debit spread {dte_txt}. {iv_note}",
             "watch": watch,
         }
     # neutral / calm
@@ -458,24 +554,28 @@ def _fmt(x, d=1):
 def _summary(signals: Dict[str, dict], curve: dict) -> str:
     """Always-present plain-English read of the current regime + what to watch."""
     vix, vix3m, vvix = curve.get("vix"), curve.get("vix3m"), curve.get("vvix")
+    if signals["ts_flattening"]["active"]:
+        bw = signals["backwardation"]["active"]
+        return ("Volatility expansion — the term structure is flattening out of contango"
+                f"{f' and VIX ({_fmt(vix)}) is above VIX3M ({_fmt(vix3m)})' if bw else ''}. "
+                "This is the one vol signal with a measured direction: SPY drifts lower for about 3 sessions, "
+                "so the lean is short / puts, and the edge is gone within a week."
+                + (" The inverted curve adds a fat next-day tail, so keep the put small." if bw else ""))
     if signals["backwardation"]["active"]:
         return (f"Stress is here — VIX ({_fmt(vix)}) is above VIX3M ({_fmt(vix3m)}), a backwardated curve. "
-                "Historically vol fades and SPY recovers from here, so the bias is contrarian-bullish — "
-                "but the spike is real, so size carefully.")
+                "Measured per episode this is NOT a direction: SPY shows no edge either way, but the "
+                "next-day move is about 2x more likely to exceed 1.5%. Cut short-premium size; don't pick a side.")
     if signals["exhaustion"]["active"]:
-        return ("VIX is elevated but VVIX won't confirm the move — a classic exhaustion setup. "
-                "Vol tends to fade and SPY bounce over the next few days; the lean is long / calls.")
-    if signals["ts_flattening"]["active"]:
-        return ("The term structure is flattening out of contango — next-day moves have historically run about "
-                "1.8x fatter than normal, so trim short-premium risk. This is a tail warning, not a direction "
-                "call: VIX has actually fallen (-6.1% over 5 days) after this fires, so don't buy puts to profit.")
+        return ("VIX is at a 10-day high but VVIX won't confirm the move. Measured per episode this is NOT "
+                "a bounce signal — SPY shows no edge either way — but the next-day tail is about 3.6x base. "
+                "Cut short-premium size; don't bet the bounce.")
     if signals["double_floor"]["active"]:
         return (f"Both VIX ({_fmt(vix)}) and VVIX ({_fmt(vvix, 0)}) are pinned at the floor — a complacent tape. "
                 "Vol is cheap and tends to drift up slowly; owning optionality is favored, but there's no urgent "
                 "directional edge.")
     return (f"Volatility is calm and in contango (VIX {_fmt(vix)} < VIX3M {_fmt(vix3m)}). "
-            "No high-confidence signal is active — a premium-selling regime. Watch for VIX rising above VIX3M "
-            "(bearish flip / buy puts) or a VIX spike that VVIX won't confirm (bullish exhaustion / buy the bounce).")
+            "No high-confidence signal is active — a premium-selling regime. Watch for the VIX/VIX3M ratio "
+            "climbing toward 0.95 (volatility expansion / go short) or VIX crossing above VIX3M (fat tail / cut size).")
 
 def build_series(history: pd.DataFrame, n: int = 90) -> list:
     """Last n trading days of normalized VIX/VVIX for the overlay chart."""
@@ -495,6 +595,10 @@ def build_series(history: pd.DataFrame, n: int = 90) -> list:
 def _structure_note(stance: str, vix: Optional[float]) -> str:
     if stance in ("buy_the_bounce", "lean_calls") and vix and vix >= 22:
         return "VIX is elevated — long single calls face IV crush; a call debit spread or shorter DTE fits better."
+    if stance == "lean_puts":
+        if vix and vix >= 22:
+            return "VIX is elevated — long single puts face IV crush if vol snaps back; a put debit spread fits better."
+        return "Puts are still cheap at this VIX — long puts or a put debit spread; the hold is ~3 sessions, so mind theta."
     if stance == "reduce_risk":
         return ("Sizing note, not a structure note: the edge here is carrying LESS short premium, "
                 "not putting on a new position.")

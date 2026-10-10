@@ -1,0 +1,310 @@
+/**
+ * EBB contract-count ladder — SPARK (AM 10:05) and FLAME (PM 13:05).
+ *
+ * THE RULE (Leron, 2026-09-04): the ladder is CONTRACT COUNT, never wing width.
+ * Each bot's structure is fixed in botStructure() (SPARK spot-$2/$5, FLAME
+ * spot-$1/$2). Account size changes ONLY how many lots run.
+ *
+ * WHY THESE RUNGS — measured, 2026-08-27 (`2026-08-27-flame-spark-spec-and-sizing.md`,
+ * scripts scratchpad/ladder_survivors.py + deposit_ladder.py; 1 lot, net $0.70,
+ * 2022-11-02 -> 2026-08-26, SPY expiry NBBO):
+ *
+ *   - Every EQUITY-keyed rule failed a 35%-of-account drawdown ceiling in at
+ *     least one of three windows (full / 2025+ / 2026 YTD): either it breached
+ *     once the account had grown, or on a fresh account it never left 1 lot.
+ *   - The survivor keys on FUNDED CAPITAL (the ledger's starting_capital) and
+ *     never re-reads equity. It is one ratio per bot, so every rung carries
+ *     the same drawdown:
+ *         FLAME  1 lot per $1,500 funded  -> 14.1 / 19.5 / 20.4 % DD, worst day -12.3%
+ *         SPARK  1 lot per $5,000 funded  -> 11.8 / 23.2 / 23.1 % DD, worst day  -8.3%
+ *     SPARK 2 lots at $5,000 breaches (40.3% in 2025+). FLAME tolerates ~17%
+ *     max-loss exposure, SPARK only ~9% (ret/DD 1.87 vs 4.90).
+ *
+ * ROUNDING (Leron 2026-09-04): per-lot risk is not a round number, so the
+ * count is ALWAYS floor()ed to whole contracts, never rounded up. $8,000 SPARK
+ * is 1 lot, not 2. Below one rung the bot gets ZERO lots for that account —
+ * the caller must skip, never fall back to 1.
+ *
+ * WHAT THE LADDER KEYS ON (ADR 0013, 2026-09-04): the HIGH-WATER equity of the
+ * ledger, max(starting_capital, high_water_balance). It ratchets UP as the
+ * account grows and NEVER down — sizing down in a drawdown was measured on
+ * 2026-08-27 at $258/yr with a 54% drawdown (the de-lever rule). Never size
+ * from current_balance alone. `ebbLadderCapital()` is the one place that
+ * combines the two fields; both money paths go through it.
+ *
+ * THE CAP IS A LIQUIDITY GUARD, NOT A RISK KNOB (ADR 0013, backtest
+ * `2026-09-04-uncapped-ladder-backtest.md`, high-water ladder at these rungs,
+ * cap 5 / 10 / 20 / none, 2022-11 -> 2026-09, fresh account in each of three
+ * windows): NO cap ever breached the 35% drawdown ceiling — worst FLAME 32.5%,
+ * SPARK 29.3%, uncapped. Drawdown is bounded by the RUNG, not the cap. Leron
+ * 2026-09-04: "the app is live, the time for 5 max is over" and "we are
+ * expecting to get 100k accounts maybe more" ($100k = 20 SPARK lots / 66 FLAME
+ * lots). So:
+ *   - EBB_LADDER_CAP is 100: a static safety ceiling only, never the
+ *     working limit.
+ *   - The working limit is the LIQUIDITY check at entry: lots <= 25% of the
+ *     displayed bid size of the put being SOLD (the live quote at the short
+ *     strike). Fills above ~10 lots were never measured in the backtest (it
+ *     fills every lot at NBBO with zero impact), so the book depth at entry is
+ *     what makes size honest. `liquidityCappedLots()` does that; when the
+ *     size is unavailable or 0 the count falls back to the ladder under the
+ *     static cap and the caller logs liquidity=UNKNOWN.
+ *
+ * Changing any number here is a real-money risk change. `ebb-sizing.test.ts`
+ * pins the rungs, the cap, the ratchet, the liquidity share and the rounding.
+ */
+
+export const FLAME_RUNG_USD = 1500
+export const SPARK_RUNG_USD = 5000
+/** Static safety ceiling per bot per account. NOT the working limit — see header. */
+export const EBB_LADDER_CAP = 100
+/** Share of the displayed bid size at the short strike a single entry may take. */
+export const EBB_LIQUIDITY_SHARE = 0.25
+/** Lots allowed when the short-strike bid size is UNKNOWN: fail safe to 1, never the blind ladder. */
+export const EBB_UNKNOWN_LIQUIDITY_LOTS = 1
+
+export type EbbBot = 'spark' | 'flame'
+
+export function isEbbLadderBot(name: string | undefined | null): name is EbbBot {
+  return name === 'spark' || name === 'flame'
+}
+
+export function ebbRungUsd(bot: EbbBot): number {
+  return bot === 'spark' ? SPARK_RUNG_USD : FLAME_RUNG_USD
+}
+
+function positiveOrNull(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/**
+ * The capital the ladder keys on: max(starting_capital, high_water_balance).
+ *
+ * - starting_capital is the funded seed (real broker equity at enrolment).
+ * - high_water_balance is the ledger's peak current_balance, maintained with
+ *   GREATEST() at every balance write, so it can only ratchet up.
+ * - A missing / invalid high-water (pre-migration row, NULL, 0) means
+ *   starting_capital alone; a missing starting_capital with a valid high-water
+ *   keys on the high-water. Neither valid -> null, and the caller must SKIP.
+ *
+ * Never pass current_balance here. It is deliberately not an input.
+ */
+export function ebbLadderCapital(
+  startingCapital: number | null | undefined,
+  highWaterBalance: number | null | undefined,
+): number | null {
+  const s = positiveOrNull(startingCapital)
+  const h = positiveOrNull(highWaterBalance)
+  if (s === null && h === null) return null
+  return Math.max(s ?? 0, h ?? 0)
+}
+
+/**
+ * Contracts per trade for `bot` on an account whose ladder capital (see
+ * ebbLadderCapital) is `ladderCapital`.
+ * Returns 0 (not 1) when the account is below one rung or the input is
+ * missing/invalid — a 0 means "do not trade this account", never "guess".
+ */
+export function ebbLadderContracts(bot: EbbBot, ladderCapital: number | null | undefined): number {
+  if (typeof ladderCapital !== 'number' || !Number.isFinite(ladderCapital) || ladderCapital <= 0) return 0
+  const lots = Math.floor(ladderCapital / ebbRungUsd(bot))
+  return Math.max(0, Math.min(EBB_LADDER_CAP, lots))
+}
+
+export type EbbLiquidityStatus = 'ok' | 'capped' | 'unknown'
+
+export interface EbbLiquidityResult {
+  /** Lots to trade after the liquidity check. */
+  lots: number
+  /** 'ok' = ladder fit inside the share; 'capped' = the book was thinner than the ladder; 'unknown' = no size. */
+  liquidity: EbbLiquidityStatus
+  /** floor(share * displayedSize), or null when the size was unknown. */
+  maxLots: number | null
+  /** The displayed size the decision used (null when unknown). */
+  displayedSize: number | null
+}
+
+/**
+ * Liquidity check at entry (ADR 0013): lots = min(ladderLots, floor(share × displayedSize)).
+ *
+ * `displayedSize` is the bid size of the put being SOLD, from the live quote at
+ * the moment of entry. Unavailable (null/undefined/NaN/negative) or ZERO size
+ * is UNKNOWN — a quote with no size tells us nothing about the book. The count
+ * then FAILS SAFE to EBB_UNKNOWN_LIQUIDITY_LOTS (1 lot, the size the backtest
+ * engine is honest to) and the caller must log liquidity=UNKNOWN. It does NOT
+ * zero the trade, and it never sizes the full ladder blind (2026-09-08: before
+ * this, UNKNOWN passed the whole ladder through and the 25% guard was inert
+ * exactly when the book could not be seen).
+ *
+ * A real but tiny size (1-3 contracts at 25%) floors to 0 lots: the book
+ * cannot absorb even one lot inside the share, so the caller skips. That is
+ * the rule binding, not a fallback.
+ *
+ * Ladder lots <= 0 stay 0 regardless of the book.
+ */
+export function liquidityCappedLots(
+  ladderLots: number,
+  displayedSize: number | null | undefined,
+  share: number = EBB_LIQUIDITY_SHARE,
+): EbbLiquidityResult {
+  const ladder = Number.isFinite(ladderLots) && ladderLots > 0
+    ? Math.min(EBB_LADDER_CAP, Math.floor(ladderLots))
+    : 0
+  const size = positiveOrNull(displayedSize)
+  if (size === null || !(share > 0)) {
+    const lots = Math.min(ladder, EBB_UNKNOWN_LIQUIDITY_LOTS)
+    return { lots, liquidity: 'unknown', maxLots: EBB_UNKNOWN_LIQUIDITY_LOTS, displayedSize: null }
+  }
+  const maxLots = Math.floor(share * size)
+  const lots = Math.max(0, Math.min(ladder, maxLots))
+  return {
+    lots,
+    liquidity: lots < ladder ? 'capped' : 'ok',
+    maxLots,
+    displayedSize: size,
+  }
+}
+
+/**
+ * EBB_FAVORABLE_UPSIZE — off|on, unset = off (Leron, 2026-09-26, "Yes" to
+ * "Build both into the bots..."). On a day EBB trades FLAME, add +1
+ * contract on top of the count ladder's contracts for that account when
+ * the prior session's VIX ratio (the SAME ratio FLAME's own VIX decay gate
+ * computes — prior VIX close / max VIX close of the 20 sessions before) is
+ * <= EBB_UPSIZE_VIX_RATIO_CEILING. Gated per-account by
+ * evaluateEbbUpsizeCushion below — a loss on the extra lot may only eat
+ * into profit already banked, never the funded floor. Fails CLOSED on any
+ * unrecognized value; the two money paths (scanner.ts paper ledger,
+ * tradier.ts production ladder) each call this and apply the gate
+ * INDEPENDENTLY per account.
+ */
+export function isEbbFavorableUpsizeMode(): boolean {
+  return (process.env.EBB_FAVORABLE_UPSIZE ?? '').trim().toLowerCase() === 'on'
+}
+
+/** Prior-session VIX ratio ceiling for the EBB favorable-day upsize — <=, not <. */
+export const EBB_UPSIZE_VIX_RATIO_CEILING = 0.70
+
+/** True when `ratio` clears the favorable-day ceiling. A null/non-finite ratio is never favorable. */
+export function isEbbFavorableVixDay(
+  ratio: number | null,
+  ceiling: number = EBB_UPSIZE_VIX_RATIO_CEILING,
+): boolean {
+  return ratio != null && Number.isFinite(ratio) && ratio <= ceiling
+}
+
+/** Round-trip commission for the extra 2-leg spread contract — $0.70/leg, matching FLINT_COMMISSION_PER_CONTRACT. */
+export const EBB_UPSIZE_COMMISSION_PER_CONTRACT = 1.40
+
+/** Worst-case dollar loss of the ONE extra contract the favorable-day upsize would add. */
+export function ebbUpsizeExtraContractMaxLoss(width: number, credit: number): number {
+  return (width - credit) * 100 + EBB_UPSIZE_COMMISSION_PER_CONTRACT
+}
+
+export interface EbbUpsizeGateResult {
+  eligible: boolean
+  /** equity - floor, rounded to cents. null when equity or floor could not be read. */
+  cushion: number | null
+  /** null when eligible; otherwise the exact skip-reason string to log. */
+  reason: string | null
+}
+
+/**
+ * House-money gate for the EBB favorable-day extra contract — the extra lot
+ * fires only if `equity - floor` (that account's profit above its funded
+ * seed) covers the extra lot's own max loss. Same shape as FLINT's rule R1
+ * (evaluateFlintProfitGate in flint.ts), reimplemented here rather than
+ * imported so ebb-sizing.ts never depends on flint.ts (flint.ts documents
+ * itself as never reading FLAME's put-side state; importing it from here
+ * would be the same coupling from the other direction). `equity`/`floor`
+ * unreadable (null) fails CLOSED — never guesses on a real-money gate.
+ */
+export function evaluateEbbUpsizeCushion(
+  equity: number | null,
+  floor: number | null,
+  extraMaxLoss: number,
+): EbbUpsizeGateResult {
+  if (equity == null || floor == null) {
+    return { eligible: false, cushion: null, reason: 'skip:ebb_upsize_cushion(unreadable)' }
+  }
+  const cushion = Math.round((equity - floor) * 100) / 100
+  if (cushion < extraMaxLoss) {
+    return {
+      eligible: false,
+      cushion,
+      reason: `skip:ebb_upsize_cushion(cushion=$${cushion.toFixed(2)}<maxloss=$${extraMaxLoss.toFixed(2)})`,
+    }
+  }
+  return { eligible: true, cushion, reason: null }
+}
+
+/**
+ * EBB_CUSTOMER_LADDER — equity|profit, unset = equity (Leron, 2026-09-26,
+ * approved in the main conversation, then scope-corrected same day: "the
+ * profit ladder for FLAME's customer accounts only... SPARK customer sizing
+ * must stay exactly as before regardless of the flag"). Applies ONLY to
+ * FLAME's customer (sandbox mirror) accounts — tradier.ts gates the branch
+ * on a literal `botName === 'flame'` check, so a SPARK sandbox account
+ * NEVER reaches the profit ladder no matter what this flag says. FLAME's
+ * own PRODUCTION account (6YB71371) also keeps today's equity ladder
+ * (ebbLadderContracts/ebbLadderCapital above) regardless of this flag —
+ * tradier.ts's production branch never reads it either. Unset or any
+ * unrecognized value resolves to 'equity', which leaves every sandbox
+ * account (FLAME or SPARK) on the pre-2026-09-26 mirror (paperContracts,
+ * capped by that account's own BP) — byte-for-byte unchanged.
+ */
+export function ebbCustomerLadderMode(): 'equity' | 'profit' {
+  return (process.env.EBB_CUSTOMER_LADDER ?? '').trim().toLowerCase() === 'profit' ? 'profit' : 'equity'
+}
+
+/**
+ * The PROFIT LADDER contract count under EBB_CUSTOMER_LADDER=profit for a
+ * FLAME customer (sandbox) account — the math is generic (bot-parameterized
+ * rung), but tradier.ts calls it for FLAME only; see ebbCustomerLadderMode
+ * above for the scope restriction:
+ *
+ *   contracts = floor(floor_amount / rung) + floor(peak_profit / rung)
+ *
+ * `floor_amount` is THIS account's own FLINT floor (flint_account_floor,
+ * seeded once from its first-read equity, never moved — see
+ * getOrSeedFlintAccountFloor in tradier.ts) and `peak_profit` is
+ * max(0, high-water equity − floor_amount): profit banked ABOVE the floor,
+ * at the account's own running peak, never its live/current equity (a
+ * drawdown must not shrink the lot count — the same ratchet discipline as
+ * ebbLadderCapital's high-water). `rung` is per-bot (ebbRungUsd): $1,500
+ * for FLAME, $5,000 for SPARK. Same static cap (EBB_LADDER_CAP=100) and the
+ * same floor()-never-round rule as the production ladder. A missing/invalid
+ * floor is 0 lots — the caller must skip, never guess.
+ */
+export function ebbProfitLadderContracts(
+  bot: EbbBot,
+  floorAmount: number | null | undefined,
+  peakProfit: number | null | undefined,
+): number {
+  const f = positiveOrNull(floorAmount)
+  if (f === null) return 0
+  const p = typeof peakProfit === 'number' && Number.isFinite(peakProfit) && peakProfit > 0 ? peakProfit : 0
+  const rung = ebbRungUsd(bot)
+  const lots = Math.floor(f / rung) + Math.floor(p / rung)
+  return Math.max(0, Math.min(EBB_LADDER_CAP, lots))
+}
+
+/** One-line audit of a sizing decision — both money paths print this. */
+export function formatEbbSizingLine(args: {
+  funded: number | null
+  highWater: number | null
+  rung: number
+  ladderLots: number
+  liq: EbbLiquidityResult
+  finalLots: number
+}): string {
+  const usd = (v: number | null) => (v === null ? 'NONE' : '$' + v.toFixed(0))
+  return (
+    `funded=${usd(args.funded)} high_water=${usd(args.highWater)} ` +
+    `ladder_capital=${usd(ebbLadderCapital(args.funded, args.highWater))} rung=$${args.rung} ` +
+    `ladder_lots=${args.ladderLots} displayed_size=${args.liq.displayedSize ?? 'UNKNOWN'} ` +
+    `liquidity=${args.liq.liquidity.toUpperCase()} liquidity_capped_lots=${args.liq.lots} ` +
+    `final_lots=${args.finalLots}`
+  )
+}

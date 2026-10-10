@@ -12,8 +12,7 @@
  * silent divergence between the two paths is about the worst drift this codebase could
  * carry. One definition now; both paths import it.
  *
- * Applies to the SPARK v2 bots (spark, spark2). Raising either number is a real-money
- * risk change.
+ * Applies to SPARK. Raising either number is a real-money risk change.
  */
 
 /** Positive net GEX. */
@@ -37,5 +36,5 @@ export function sparkRegimeBpCap(posGamma: boolean): number {
 
 /** Bots on the v2 regime-sizing path. Mirrors isSparkV2Sizing() in scanner.ts. */
 export function isSparkV2SizingBot(name: string): boolean {
-  return name === 'spark' || name === 'spark2'
+  return name === 'spark'
 }

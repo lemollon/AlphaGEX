@@ -23,6 +23,11 @@ from trading.valor.models import (
 from trading.valor.signals import ValorSignalGenerator
 
 
+@pytest.fixture(autouse=True)
+def disable_ab_test(monkeypatch):
+    monkeypatch.setattr("trading.valor.signals.is_ab_test_enabled", lambda: False)
+
+
 class TestOvernightHybridConfig:
     """Test overnight hybrid strategy configuration parameters."""
 
@@ -38,9 +43,9 @@ class TestOvernightHybridConfig:
 
         # Check default values
         assert config.use_overnight_hybrid == True
-        assert config.overnight_stop_points == 1.5
-        assert config.overnight_target_points == 3.0
-        assert config.overnight_emergency_stop == 10.0
+        assert config.overnight_stop_points == 1.25
+        assert config.overnight_target_points == 2.0
+        assert config.overnight_emergency_stop == 8.0
 
     def test_config_rth_params_unchanged(self):
         """RTH parameters should remain at their original values."""
@@ -90,6 +95,7 @@ class TestSignalGeneratorOvernightHybrid:
     def base_signal(self):
         """Create a base signal for testing."""
         return FuturesSignal(
+            ticker="MES",
             direction=TradeDirection.LONG,
             confidence=0.7,
             source=SignalSource.GEX_MEAN_REVERSION,
@@ -124,9 +130,9 @@ class TestSignalGeneratorOvernightHybrid:
             base_signal, atr=5.0, is_overnight=True
         )
 
-        assert stop_type == 'NO_LOSS_TRAIL_OVERNIGHT'
-        assert stop_points == 10.0  # Overnight emergency stop (tighter)
-        assert signal.stop_price == 5900.0 - 10.0  # LONG, stop below entry
+        assert stop_type == 'NL_OVERNIGHT'
+        assert stop_points == 8.0  # Overnight emergency stop (tighter)
+        assert signal.stop_price == 5900.0 - 8.0  # LONG, stop below entry
 
     def test_set_stop_levels_rth_fixed(self, config, win_tracker, base_signal):
         """RTH session with fixed stops should use 2.5pt stop and 6pt target."""
@@ -150,13 +156,14 @@ class TestSignalGeneratorOvernightHybrid:
         )
 
         assert stop_type == 'FIXED_OVERNIGHT'
-        assert stop_points == 1.5  # Overnight stop (tighter)
-        assert signal.stop_price == 5900.0 - 1.5
-        assert signal.target_price == 5900.0 + 3.0  # Overnight target (smaller)
+        assert stop_points == 1.25  # Overnight stop (tighter)
+        assert signal.stop_price == 5900.0 - 1.25
+        assert signal.target_price == 5900.0 + 2.0  # Overnight target (smaller)
 
     def test_short_signal_overnight_stops(self, config, win_tracker):
         """SHORT signal overnight should have stop above and target below."""
         short_signal = FuturesSignal(
+            ticker="MES",
             direction=TradeDirection.SHORT,
             confidence=0.7,
             source=SignalSource.GEX_MOMENTUM,
@@ -178,8 +185,8 @@ class TestSignalGeneratorOvernightHybrid:
         )
 
         assert stop_type == 'FIXED_OVERNIGHT'
-        assert signal.stop_price == 5900.0 + 1.5  # SHORT, stop above entry
-        assert signal.target_price == 5900.0 - 3.0  # SHORT, target below entry
+        assert signal.stop_price == 5900.0 + 1.25  # SHORT, stop above entry
+        assert signal.target_price == 5900.0 - 2.0  # SHORT, target below entry
 
     def test_overnight_hybrid_disabled(self, win_tracker, base_signal):
         """When overnight hybrid is disabled, overnight should use RTH params."""
@@ -230,6 +237,7 @@ class TestOvernightHybridWithNoLossTrailing:
     def test_rth_uses_15pt_emergency_stop(self, config, win_tracker):
         """RTH with no-loss trailing uses 15pt emergency stop."""
         signal = FuturesSignal(
+            ticker="MES",
             direction=TradeDirection.LONG,
             confidence=0.7,
             source=SignalSource.GEX_MEAN_REVERSION,
@@ -255,6 +263,7 @@ class TestOvernightHybridWithNoLossTrailing:
     def test_overnight_uses_10pt_emergency_stop(self, config, win_tracker):
         """Overnight with no-loss trailing uses 10pt emergency stop."""
         signal = FuturesSignal(
+            ticker="MES",
             direction=TradeDirection.LONG,
             confidence=0.7,
             source=SignalSource.GEX_MEAN_REVERSION,
@@ -272,14 +281,15 @@ class TestOvernightHybridWithNoLossTrailing:
         generator = ValorSignalGenerator(config, win_tracker)
         signal, stop_type, stop_pts = generator._set_stop_levels(signal, atr=5.0, is_overnight=True)
 
-        assert stop_type == 'NO_LOSS_TRAIL_OVERNIGHT'
-        assert stop_pts == 10.0
+        assert stop_type == 'NL_OVERNIGHT'
+        assert stop_pts == 8.0
         # Emergency stop should be 10 pts below for LONG (tighter)
-        assert signal.stop_price == pytest.approx(5890.0, abs=0.01)
+        assert signal.stop_price == pytest.approx(5892.0, abs=0.01)
 
     def test_short_overnight_emergency_stop(self, config, win_tracker):
         """SHORT overnight uses 10pt emergency stop above entry."""
         signal = FuturesSignal(
+            ticker="MES",
             direction=TradeDirection.SHORT,
             confidence=0.7,
             source=SignalSource.GEX_MOMENTUM,
@@ -297,10 +307,10 @@ class TestOvernightHybridWithNoLossTrailing:
         generator = ValorSignalGenerator(config, win_tracker)
         signal, stop_type, stop_pts = generator._set_stop_levels(signal, atr=5.0, is_overnight=True)
 
-        assert stop_type == 'NO_LOSS_TRAIL_OVERNIGHT'
-        assert stop_pts == 10.0
+        assert stop_type == 'NL_OVERNIGHT'
+        assert stop_pts == 8.0
         # Emergency stop should be 10 pts ABOVE for SHORT
-        assert signal.stop_price == pytest.approx(5910.0, abs=0.01)
+        assert signal.stop_price == pytest.approx(5908.0, abs=0.01)
 
 
 class TestEmergencyStopCalculation:

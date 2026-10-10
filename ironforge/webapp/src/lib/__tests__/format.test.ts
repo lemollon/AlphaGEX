@@ -106,8 +106,8 @@ describe('formatDollarPnl', () => {
     expect(formatDollarPnl(125.50)).toBe('+$125.50')
   })
 
-  it('negative P&L gets - sign', () => {
-    expect(formatDollarPnl(-42.00)).toBe('-$42.00')
+  it('negative P&L gets a true minus sign (U+2212)', () => {
+    expect(formatDollarPnl(-42.00)).toBe('−$42.00')
   })
 
   it('zero → "$0.00"', () => {
@@ -118,7 +118,7 @@ describe('formatDollarPnl', () => {
     expect(formatDollarPnl(12345.67)).toBe('+$12,345.67')
   })
 
-  it('large negative', () => {
-    expect(formatDollarPnl(-9876.54)).toBe('-$9,876.54')
+  it('large negative uses the true minus sign', () => {
+    expect(formatDollarPnl(-9876.54)).toBe('−$9,876.54')
   })
 })

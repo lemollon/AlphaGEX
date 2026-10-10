@@ -1,0 +1,86 @@
+name: Perp Annual Backtest
+
+on:
+  push:
+    branches:
+      - feature/perp-edge-hardening
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - backtest/perp_coin_profile_search.py
+      - backtest/perp_chop_regime_study.py
+      - backtest/perp_dynamic_v2.py
+      - backtest/perp_shared_portfolio.py
+      - backtest/perp_portfolio_walkforward.py
+      - backtest/perp_execution_cost_study.py
+      - .github/workflows/perp-annual-backtest.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - backtest/external_perp_reconstruction.py
+      - backtest/perp_coin_profile_search.py
+      - .github/workflows/perp-annual-backtest.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  annual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run 365-day baseline reconstruction
+        run: |
+          python backtest/external_perp_reconstruction.py             --days 365             --out artifacts/perp_external_backtest_365d
+      - name: Run 365-day coin profile search
+        run: |
+          python backtest/perp_coin_profile_search.py             --windows "30,90,180,365"             --out artifacts/perp_coin_profile_search_365d
+      - name: Run 365-day chop/regime study
+        run: |
+          python backtest/perp_chop_regime_study.py             --days 365             --out artifacts/perp_chop_regime_study
+      - name: Run Dynamic v2 regime permission study
+        run: |
+          python backtest/perp_dynamic_v2.py             --days 365             --out artifacts/perp_dynamic_v2
+      - name: Run shared-capital portfolio
+        run: |
+          python backtest/perp_shared_portfolio.py             --days 365             --out artifacts/perp_shared_portfolio_all
+          python backtest/perp_shared_portfolio.py             --days 365             --exclude-eth             --out artifacts/perp_shared_portfolio_no_eth
+      - name: Run portfolio walk-forward optimization
+        run: |
+          python backtest/perp_portfolio_walkforward.py             --days 365             --out artifacts/perp_portfolio_walkforward
+      - name: Run execution cost study
+        run: |
+          python backtest/perp_execution_cost_study.py             --days 365             --out artifacts/perp_execution_cost_study
+      - name: Show annual profile report
+        run: cat artifacts/perp_coin_profile_search_365d/report.md
+      - name: Show chop/regime report
+        run: cat artifacts/perp_chop_regime_study/report.md
+      - name: Show Dynamic v2 report
+        run: cat artifacts/perp_dynamic_v2/report.md
+      - name: Show shared portfolio reports
+        run: |
+          cat artifacts/perp_shared_portfolio_all/report.md
+          cat artifacts/perp_shared_portfolio_no_eth/report.md
+      - name: Show portfolio walk-forward report
+        run: cat artifacts/perp_portfolio_walkforward/report.md
+      - name: Show execution cost study
+        run: cat artifacts/perp_execution_cost_study/report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: perp-annual-backtest
+          path: |
+            artifacts/perp_external_backtest_365d/
+            artifacts/perp_coin_profile_search_365d/
+            artifacts/perp_chop_regime_study/
+            artifacts/perp_dynamic_v2/
+            artifacts/perp_shared_portfolio_all/
+            artifacts/perp_shared_portfolio_no_eth/
+            artifacts/perp_portfolio_walkforward/
+            artifacts/perp_execution_cost_study/
+          if-no-files-found: error
+          retention-days: 30

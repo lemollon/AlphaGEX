@@ -41,6 +41,10 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/how-it-works',
   '/waitlist',
   '/pricing',
+  // 10.4 marketing redesign: the 3-agent grid/compare page and the team/values
+  // page. Standalone marketing chrome, same as the other entries here.
+  '/agents',
+  '/about',
   '/live',
   '/live/spark/open',
   '/live/flame/open',
@@ -49,17 +53,25 @@ export const CUSTOMER_PAGES: readonly string[] = [
   '/agents/spark',
   '/agents/flame',
   '/home',
+  // Real member landing page (dev-handoff §6) — tabbed Overview/Community/
+  // History/Settings shell that /performance, /community, /account/trades and
+  // /settings now redirect into.
+  '/dashboard',
   '/performance',
   '/track-record',
   '/bot-ledger',
   '/community',
   '/support',
   '/account/trades',
+  '/account/approvals',
   '/account/billing',
   '/account/brokerage',
   '/enroll',
   '/login',
   '/signup',
+  // One-time consent screen for a Google sign-in that would create a new
+  // account (see google/callback/route.ts) — reachable with no session.
+  '/signup/google-consent',
   '/forgot-password',
   '/reset-password',
   '/change-password',
@@ -74,12 +86,12 @@ export const CUSTOMER_PAGES: readonly string[] = [
 // bridge pages that a third party redirects to and the installed app claims as a
 // Universal/App Link. Customer-surface only — they have no meaning on the operator
 // console, and the association files are served from the customer domain.
-export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll', '/app']
+// '/email' = the waitlist drip's preferences/unsubscribe pages (token-addressed, public).
+export const CUSTOMER_PAGE_PREFIXES: readonly string[] = ['/onboarding', '/legal', '/enroll', '/app', '/email']
 
 /** Pages served by the operator console. */
 export const OPERATOR_PAGES: readonly string[] = [
   '/spark',
-  '/spark2',
   '/flame',
   '/inferno',
   '/blaze',
@@ -113,8 +125,9 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/kindle-close',
   '/api/kindle-reopen',
   '/api/kindle-sync',
-  '/api/spark2-check',
   '/api/sms-test',
+  // Research instrument, not a customer feature — see lib/afternoon-spread-tracker.ts.
+  '/api/afternoon-spread',
   '/api/sandbox/',
   '/api/diagnose/',
   '/api/scanner/',
@@ -124,6 +137,12 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/builder/',
   '/api/vol-alerts/',
   '/api/volatility/',
+  // Edge-decay CUSUM alarm (FLINT/CallDiag/EBB) — operator monitoring only,
+  // no customer-facing meaning. See lib/edge-decay.ts. No trailing slash: this
+  // is a single exact route (GET /api/edge-decay), not a namespace with
+  // children — matches()'s `pathname === p` branch is what actually matches
+  // it; a trailing slash would only match sub-paths that don't exist.
+  '/api/edge-decay',
 ]
 
 /**
@@ -136,8 +155,14 @@ export const OPERATOR_API_PREFIXES: readonly string[] = [
  */
 export const CUSTOMER_API_EXCEPTIONS: readonly string[] = [
   '/api/spark/production-pause',
-  '/api/spark2/production-pause',
   '/api/flame/production-pause',
+  // The ONLY route under /api/scanner/ (verified 2026-09-11). Read-only, no
+  // credentials/positions — bot name, heartbeat age, last scan reason. Exposed here
+  // so the customer-facing service (the one that actually runs the scanner,
+  // SCANNER_ENABLED=true) can be Render-health-checked against its own real state.
+  // ironforge-legacy is a web-only reader (SCANNER_ENABLED=false) and cannot be
+  // auto-restarted into fixing a stuck scanner no matter what it's health-checked on.
+  '/api/scanner/status',
 ]
 
 /**
@@ -161,6 +186,9 @@ export const CUSTOMER_API_PREFIXES: readonly string[] = [
   // EXPLICITLY: servesPath fail-opens for unclassified paths, so leaving these out would
   // let them work by accident today and break the day the fail-open is tightened.
   '/api/notifications/',
+  // Resend delivery webhook (waitlist drip bounces/complaints). Customer surface: the
+  // customers DB it writes to lives there. Signature-guarded in-route.
+  '/api/email/',
 ]
 
 /** Shared infrastructure endpoints both services need. */
@@ -231,7 +259,7 @@ export function servesPath(surface: Surface, pathname: string): boolean {
  * had to be kept in sync with CUSTOMER_PAGES by memory. It drifted three times:
  * /track-record and /change-password (both fixed in place, both re-adding an entry
  * rather than the rule), and then /support and /account/billing — which shipped the
- * operator nav, SPARK/SPARK2/INFERNO/BLAZE/FLARE/Compare and all, onto a signed-in
+ * operator nav, SPARK/INFERNO/BLAZE/FLARE/Compare and all, onto a signed-in
  * customer's billing page. Every one of those links 404s on the customer deployment,
  * and naming the internal-only bots customer-side is exactly what the product-surface
  * work removed.
@@ -277,7 +305,7 @@ export function filterNavBySurface<T extends { href: string | null }>(
   return items.filter((item) => item.href == null || servesPath(surface, item.href))
 }
 
-const BOT_SLUGS = ['spark', 'spark2', 'flame', 'inferno', 'blaze', 'flare', 'kindle']
+const BOT_SLUGS = ['spark', 'flame', 'inferno', 'blaze', 'flare', 'kindle']
 
 /** True for `/api/{bot}/...` where {bot} is a known bot console slug. */
 function isBotConsoleApi(pathname: string): boolean {

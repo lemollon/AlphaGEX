@@ -8,8 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
@@ -20,6 +21,7 @@ from .db import bot_table, load_config
 from .executor import (
     account_equity, list_open_positions, open_position,
     close_position, compute_mtm, update_mtm, count_positions_opened_on,
+    update_position_legs,
     configured_slippage_per_leg, configured_fill_mode, closed_trade_totals,
 )
 from .monitor import (
@@ -27,15 +29,14 @@ from .monitor import (
     MULTI_DAY_STRATEGIES,
 )
 
-# Every mode of the updraft module. Position rows now store the MODE as their
-# strategy (so the UI can say WHICH leg a position belongs to), and this set
-# is what keeps mode-labelled rows on the updraft timer-exit path. Legacy
-# rows that still say 'updraft' match too.
-UPDRAFT_FAMILY = {"updraft", "backdraft", "reversal", "em_breach", "afterburn",
-                  "weekender", "flashpoint", "afterglow", "ember", "tempest"}
 from .registry import BOT_REGISTRY, get_bot
+from .strategies import CREDIT_STRATEGIES, LONG_OPTION_STRATEGIES
+
+# Backwards-compatible public name used by tests and the timer path.
+UPDRAFT_FAMILY = LONG_OPTION_STRATEGIES
 from .strategies.iron_butterfly import build_iron_butterfly_signal
 from .strategies.long_butterfly import build_long_butterfly_signal
+from .strategies.delta_butterfly import build_delta_butterfly_signal
 from .strategies.iron_condor import build_iron_condor_signal
 from .strategies.double_calendar import build_double_calendar_signal
 from .strategies.double_diagonal import build_double_diagonal_signal
@@ -46,6 +47,7 @@ from .strategies.updraft import (build_updraft_signal,
                                  DEFAULT_PARAMS as UPDRAFT_PARAMS)
 from . import flow_store
 from .vix_regime import vix_decay_ratio, ensure_vix_table, record_vix
+from .gamma_regime import gamma_state
 from .strategies.setups import detect_setup, compute_indicators, DEFAULT_SETUP_PARAMS
 from .strategies.vertical_spread import build_vertical_signal, DEFAULT_VERTICAL_PARAMS
 from . import ai_rationale
@@ -53,6 +55,7 @@ from . import ai_rationale
 logger = logging.getLogger("spreadworks.bots.scanner")
 CT = ZoneInfo("America/Chicago")
 SCAN_TIMEOUT_SEC = 15
+ASTRA3_EXIT_PENDING_KEY = "astra3_exit_pending"
 
 
 class ChainProvider(Protocol):
@@ -65,6 +68,262 @@ class ChainProvider(Protocol):
     # Optional: per-leg half-spread for taker-cost grading. Providers that
     # don't implement it fall back to the flat per-leg slippage default.
     def get_leg_spreads(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+    # Optional: executable liquidation touches from ONE quote snapshot. Long
+    # legs return bid; short legs return ask. This avoids racing a separate
+    # mid request against a separate spread request.
+    def get_leg_exit_prices(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]: ...
+    # Optional richer form used by ASTRA-3 to prove that enough contracts were
+    # displayed at the same executable touch used for its paper exit.
+    def get_leg_exit_quotes(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[dict[str, Any] | None]: ...
+
+
+def _position_time_ct(value: datetime | str, now_ct: datetime,
+                      dialect_name: str) -> datetime:
+    """Put a stored position timestamp on the same clock as ``now_ct``.
+
+    PostgreSQL converts the scanner's aware Central input to naive UTC when it
+    writes a ``TIMESTAMP`` column. SQLite tests retain Central wall-clock. The
+    old reader treated both as Central, pushing production timer exits roughly
+    five hours into the future.
+    """
+    stored = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    if now_ct.tzinfo is None:
+        return stored.replace(tzinfo=None)
+    if stored.tzinfo is not None:
+        return stored.astimezone(now_ct.tzinfo)
+    if dialect_name == "postgresql":
+        return stored.replace(tzinfo=timezone.utc).astimezone(now_ct.tzinfo)
+    return stored.replace(tzinfo=now_ct.tzinfo)
+
+
+def _last_entry_time(engine: Engine, bot: str) -> datetime | None:
+    t = bot_table(bot, "positions")
+    with engine.begin() as conn:
+        row = conn.execute(text(
+            f"SELECT MAX(entry_time) AS t FROM {t}"
+        )).mappings().first()
+    return row["t"] if row and row["t"] is not None else None
+
+
+def _executable_exit_prices(chain_provider: Any, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[float | None] | None:
+    """Return one-snapshot exit touches when the provider supports them."""
+    fn = getattr(chain_provider, "get_leg_exit_prices", None)
+    if fn is None:
+        return None
+    try:
+        prices = fn(ticker=ticker, legs=legs)
+    except Exception as e:  # noqa: BLE001 - a quote hiccup must not kill the fleet
+        logger.warning(f"get_leg_exit_prices failed for {ticker}: {e}; mid/spread fallback")
+        return None
+    if not isinstance(prices, (list, tuple)) or len(prices) != len(legs):
+        return None
+    return list(prices)
+
+
+def _executable_exit_quotes(chain_provider: Any, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[dict[str, Any] | None] | None:
+    """Return one-snapshot executable touches plus displayed sizes."""
+    fn = getattr(chain_provider, "get_leg_exit_quotes", None)
+    if fn is None:
+        return None
+    try:
+        quotes = fn(ticker=ticker, legs=legs)
+    except Exception as e:  # noqa: BLE001 - quote hiccups cannot kill the fleet
+        logger.warning(f"get_leg_exit_quotes failed for {ticker}: {e}; price-only fallback")
+        return None
+    if not isinstance(quotes, (list, tuple)) or len(quotes) != len(legs):
+        return None
+    if any(q is not None and not isinstance(q, dict) for q in quotes):
+        return None
+    return list(quotes)
+
+
+def _legs_with_exit_depth(legs: list[dict[str, Any]],
+                          exit_quotes: list[dict[str, Any] | None] | None,
+                          contracts: int) -> list[dict[str, Any]]:
+    """Copy legs and attach the exact exit-touch liquidity audit."""
+    audited: list[dict[str, Any]] = []
+    for index, leg in enumerate(legs):
+        out = dict(leg)
+        quote = (exit_quotes[index]
+                 if exit_quotes is not None and index < len(exit_quotes) else None)
+        raw_size = quote.get("size") if quote is not None else None
+        raw_price = quote.get("price") if quote is not None else None
+        try:
+            size_number = float(raw_size)
+            size = (int(size_number) if size_number >= 0
+                    and size_number.is_integer() else None)
+        except (TypeError, ValueError):
+            size = None
+        out["exit_touch_price"] = raw_price
+        out["exit_touch_size"] = size
+        out["exit_depth_ok"] = bool(raw_price is not None and size is not None
+                                    and size >= contracts)
+        audited.append(out)
+    return audited
+
+
+def _astra3_touch(
+    exit_quotes: list[dict[str, Any] | None] | None,
+) -> tuple[float | None, int | None]:
+    """Return one valid long-option exit bid and whole displayed size."""
+    if not exit_quotes or exit_quotes[0] is None:
+        return None, None
+    quote = exit_quotes[0]
+    try:
+        price = float(quote.get("price"))
+        size_number = float(quote.get("size"))
+    except (TypeError, ValueError):
+        return None, None
+    if (
+        not math.isfinite(price)
+        or price < 0.0
+        or not math.isfinite(size_number)
+        or size_number < 0.0
+        or not size_number.is_integer()
+    ):
+        return None, None
+    return price, int(size_number)
+
+
+def _astra3_pending_exit(legs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not legs:
+        return None
+    pending = legs[0].get(ASTRA3_EXIT_PENDING_KEY)
+    return dict(pending) if isinstance(pending, dict) else None
+
+
+def _latch_astra3_exit(
+    legs: list[dict[str, Any]],
+    exit_quotes: list[dict[str, Any] | None] | None,
+    contracts: int,
+    reason: str,
+    now_ct: datetime,
+) -> list[dict[str, Any]]:
+    """Persist an irrevocable full-lot exit request after a thin touch."""
+    audited = _legs_with_exit_depth(legs, exit_quotes, contracts)
+    trigger_bid, trigger_size = _astra3_touch(exit_quotes)
+    audited[0][ASTRA3_EXIT_PENDING_KEY] = {
+        "reason": reason,
+        "trigger_time": now_ct.isoformat(),
+        "trigger_bid": trigger_bid,
+        "trigger_bid_size": trigger_size,
+        "contracts": contracts,
+        "attempts": 1,
+    }
+    return audited
+
+
+def _resolve_astra3_pending_exit(
+    legs: list[dict[str, Any]],
+    exit_quotes: list[dict[str, Any] | None] | None,
+    contracts: int,
+    now_ct: datetime,
+    max_wait_minutes: int,
+) -> tuple[str, float | None, str, list[dict[str, Any]], float]:
+    """Resolve, retain, or time out a previously latched ASTRA-3 exit.
+
+    A complete-lot fresh quote can fill only within the frozen wait window and
+    only at the worse of its bid and the original trigger bid. Missing trigger
+    price can never qualify. At timeout the whole lot is valued at zero and its
+    depth evidence is forced false, permanently failing the forward sample.
+    """
+    pending = _astra3_pending_exit(legs)
+    if pending is None:
+        raise ValueError("ASTRA-3 exit is not pending")
+    try:
+        trigger_time = datetime.fromisoformat(str(pending["trigger_time"]))
+        if trigger_time.tzinfo is None:
+            trigger_time = trigger_time.replace(tzinfo=CT)
+        else:
+            trigger_time = trigger_time.astimezone(CT)
+        reason = str(pending["reason"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("invalid ASTRA-3 exit latch metadata") from exc
+
+    elapsed = max(0.0, (now_ct - trigger_time).total_seconds() / 60.0)
+    current_bid, current_size = _astra3_touch(exit_quotes)
+    try:
+        trigger_bid = float(pending.get("trigger_bid"))
+        trigger_bid_ok = math.isfinite(trigger_bid) and trigger_bid >= 0.0
+    except (TypeError, ValueError):
+        trigger_bid = 0.0
+        trigger_bid_ok = False
+
+    audited = _legs_with_exit_depth(legs, exit_quotes, contracts)
+    pending_out = dict(pending)
+    pending_out.update({
+        "attempts": int(pending.get("attempts") or 0) + 1,
+        "last_quote_time": now_ct.isoformat(),
+        "last_bid": current_bid,
+        "last_bid_size": current_size,
+        "wait_minutes": round(elapsed, 4),
+    })
+    audited[0][ASTRA3_EXIT_PENDING_KEY] = pending_out
+
+    full_depth = (
+        current_bid is not None
+        and current_size is not None
+        and current_size >= contracts
+    )
+    if full_depth and trigger_bid_ok and elapsed <= max_wait_minutes:
+        fill_bid = min(current_bid, trigger_bid)
+        pending_out.update({
+            "resolved": True,
+            "timed_out": False,
+            "fill_time": now_ct.isoformat(),
+            "fill_bid": fill_bid,
+        })
+        audited[0]["exit_fill_price"] = fill_bid
+        return "CLOSE", fill_bid, reason, audited, elapsed
+
+    if elapsed >= max_wait_minutes:
+        pending_out.update({
+            "resolved": True,
+            "timed_out": True,
+            "fill_time": now_ct.isoformat(),
+            "fill_bid": 0.0,
+        })
+        for leg in audited:
+            leg["exit_depth_ok"] = False
+            leg["exit_depth_timeout"] = True
+            leg["exit_fill_price"] = 0.0
+        return "TIMEOUT", 0.0, reason, audited, elapsed
+
+    return "HOLD", None, reason, audited, elapsed
+
+
+def _post_close_alert(
+    *,
+    engine: Engine,
+    bot: str,
+    meta: dict[str, Any],
+    cfg: dict[str, Any],
+    pos: dict[str, Any],
+    now_ct: datetime,
+    close_reason: str,
+    realized_pnl: float,
+) -> None:
+    if not bool(cfg.get("discord_alerts")):
+        return
+    try:
+        from . import discord_alerts
+        entry_dt = _position_time_ct(
+            pos["entry_time"], now_ct, engine.dialect.name
+        )
+        mins = int((now_ct - entry_dt).total_seconds() // 60)
+        discord_alerts.post_close(
+            bot=bot,
+            display=meta["display"],
+            strategy=pos["strategy"],
+            position_id=pos["position_id"],
+            close_reason=close_reason,
+            realized_pnl=realized_pnl,
+            time_in_trade_min=mins,
+        )
+    except Exception as exc:  # noqa: BLE001 - alerts cannot stop paper exits
+        logger.warning(f"[{bot}] discord post_close failed: {exc}")
 
 
 def _slippage_total(chain_provider: Any, ticker: str,
@@ -183,13 +442,75 @@ def _within_window(now_ct: datetime, start: str, end: str) -> bool:
     return _parse_time(start) <= t < _parse_time(end)
 
 
+def _pivot_against(cfg: dict, pos: dict, now_ct: datetime) -> bool:
+    """Has the two-stage watcher confirmed a move AGAINST this position today?
+
+    Returns False for everything unless ALL of these hold:
+      * the bot's `pivot_on_confirm` config is set,
+      * the watcher fired today (which itself requires the morning put/call
+        mix to have been extreme AND price to have committed to a side),
+      * and the confirmed direction is the one that hurts this structure.
+
+    That last check is what makes it a pivot rather than a stop: an UP
+    confirmation is GOOD for a bull put spread and must not close it. Reading
+    the fire as bidirectional would close winners.
+
+    Never raises — the signal is advisory infrastructure, and a DB hiccup must
+    leave the position on its validated hold-to-settle path rather than
+    closing it on an exception.
+    """
+    try:
+        if not int(cfg.get("pivot_on_confirm") or 0):
+            return False
+        from ..routes_risk import SessionLocal as _SL, RiskConfirmState
+        if _SL is None:
+            return False
+        db = _SL()
+        try:
+            row = db.get(RiskConfirmState, now_ct.date())
+        finally:
+            db.close()
+        if row is None or not row.fired_dir:
+            return False
+        # Only put-side credit structures are studied. A short PUT spread is
+        # hurt by DOWN; a short CALL spread by UP.
+        strat = str(pos.get("strategy") or "")
+        if strat == "bull_put_spread":
+            return row.fired_dir == "DOWN"
+        if strat == "bear_call_spread":
+            return row.fired_dir == "UP"
+        return False
+    except Exception as e:                      # noqa: BLE001
+        logger.warning(f"[pivot] confirm lookup failed, holding: {e!r}")
+        return False
+
+
 def _settlement_value(chain_provider: ChainProvider, ticker: str,
-                      legs: list[dict[str, Any]], exp: date) -> float | None:
-    """Cash-settlement value of an expired structure: signed intrinsic of each
-    leg against the official close of the expiry day. None until that close
-    appears in daily history (then the caller retries next scan). Mirrors
-    SPX/XSP European cash settlement — including half-days, where the close
-    is simply the early official close."""
+                      legs: list[dict[str, Any]], exp: date,
+                      strategy: str) -> float | None:
+    """Cash-settlement value of an expired structure, in the same units
+    `close_position` expects for this strategy's credit/debit branch. None
+    until the official close appears in daily history (then the caller retries
+    next scan). Mirrors SPX/XSP European cash settlement — including half-days,
+    where the close is simply the early official close.
+
+    🚨 The returned number means different things either side of
+    `CREDIT_STRATEGIES`, exactly as `close_position` reads it:
+
+      * DEBIT (long_butterfly — RIPPLE/SPLASH): value RECEIVED at settlement.
+        `realized = (close_value - entry_price) * ...`
+      * CREDIT (bull_put_spread — EBB/EBB_PM): COST TO BUY BACK.
+        `realized = (entry_price - close_value) * ...`
+
+    Both are >= 0, but they are opposite signs of the same signed intrinsic,
+    so the sum below is negated for credit structures before the floor. This
+    bit is load-bearing: from 2026-08-14 to 2026-08-18 the floor was applied
+    to the un-negated sum for every strategy, which mapped a credit spread
+    that finished IN the money onto a settlement of exactly 0.00 — i.e. MAX
+    PROFIT. EBB's first live trade (short 774P/long 772P, credit 0.13, SPY
+    closed 772.67) settled at a true cost-to-close of 1.33 and booked +$13.00
+    instead of -$120.00. The losing expiries were the only ones affected,
+    which is precisely the set that decides whether the bot has an edge."""
     def _close_for(sym: str) -> float | None:
         bars = chain_provider.get_daily_history(ticker=sym, days=10)
         for b in bars or []:
@@ -211,7 +532,13 @@ def _settlement_value(chain_provider: ChainProvider, ticker: str,
         k = float(leg["strike"])
         intr = max(0.0, close - k) if leg["type"] == "call" else max(0.0, k - close)
         val += intr if leg["side"] == "long" else -intr
-    # A net-long defined-risk structure settles >= 0 by construction.
+    if strategy in CREDIT_STRATEGIES:
+        # Flip "value received" into "cost to buy back" — see the docstring.
+        val = -val
+    # Defined-risk structures settle >= 0 on BOTH branches: a net-long debit
+    # structure can't be worth less than nothing, and buying back a credit
+    # spread can't pay you. The floor only ever absorbs float noise now that
+    # the sign is right for each branch.
     return round(max(0.0, val), 4)
 
 
@@ -245,7 +572,8 @@ def run_settlement_pass(*, engine: Engine, bot: str, now_ct: datetime,
         if (now_ct.date() == pos_exp
                 and now_ct.timetz().replace(tzinfo=None) < SETTLE_EARLIEST_CT):
             continue
-        settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+        settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp,
+                                   pos["strategy"])
         if settle is None:
             logger.info(
                 f"[{bot}] {pos['position_id']}: official close for {pos_exp} "
@@ -309,13 +637,33 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
             return None, None
         sig = build_long_butterfly_signal(chain=chain, config=config, equity=equity, diag=diag)
         return sig, chain
+    if strategy == "delta_butterfly":
+        # MONARCH (monarch_a 0.05-delta / monarch_b 0.25-delta). Unlike
+        # long_butterfly, this needs the live clock to compute time-to-close
+        # for its BS-delta fallback (see delta_butterfly._time_to_close).
+        chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
+        if chain is None:
+            if diag is not None:
+                diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
+            return None, None
+        # wing_delta_target (0.05 for monarch_a, 0.25 for monarch_b) is a
+        # FROZEN per-bot constant, not a live-tunable bp_pct/sd_mult-style
+        # knob — the bot_config TABLE has a fixed column set it never joins
+        # (same reasoning as UPDRAFT's mode/flow_max/r30_min, see above), so
+        # it is read straight off the registry, never off `config`.
+        reg_defaults = (BOT_REGISTRY.get(bot, {}).get("defaults") or {})
+        delta_config = {**config, "wing_delta_target": reg_defaults.get("wing_delta_target", 0.05)}
+        sig = build_delta_butterfly_signal(chain=chain, config=delta_config, equity=equity,
+                                           now_ct=now_ct, diag=diag)
+        return sig, chain
     if strategy == "iron_condor":
         chain = chain_provider.get_chain(ticker=ticker, dte=front_dte, today=today)
         if chain is None:
             if diag is not None:
                 diag.append(f"chain_unavailable: ticker={ticker} dte={front_dte}")
             return None, None
-        sig = build_iron_condor_signal(chain=chain, config=config, equity=equity, diag=diag)
+        sig = build_iron_condor_signal(chain=chain, config=config, equity=equity,
+                                       diag=diag, now_ct=datetime.now(CT))
         return sig, chain
     if strategy in ("bull_call_spread", "bear_put_spread",
                     "bull_put_spread", "bear_call_spread"):
@@ -359,6 +707,7 @@ def _build_signal(*, bot: str, strategy: str, chain_provider: ChainProvider,
         tunable = ("mode", "flow_max", "r30_min", "backdraft_flow_max",
                    "require_put_wall", "strike_offset", "hold_minutes",
                    "min_option_price", "max_spread_pct", "cooldown_min",
+                   "astra3_fee",
                    "rsi_threshold", "rsi_period",
                    "em_frac", "max_open_straddle_pct", "afterburn_min_ret_pct",
                    "or_width_min_em")
@@ -816,6 +1165,91 @@ def _evaluate_entry(
                                    f"(prior {vr['prior_date']} vix={vr['prior_vix']:.2f} "
                                    f"/ 20d max {vr['window_max']:.2f})")}
 
+    # MACRO ENTRY GATES (2026-10-05, CINDER). Three independent, bot-agnostic
+    # pre-entry conditions. Unset (None/""/0/False) on every field is a
+    # no-op, so no bot other than CINDER is affected.
+    #
+    # 🚨 NAMING NOTE: this paper bot is DIFFERENT from and has NO data
+    # coupling to `backend/cinder_signal.py` — an already-LIVE, already
+    # scheduled signal module (same SPY 1DTE debit-call-spread idea) that
+    # feeds a separate real-money Robinhood execution bot via its own
+    # `cinder_signals` table and `/api/spreadworks/cinder/state` route. That
+    # module is money-adjacent and is intentionally left untouched. This
+    # gate only READS gamma_regime.gamma_state, routes_squeeze.live_vix_ratio,
+    # and a fresh market_structure.fetch_vol_indices() live quote — none of
+    # which write to or belong to cinder_signal.py's tables — and writes
+    # only to THIS bot's own standard bot_positions/bot_config rows.
+    gex_ceiling = cfg.get("gex_ceiling_b")
+    if gex_ceiling is not None and str(gex_ceiling) != "":
+        try:
+            ceiling = float(gex_ceiling)
+        except (TypeError, ValueError):
+            ceiling = 0.0
+        st = gamma_state(engine, now_ct.date())
+        net_gex_b = st.get("net_gex_b")
+        if net_gex_b is None:
+            return {"outcome": "BLOCKED_GEX_UNKNOWN",
+                    "reason": st.get("reason") or "net_gex_b_unavailable"}
+        if net_gex_b > ceiling:
+            return {"outcome": "BLOCKED_GEX_ABOVE_CEILING",
+                    "reason": f"net_gex_b={net_gex_b:.2f} > ceiling {ceiling:.2f}"}
+
+    vix_ratio_max = cfg.get("live_vix_ratio_max")
+    require_contango = bool(cfg.get("require_vix_contango") or False)
+    if (vix_ratio_max is not None and str(vix_ratio_max) != "") or require_contango:
+        from .. import market_structure
+        from ..routes_squeeze import live_vix_ratio
+        vol = market_structure.fetch_vol_indices(now=now_ct)
+        indices = (vol or {}).get("indices") or {}
+        vix_row = indices.get("VIX") or {}
+        vix3m_row = indices.get("VIX3M") or {}
+        vix_now = vix_row.get("price") if vix_row.get("fresh") else None
+        vix3m_now = vix3m_row.get("price") if vix3m_row.get("fresh") else None
+
+        if vix_ratio_max is not None and str(vix_ratio_max) != "":
+            try:
+                ratio_ceiling = float(vix_ratio_max)
+            except (TypeError, ValueError):
+                ratio_ceiling = 0.0
+            if vix_now is None:
+                return {"outcome": "BLOCKED_VIX_LIVE_UNKNOWN",
+                        "reason": "live VIX quote unavailable or stale"}
+            ratio = live_vix_ratio(vix_now)
+            if ratio is None:
+                return {"outcome": "BLOCKED_VIX_LIVE_UNKNOWN",
+                        "reason": "insufficient trailing VIX history for live_vix_ratio"}
+            if ratio >= ratio_ceiling:
+                return {"outcome": "BLOCKED_VIX_LIVE_ELEVATED",
+                        "reason": f"live_vix_ratio={ratio:.3f} >= {ratio_ceiling:.2f}"}
+
+        if require_contango:
+            if vix_now is None or vix3m_now is None:
+                return {"outcome": "BLOCKED_TERM_STRUCTURE_UNKNOWN",
+                        "reason": "live VIX/VIX3M quote unavailable or stale"}
+            if vix_now >= vix3m_now:
+                return {"outcome": "BLOCKED_TERM_STRUCTURE_BACKWARDATED",
+                        "reason": f"VIX={vix_now:.2f} >= VIX3M={vix3m_now:.2f}"}
+
+    # Calendar-day cooldown (CINDER = 5 days) — distinct from cooldown_min's
+    # MINUTE-based intraday-burst gate above: this is keyed off the CALENDAR
+    # DATE of the bot's own last entry, for bots that trade at most a
+    # handful of times a year.
+    cooldown_days = cfg.get("entry_cooldown_days")
+    if cooldown_days is not None and str(cooldown_days) != "":
+        try:
+            days_needed = int(cooldown_days)
+        except (TypeError, ValueError):
+            days_needed = 0
+        if days_needed > 0:
+            last_entry = _last_entry_time(engine, bot)
+            if last_entry is not None:
+                last_ct = _position_time_ct(last_entry, now_ct, engine.dialect.name)
+                elapsed_days = (now_ct.date() - last_ct.date()).days
+                if elapsed_days < days_needed:
+                    return {"outcome": "BLOCKED_COOLDOWN_DAYS",
+                            "reason": f"cooldown: elapsed_days={elapsed_days} "
+                                      f"need={days_needed}"}
+
     # Concurrent-position cap — never hold more than max_concurrent_positions
     # open at once (0 = unlimited, mirrors max_contracts). Bounds stacked
     # collateral to ~cap x bp_pct of equity.
@@ -835,9 +1269,22 @@ def _evaluate_entry(
             chain_provider=chain_provider, opens=opens,
         )
 
-    # Stacking bots open at most ONE new position per entry-day. Closed rows
-    # stay in {bot}_positions, so an earlier same-day open-then-close counts.
-    if allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
+    # Intraday burst books use a frozen entry-to-entry cooldown; MEADOW is the
+    # legacy stacking bot with no cooldown and remains capped at one new entry
+    # per eligible day. The old blanket one-entry/day rule silently reduced
+    # UPDRAFT/BACKDRAFT to a different strategy than their backtests.
+    reg_defaults = ((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+    cooldown_min = int(reg_defaults.get("cooldown_min") or 0)
+    if allow_stacking and cooldown_min > 0:
+        last_entry = _last_entry_time(engine, bot)
+        if last_entry is not None:
+            last_ct = _position_time_ct(last_entry, now_ct, engine.dialect.name)
+            elapsed = (now_ct - last_ct).total_seconds() / 60.0
+            if elapsed < cooldown_min:
+                return {"outcome": "BLOCKED_COOLDOWN",
+                        "reason": (f"cooldown: elapsed={elapsed:.1f}m "
+                                   f"need={cooldown_min}m")}
+    elif allow_stacking and count_positions_opened_on(engine, bot, now_ct) > 0:
         return {"outcome": "BLOCKED_ALREADY_OPENED_TODAY"}
 
     # one_entry_per_day (registry meta): after ANY entry today — open OR
@@ -854,7 +1301,7 @@ def _evaluate_entry(
     # later scans FILL it if the ask touches. TEST +7.8% -> +11.9%/trade at
     # -15%. Verified NOT to transfer to EMBREACH (flips negative) — only
     # bots whose registry carries the knob ever enter this path.
-    reg_d = ((BOT_REGISTRY.get(bot) or {}).get("defaults") or {})
+    reg_d = reg_defaults
     limit_frac = float(
         cfg.get("limit_entry_frac")
         if cfg.get("limit_entry_frac") is not None
@@ -979,11 +1426,29 @@ def _evaluate_entry(
     # tellable apart leg by leg (and the per-leg exit params travel on the
     # position row as usual).
     store_mode = (getattr(signal, "mode", None)
-                  if reg_mode == "tempest" else reg_mode)
+                  if reg_mode in ("tempest", "astra3") else reg_mode)
+    # Single-long option signals (updraft family) and MONARCH's delta
+    # butterfly already carry a debit that crossed the real NBBO (ask on the
+    # longs, bid on the shorts) — do not fetch another quote and charge a
+    # second simulated half-spread on top of a fill that is already real.
+    _already_crossed_real_book = meta["strategy"] in ("updraft", "delta_butterfly")
+    # MONARCH audit trail: the wing-delta target (which cell this trade is),
+    # the wing's realized delta at selection, and the live VIX read at entry
+    # are not native position columns — capture them in notes so the trade
+    # log satisfies "log every trade: ... real quoted bid/ask at entry" with
+    # the full picture, not just the generic debit/strikes every bot logs.
+    open_notes = (
+        f"wing_delta_target={signal.wing_delta_target:.2f} "
+        f"realized_delta={signal.realized_delta:.4f} vix_at_entry={signal.vix_at_entry:.2f}"
+        if meta["strategy"] == "delta_butterfly" else None
+    )
     pid = open_position(
         engine, bot, store_mode or meta["strategy"], signal, now_ct,
-        slippage_total=_slippage_total(chain_provider, signal.ticker,
-                                       signal.legs(), cfg))
+        notes=open_notes,
+        mid_fill=not _already_crossed_real_book,
+        slippage_total=(None if _already_crossed_real_book else
+                        _slippage_total(chain_provider, signal.ticker,
+                                        signal.legs(), cfg)))
     if bool(cfg.get("discord_alerts")):
         try:
             from . import discord_alerts
@@ -1030,7 +1495,8 @@ def run_scan_cycle(
             if bool(meta.get("settle_at_expiry")):
                 pos_exp = date.fromisoformat(legs[0]["expiration"])
                 if now_ct.date() > pos_exp:
-                    settle = _settlement_value(chain_provider, pos["ticker"], legs, pos_exp)
+                    settle = _settlement_value(chain_provider, pos["ticker"], legs,
+                                               pos_exp, pos["strategy"])
                     if settle is None:
                         logger.warning(
                             f"[{bot}] {pos['position_id']}: no official close "
@@ -1056,7 +1522,16 @@ def run_scan_cycle(
                     monitor_result = {"outcome": "TRADE", "reason": "CLOSE_SETTLE",
                                       "position_id": pos["position_id"]}
                     continue
-            mids = chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs)
+            exit_quotes = _executable_exit_quotes(
+                chain_provider, pos["ticker"], legs)
+            exit_prices = (
+                [None if q is None else q.get("price") for q in exit_quotes]
+                if exit_quotes is not None else
+                _executable_exit_prices(chain_provider, pos["ticker"], legs)
+            )
+            using_touches = exit_prices is not None
+            mids = (exit_prices if using_touches else
+                    chain_provider.get_leg_mids(ticker=pos["ticker"], legs=legs))
             marks_stale = any(m is None for m in mids)
             if marks_stale:
                 # One or more leg quotes missing — the fresh mark would be
@@ -1076,10 +1551,72 @@ def run_scan_cycle(
                     entry_price=float(pos["entry_price"]),
                     contracts=int(pos["contracts"]),
                     leg_mids=mids,
-                    slippage_total=_slippage_total(
-                        chain_provider, pos["ticker"], legs, cfg),
+                    # Executable touches already ARE long-bid / short-ask.
+                    # The fallback retains the legacy mid-minus-half-spread
+                    # model for providers that cannot return an atomic quote.
+                    slippage_total=(0.0 if using_touches else
+                                    _slippage_total(
+                                        chain_provider, pos["ticker"], legs, cfg)),
                 )
                 update_mtm(engine, bot, pos["position_id"], mtm_value, mtm_pnl, now_ct)
+
+            # ASTRA-3 depth exits are irrevocable once triggered. A recovered
+            # option price cannot cancel the exit, and a rebound cannot improve
+            # the fill above the original trigger bid. The latch lives in the
+            # position's legs JSON so deploys/restarts cannot forget it.
+            pending_exit = (
+                _astra3_pending_exit(legs) if bot == "astra3" else None
+            )
+            if pending_exit is not None:
+                max_wait = int(
+                    (meta.get("defaults") or {}).get("exit_latch_minutes", 5)
+                )
+                action, close_value, pending_reason, pending_legs, elapsed = (
+                    _resolve_astra3_pending_exit(
+                        legs,
+                        exit_quotes,
+                        int(pos["contracts"]),
+                        now_ct,
+                        max_wait,
+                    )
+                )
+                if action in ("CLOSE", "TIMEOUT"):
+                    realized = close_position(
+                        engine,
+                        bot,
+                        pos["position_id"],
+                        close_value=float(close_value),
+                        close_reason=pending_reason,
+                        now=now_ct,
+                        legs_override=pending_legs,
+                    )
+                    _post_close_alert(
+                        engine=engine,
+                        bot=bot,
+                        meta=meta,
+                        cfg=cfg,
+                        pos=pos,
+                        now_ct=now_ct,
+                        close_reason=pending_reason,
+                        realized_pnl=realized,
+                    )
+                    suffix = "DEPTH_TIMEOUT" if action == "TIMEOUT" else "DEPTH_LATCH"
+                    monitor_result = {
+                        "outcome": "TRADE",
+                        "reason": f"CLOSE_{pending_reason}_{suffix}",
+                        "position_id": pos["position_id"],
+                    }
+                else:
+                    update_position_legs(
+                        engine, bot, pos["position_id"], pending_legs
+                    )
+                    monitor_result = {
+                        "outcome": "MONITOR",
+                        "reason": "EXIT_PENDING_DEPTH",
+                        "position_id": pos["position_id"],
+                        "wait_minutes": round(elapsed, 2),
+                    }
+                continue
 
             pt_target = float(pos["pt_target_pnl"])
             # Manual Adjust shipped 2026-05-19 sets pt_override=TRUE on
@@ -1122,8 +1659,8 @@ def run_scan_cycle(
             dip_entry_time = None
             if pos["strategy"] in MULTI_DAY_STRATEGIES:
                 dip_hold_days = int((meta.get("params") or {}).get("hold_days", 2))
-                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                    else datetime.fromisoformat(str(pos["entry_time"]))
+                dip_entry_time = _position_time_ct(
+                    pos["entry_time"], now_ct, engine.dialect.name)
 
             # UPDRAFT/BACKDRAFT are intraday TIMER exits (45m / 30m). The
             # timer is the real exit — pt_pct is deliberately unreachable
@@ -1132,8 +1669,8 @@ def run_scan_cycle(
             if pos["strategy"] in UPDRAFT_FAMILY:
                 hold_minutes = int(cfg.get("hold_minutes")
                                    or (meta.get("defaults") or {}).get("hold_minutes", 45))
-                dip_entry_time = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                    else datetime.fromisoformat(str(pos["entry_time"]))
+                dip_entry_time = _position_time_ct(
+                    pos["entry_time"], now_ct, engine.dialect.name)
 
             # On a stale mark, disarm PT/SL entirely (targets pushed to ±inf)
             # so only the time-based exits can fire — the position is never
@@ -1148,29 +1685,60 @@ def run_scan_cycle(
                 entry_time=dip_entry_time, hold_days=dip_hold_days,
                 hold_minutes=hold_minutes,
                 settle_at_expiry=bool(meta.get("settle_at_expiry")),
+                pivot_confirmed=_pivot_against(cfg, pos, now_ct),
             )
             if d.should_close:
-                close_position(engine, bot, pos["position_id"],
-                               close_value=mtm_value, close_reason=d.reason,
-                               now=now_ct)
-                if bool(cfg.get("discord_alerts")):
-                    try:
-                        from . import discord_alerts
-                        entry_dt = pos["entry_time"] if isinstance(pos["entry_time"], datetime) \
-                            else datetime.fromisoformat(str(pos["entry_time"]))
-                        if entry_dt.tzinfo is None:
-                            entry_dt = entry_dt.replace(tzinfo=now_ct.tzinfo)
-                        mins = int((now_ct - entry_dt).total_seconds() // 60)
-                        discord_alerts.post_close(
-                            bot=bot, display=meta["display"], strategy=pos["strategy"],
-                            position_id=pos["position_id"], close_reason=d.reason,
-                            realized_pnl=mtm_pnl,
-                            time_in_trade_min=mins,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[{bot}] discord post_close failed: {e}")
-                monitor_result = {"outcome": "TRADE", "reason": f"CLOSE_{d.reason}",
-                                  "position_id": pos["position_id"]}
+                close_legs = (
+                    _legs_with_exit_depth(legs, exit_quotes, int(pos["contracts"]))
+                    if bot == "astra3" else None
+                )
+                astra_depth_ok = (
+                    bot != "astra3"
+                    or bool(close_legs)
+                    and all(leg.get("exit_depth_ok") is True for leg in close_legs)
+                )
+                if bot == "astra3" and not astra_depth_ok:
+                    pending_legs = _latch_astra3_exit(
+                        legs,
+                        exit_quotes,
+                        int(pos["contracts"]),
+                        d.reason,
+                        now_ct,
+                    )
+                    update_position_legs(
+                        engine, bot, pos["position_id"], pending_legs
+                    )
+                    monitor_result = {
+                        "outcome": "MONITOR",
+                        "reason": "EXIT_PENDING_DEPTH",
+                        "position_id": pos["position_id"],
+                        "wait_minutes": 0.0,
+                    }
+                else:
+                    realized = close_position(
+                        engine,
+                        bot,
+                        pos["position_id"],
+                        close_value=mtm_value,
+                        close_reason=d.reason,
+                        now=now_ct,
+                        legs_override=close_legs,
+                    )
+                    _post_close_alert(
+                        engine=engine,
+                        bot=bot,
+                        meta=meta,
+                        cfg=cfg,
+                        pos=pos,
+                        now_ct=now_ct,
+                        close_reason=d.reason,
+                        realized_pnl=realized,
+                    )
+                    monitor_result = {
+                        "outcome": "TRADE",
+                        "reason": f"CLOSE_{d.reason}",
+                        "position_id": pos["position_id"],
+                    }
             elif monitor_result is None or monitor_result["outcome"] != "TRADE":
                 monitor_result = {"outcome": "MONITOR", "position_id": pos["position_id"]}
 

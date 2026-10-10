@@ -1,0 +1,96 @@
+/**
+ * How a Community post is labelled and coloured — UX-005.
+ *
+ * Pure, and separate from the screen, because both rules are the kind that look
+ * obviously right and are quietly wrong on real data: a two-word initial that breaks
+ * on "Jean-Luc", a colour picked by array index that reshuffles every time the feed
+ * reorders. Neither shows up in a screenshot of the happy path.
+ */
+
+/**
+ * Up to two initials for an avatar bubble, matching "JM" / "AR" in UX-005.
+ *
+ * 🚨 Splits on any whitespace run and takes the FIRST CODE POINT of the first and
+ * last parts. Not `name[0] + name[1]`, which yields "JO" for "Jordan M.", and not a
+ * regex character class — `charAt(0)` cuts a surrogate pair in half and renders a
+ * replacement glyph for anyone whose name starts outside the BMP.
+ */
+export function initials(name: string): string {
+  const parts = (name ?? '').trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return '?'
+  const first = [...parts[0]][0] ?? ''
+  const last = parts.length > 1 ? ([...parts[parts.length - 1]][0] ?? '') : ''
+  return (first + last).toUpperCase()
+}
+
+/**
+ * The category chip's accent, keyed to the channel the post was written in.
+ *
+ * UX-005 colours Market Talk orange, Trade Ideas blue and General neutral. Keyed by
+ * SLUG rather than display name so renaming a channel in the database cannot silently
+ * turn every chip grey, and defaulting to neutral so a channel added later gets a
+ * plain chip instead of no chip at all.
+ */
+const CHANNEL_ACCENT: Record<string, string> = {
+  'market-talk': '#EE5A24',
+  'trade-ideas': '#3B82F6',
+  'news-events': '#E0B23F',
+  general: '#A3A3A3',
+  'all-chat': '#A3A3A3',
+}
+
+export const NEUTRAL_ACCENT = '#A3A3A3'
+
+export function channelAccent(slug: string | undefined): string {
+  if (!slug) return NEUTRAL_ACCENT
+  return CHANNEL_ACCENT[slug] ?? NEUTRAL_ACCENT
+}
+
+/**
+ * A stable background tint for a member's initials bubble.
+ *
+ * 🚨 Derived from the NAME, not the list index. Index-based colouring changes every
+ * time the feed reorders or a post is blocked out of it, so the same person appears
+ * in a different colour on every poll — which reads as a different person.
+ *
+ * Two sets, dark and light: the dark set is near-black so white initials sit on top
+ * of it (unchanged from before appearance theming existed — `bubbleTint(name)` with
+ * no scheme still returns exactly these values). The light set is the same six hues
+ * lightened to pale tints, so near-black initials text (the light palette's `text`)
+ * stays legible instead of nearly-black-on-nearly-black.
+ */
+const BUBBLE_TINTS_DARK = ['#2A3340', '#33372A', '#3A2E2A', '#2A3A38', '#352A3A', '#3A3A2A']
+const BUBBLE_TINTS_LIGHT = ['#DCE6F2', '#EAF0D8', '#F2E4DC', '#DCEEEA', '#EFE0F2', '#F2F0DC']
+
+export function bubbleTint(name: string, scheme: 'light' | 'dark' = 'dark'): string {
+  let hash = 0
+  for (const ch of name ?? '') hash = (hash * 31 + ch.codePointAt(0)!) >>> 0
+  const tints = scheme === 'light' ? BUBBLE_TINTS_LIGHT : BUBBLE_TINTS_DARK
+  return tints[hash % tints.length]
+}
+
+/**
+ * Whether a post/reply was authored by an AI persona rather than a member (#248).
+ *
+ * 'sparky' and 'flame_ai' are the typed values the server sets at insert time
+ * going forward — no string-sniffing needed. 'FORGE' and 'SYSTEM' are the
+ * legacy values already sitting on rows written before this migration; they
+ * are honoured exactly as before so old posts keep the badge they always had.
+ */
+export function isAiSender(senderType: string): boolean {
+  return senderType === 'FORGE' || senderType === 'SYSTEM' || senderType === 'sparky' || senderType === 'flame_ai'
+}
+
+/**
+ * Whether a post was authored specifically by Sparky (distinct avatar) rather
+ * than the generic Forge AI. Typed rows answer this directly; untyped/legacy
+ * rows fall back to the old name-substring heuristic this replaces, so they
+ * keep rendering exactly as before.
+ */
+export function isSparkySender(message: { sender_type: string; sender_name: string }): boolean {
+  if (message.sender_type === 'sparky') return true
+  if (message.sender_type === 'flame_ai' || message.sender_type === 'FORGE' || message.sender_type === 'SYSTEM') {
+    return false
+  }
+  return message.sender_name.toLowerCase().includes('sparky')
+}

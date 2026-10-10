@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
-import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
-import { validateAgentConfig, isConfigurableAgent, RULE_VERSION, AGENT_RULE_SCHEMA } from '@/lib/enrollment/agent-rules'
+import { isCustomersDbConfigured } from '@/lib/customers-db'
+import { isConfigurableAgent } from '@/lib/enrollment/agent-rules'
+import { createAgentConfigDraft } from '@/lib/enrollment/agent-config-service'
 import { errorEnvelope, statusFor, redactProviderError } from '@/lib/enrollment/errors'
 import { isUuid } from '@/lib/enrollment/ids'
 
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
     const brokerAccountId = String(body.broker_account_id ?? '')
 
     if (!isConfigurableAgent(agentCode)) {
-      const e = errorEnvelope('VALIDATION_FAILED', 'Choose Spark or Flame.', { field: 'agent_code' })
+      const e = errorEnvelope('VALIDATION_FAILED', 'Choose Spark, Flame or Ember.', { field: 'agent_code' })
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 
@@ -49,72 +50,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
 
-    // Ownership via the connection join — an account id alone is never authority (§8).
-    const acct = (await customerQuery<{
-      id: string; eligibility: string; ineligible_reason: string | null; buying_power_cents: string | null
-    }>(
-      `SELECT ba.id, ba.eligibility, ba.ineligible_reason, ba.buying_power_cents
-         FROM broker_accounts ba
-         JOIN brokerage_connections bc ON bc.id = ba.connection_id
-        WHERE ba.id = $1 AND bc.user_id = $2 LIMIT 1`,
-      [brokerAccountId, session.customerId],
-    ))[0]
-
-    if (!acct) {
-      const e = errorEnvelope('FORBIDDEN', 'That account is not available.')
+    // config: {} — this screen's rule schema has nothing the client sends; the real
+    // inputs are the account's own buying power, read server-side inside the shared
+    // draft creator below.
+    const draft = await createAgentConfigDraft({ userId: session.customerId, agentCode, brokerAccountId })
+    if (!draft.ok) {
+      const e = errorEnvelope(draft.code, draft.message, draft.field ? { field: draft.field } : undefined)
       return NextResponse.json(e, { status: statusFor(e.code) })
     }
-    if (acct.eligibility !== 'eligible') {
-      const e = errorEnvelope(
-        'BROKER_ACCOUNT_INELIGIBLE',
-        acct.ineligible_reason || 'This account is not eligible for automated options trading.',
-        { field: 'broker_account_id' },
-      )
-      return NextResponse.json(e, { status: statusFor(e.code) })
-    }
-
-    // From the ACCOUNT row, captured at brokerage sync. Reading it from a prior config
-    // would make the very first configuration impossible — there is none to read.
-    const bp = acct.buying_power_cents == null ? null : Number(acct.buying_power_cents)
-    const result = validateAgentConfig({
-      agentCode,
-      input: (body.config as Record<string, unknown>) ?? {},
-      buyingPowerCents: bp,
-    })
-
-    // Persisted as a DRAFT even when invalid, so a customer can leave and come back to
-    // a half-finished setup — the funnel is resumable (§3 DONE-01).
-    const rows = await customerQuery<{ id: string }>(
-      `INSERT INTO agent_configs
-         (user_id, broker_account_id, agent_code, rule_version, config_json, status, validated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6 = 'valid' THEN now() ELSE NULL END)
-       RETURNING id`,
-      [
-        session.customerId,
-        brokerAccountId,
-        agentCode,
-        RULE_VERSION,
-        JSON.stringify({
-          ...result.computed.config,
-          max_deployment_cents: result.computed.maxDeploymentCents,
-          buying_power_cents: result.computed.buyingPowerCents,
-        }),
-        result.valid ? 'valid' : 'draft',
-      ],
-    )
 
     return NextResponse.json({
-      id: rows[0].id,
-      agent_code: agentCode,
-      rule_version: RULE_VERSION,
-      status: result.valid ? 'valid' : 'draft',
-      schema: AGENT_RULE_SCHEMA[agentCode],
-      limits: {
-        max_deployment_cents: result.computed.maxDeploymentCents,
-        buying_power_cents: result.computed.buyingPowerCents,
-      },
-      violations: result.violations,
-      warnings: result.warnings,
+      id: draft.id,
+      agent_code: draft.agent_code,
+      rule_version: draft.rule_version,
+      status: draft.status,
+      schema: draft.schema,
+      limits: draft.limits,
+      violations: draft.violations,
+      warnings: draft.warnings,
     })
   } catch (e) {
     const env = redactProviderError('v1/agent-configs', e, 'INTERNAL', 'Could not save your settings. Please try again.')

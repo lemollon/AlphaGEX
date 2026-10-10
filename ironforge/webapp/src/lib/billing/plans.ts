@@ -14,6 +14,14 @@ export interface BotPlan {
   name: string
   /** Stripe product-ish label, e.g. "IronForge Flame". */
   productName: string
+  /**
+   * WHAT it trades, in customer words. Identical for both bots BY DESIGN — they
+   * run one strategy at two clocks — so if these two strings ever differ, either
+   * the products genuinely diverged or someone edited one and not the other.
+   */
+  structure: string
+  /** WHEN it trades, qualitatively. The only honest difference between the bots. */
+  cadence: string
   /** One-line description of what the bot does (mirrors the mockup subtitle). */
   blurb: string
   /** Monthly price in whole dollars. */
@@ -28,6 +36,14 @@ export interface BotPlan {
   liveHref: string
 }
 
+/**
+ * Checkout blurb, composed rather than typed, so the sentence and the structured
+ * fields beside it cannot drift into disagreeing about the same product.
+ */
+function botBlurb(name: string, structure: string, cadence: string): string {
+  return `Set up a dedicated ${name} account that trades ${structure} ${cadence}, automatically.`
+}
+
 export const BOT_PLANS: Record<BotSlug, BotPlan> = {
   spark: {
     slug: 'spark',
@@ -37,8 +53,10 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     // run ONE strategy at two clocks (Spark morning, Flame afternoon), so the
     // only honest difference in the copy is the time of day. Describes the
     // mechanics, never an outcome.
-    blurb: 'Set up a dedicated Spark account that trades same-day (0DTE) SPY put credit spreads each morning, automatically.',
-    priceMonthly: 50,
+    structure: 'same-day (0DTE) SPY put credit spreads',
+    cadence: 'each morning',
+    blurb: botBlurb('Spark', 'same-day (0DTE) SPY put credit spreads', 'each morning'),
+    priceMonthly: 49.99,
     lookupKey: 'spark_monthly',
     accent: '#3B82F6', // Spark blue
     mascot: '/home/spark-mascot-glow.png',
@@ -50,8 +68,10 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
     productName: 'IronForge Flame',
     // 0DTE as of 2026-08-16 — see the note on Spark. Flame is the afternoon
     // tranche of the same strategy.
-    blurb: 'Set up a dedicated Flame account that trades same-day (0DTE) SPY put credit spreads each afternoon, automatically.',
-    priceMonthly: 50,
+    structure: 'same-day (0DTE) SPY put credit spreads',
+    cadence: 'each afternoon',
+    blurb: botBlurb('Flame', 'same-day (0DTE) SPY put credit spreads', 'each afternoon'),
+    priceMonthly: 49.99,
     lookupKey: 'flame_monthly',
     accent: '#EE5A24', // Flame / brand orange
     mascot: '/home/flame-mascot-glow.png',
@@ -59,27 +79,60 @@ export const BOT_PLANS: Record<BotSlug, BotPlan> = {
   },
 }
 
-/** The two-bot bundle — offered as an upsell, priced below 2× a single bot. */
+/**
+ * Short tagline for compact surfaces (customer bot pages, the public track
+ * record, the bot ledger). Composed from the same two fields as the blurb.
+ *
+ * THIS EXISTS BECAUSE THE TAGLINES DRIFTED AND SHIPPED A FALSE STATEMENT. On
+ * 2026-08-16 Flame's hardcoded tagline was corrected from "Two-day" to
+ * "Same-day" — and Spark's, which said "Next-day SPY spreads", was left alone
+ * even though `dteMode('spark')` had returned '0DTE' since the same change. It
+ * went out on `/api/public/track-record`, unauthenticated, telling anyone who
+ * asked that a customer's money was doing something it was not. Derive it.
+ */
+export function botTagline(slug: BotSlug): string {
+  const p = BOT_PLANS[slug]
+  // "same-day (0DTE) SPY put credit spreads" -> "Same-day SPY put credit spreads"
+  const structure = p.structure.replace(/\s*\(0DTE\)/, '')
+  return structure.charAt(0).toUpperCase() + structure.slice(1)
+}
+
+/**
+ * The two-bot bundle. LEGACY / NOT FOR SALE as of 2026-10-04 (Leron, binding) — no new
+ * enrollment or checkout path may open this price. A customer wanting Spark AND Flame
+ * now buys two separate $49.99/mo subscriptions (see plan/route.ts, checkout/route.ts,
+ * PlanClient.tsx — none of them reference this constant any more for a NEW purchase).
+ *
+ * Still exported and still read by webhook.ts / membership.ts / membership-sync.ts /
+ * apple-products.ts so an EXISTING both_monthly subscriber keeps being recognised and
+ * entitled correctly — do not remove.
+ */
 export const BOTH_PLAN = {
   lookupKey: 'both_monthly',
   priceMonthly: 75,
 }
 
 /**
- * Community — chat + education access, no trading bot. A standalone paid tier: someone can buy it
- * without a bot, and it's included implicitly for anyone who owns a bot. Tracked as a
- * customer_bot_subscriptions row with bot = COMMUNITY_KEY (the table's `bot` column is free-text).
- * No free trial — it's low-cost, immediate access.
+ * Community — chat + education access, no trading bot. FREE as of 2026-10-05 (Leron,
+ * binding) — every NEW signup joins at $0, no Stripe subscription, same as Ember's
+ * `priceMonthly: 0` pattern. `lookupKey` is kept ONLY so existing paid subscribers
+ * (who bought community_monthly before this change) keep resolving correctly in
+ * webhook.ts / membership.ts / membership-sync.ts / apple-products.ts — no NEW checkout
+ * session may ever be opened against it again (see api/billing/checkout/route.ts and
+ * api/ops/billing-sync-prices/route.ts, which no longer targets it). Tracked as a
+ * customer_bot_subscriptions row with bot = COMMUNITY_KEY (the table's `bot` column is
+ * free-text); a free join writes that row directly with stripe_subscription_id = NULL.
  */
 export const COMMUNITY_KEY = 'community'
 export const COMMUNITY_PLAN = {
   key: COMMUNITY_KEY,
   name: 'Forge Community',
   lookupKey: 'community_monthly',
-  // DISPLAY price. The amount actually charged comes from the Stripe price
-  // behind lookupKey 'community_monthly' — if that is still set to 15, the site
-  // will advertise $10 and bill $15. Change both together.
-  priceMonthly: 10,
+  // Free for every new signup. NOT the amount Stripe would charge any more — see the
+  // free/legacy note above. Existing paid subscribers are untouched; read
+  // GET /api/ops/community-paid-subscribers for who that is.
+  priceMonthly: 0,
+  free: true,
 }
 export function isCommunityKey(v: string | null | undefined): boolean {
   return v === COMMUNITY_KEY
@@ -114,11 +167,11 @@ export const TRIAL_DAYS = 5
  * problem, so all copy now reads from here.
  *
  * STARTER/PRO are derived from the Stripe-backed plans above so a marketing number can
- * never drift from what checkout actually bills. COMMUNITY is now Stripe-backed too
- * (COMMUNITY_PLAN, lookup key community_monthly) and sellable through checkout.
+ * never drift from what checkout actually bills. COMMUNITY is free as of 2026-10-05
+ * (COMMUNITY_PLAN.priceMonthly === 0, COMMUNITY_PLAN.free === true) — no new checkout.
  */
 export const MARKETING_TIERS = {
-  /** Community/education tier — no bot execution. Billed via COMMUNITY_PLAN ($15/mo). */
+  /** Community/education tier — no bot execution. Free (COMMUNITY_PLAN). */
   community: { name: COMMUNITY_PLAN.name, priceMonthly: COMMUNITY_PLAN.priceMonthly },
   /** One automated bot. Same price checkout bills for a single bot. */
   // Display name for the one-bot tier. Renamed Starter -> Automate 2026-07-29 to match

@@ -220,7 +220,7 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(50000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User', 'production')
-    expect(allocated).toBe(25000)
+    expect(allocated?.allocated).toBe(25000)
   })
 
   it('should calculate 100% of $50,000 = $50,000', async () => {
@@ -231,7 +231,9 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(50000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User100', 'production')
-    expect(allocated).toBe(50000)
+    expect(allocated?.allocated).toBe(50000)
+    expect(allocated?.equity).toBe(50000)
+    expect(allocated?.source).toBe('db')
   })
 
   it('should calculate 1% of $100,000 = $1,000', async () => {
@@ -242,7 +244,7 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(100000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User1', 'production')
-    expect(allocated).toBe(1000)
+    expect(allocated?.allocated).toBe(1000)
   })
 
   it('should round to 2 decimal places', async () => {
@@ -253,36 +255,39 @@ describe('Allocated Capital Calculation', () => {
     setupTradierMocks(10000, apiKey)
 
     const allocated = await getAllocatedCapitalForAccount('User33', 'production')
-    expect(allocated).toBe(3300)
+    expect(allocated?.allocated).toBe(3300)
   })
 
-  it('should fallback to $10,000 × pct when Tradier is unreachable', async () => {
+  it('returns NULL (never a fabricated $10,000) when Tradier is unreachable', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 50 }])
       .mockResolvedValueOnce([{ api_key: 'unreachable-key' }])
     mockFetch.mockRejectedValue(new Error('network error'))
 
+    // 🚨 A guess here reached a customer: FLAME's live ledger read $10,178 on a
+    // ~$4.2k Tradier account because this used to return 10000 × pct. Null means
+    // the caller must skip the write, not invent a balance.
     const allocated = await getAllocatedCapitalForAccount('UserDown', 'production')
-    expect(allocated).toBe(5000)
+    expect(allocated).toBeNull()
   })
 
-  it('should fallback when no account found in DB', async () => {
+  it('returns NULL when no account row and no env creds exist for the person', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 25 }])
       .mockResolvedValueOnce([]) // no api_key row
 
     const allocated = await getAllocatedCapitalForAccount('Ghost', 'production')
-    expect(allocated).toBe(2500)
+    expect(allocated).toBeNull()
   })
 
-  it('should fallback when API key is empty string (falsy)', async () => {
+  it('returns NULL when the API key is an empty string (falsy)', async () => {
     mockDbQuery
       .mockResolvedValueOnce([{ capital_pct: 50 }])
       .mockResolvedValueOnce([{ api_key: '' }]) // empty string, not NULL
 
     const allocated = await getAllocatedCapitalForAccount('EmptyKey', 'production')
-    // "" is falsy in JS, so `if (rows[0].api_key)` skips → fallback
-    expect(allocated).toBe(5000) // $10,000 × 50%
+    // "" is falsy in JS, so `if (rows[0].api_key)` skips → unreadable → null
+    expect(allocated).toBeNull()
   })
 
   it('should round allocated capital to 2 decimal places', async () => {
@@ -304,9 +309,9 @@ describe('Allocated Capital Calculation', () => {
 
     const allocated = await getAllocatedCapitalForAccount('RoundUser', 'production')
     // Math.round(10003 * 33 / 100 * 100) / 100 = Math.round(330099) / 100 = 3300.99
-    expect(allocated).toBe(3300.99)
+    expect(allocated?.allocated).toBe(3300.99)
     // Verify it's exactly 2 decimal places (no floating point artifacts)
-    expect(String(allocated).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2)
+    expect(String(allocated?.allocated).split('.')[1]?.length ?? 0).toBeLessThanOrEqual(2)
   })
 })
 
@@ -389,7 +394,9 @@ describe('Edge Cases', () => {
     })
 
     const allocated = await getAllocatedCapitalForAccount('UserZero', 'production')
-    expect(allocated).toBe(0)
+    // A REAL zero-equity read is a number, not an absence — it must not be null.
+    expect(allocated?.allocated).toBe(0)
+    expect(allocated?.equity).toBe(0)
   })
 
   it('should handle SQL injection in person name', async () => {
@@ -469,6 +476,38 @@ describe('Scanner Capital Flow (Code Structure)', () => {
     )
     expect(fnMatch).toBeTruthy()
     expect(fnMatch![0]).toMatch(/getAllocatedCapitalForAccount\(\s*pa\.person,\s*'production'\s*\)/)
+  })
+
+  it('🚨 the PRODUCTION sync SKIPS when the broker capital is unreadable', () => {
+    // 2026-08-31: getAllocatedCapitalForAccount fabricated $10,000 when it could
+    // not reach the broker, and this sync wrote it over FLAME's real ledger —
+    // a ~$4.2k live Tradier account displayed $10,178 to the customer.
+    // A null must short-circuit BEFORE any UPDATE.
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    const body = fnMatch![0]
+    const prodBranch = body.slice(body.indexOf('for (const pa of prodRows)'))
+    const guardAt = prodBranch.indexOf('if (!alloc)')
+    const updateAt = prodBranch.indexOf('UPDATE')
+    expect(guardAt).toBeGreaterThan(-1)
+    expect(updateAt).toBeGreaterThan(-1)
+    expect(guardAt).toBeLessThan(updateAt)
+    expect(prodBranch.slice(guardAt, updateAt)).toMatch(/continue/)
+  })
+
+  it('🚨 the PRODUCTION basis subtracts realized P&L instead of double-counting it', () => {
+    // A production row mirrors a broker account: current_balance must equal the
+    // broker equity, so the basis is equity − realized. The old code set
+    // starting_capital = equity and balance = equity + pnl, adding the P&L twice.
+    const fnMatch = scannerSource.match(
+      /async function syncPaperAccountCapital[\s\S]*?^}/m,
+    )
+    const body = fnMatch![0]
+    const prodBranch = body.slice(body.indexOf('for (const pa of prodRows)'))
+    expect(prodBranch).toMatch(/alloc\.allocated - pnl/)
+    expect(prodBranch).not.toMatch(/const target = await getAllocatedCapitalForAccount/)
   })
 
   it('SANDBOX paper_account syncs from the config knob, not a broker call', () => {
@@ -599,6 +638,15 @@ describe('Consistent Balance Basis (total_equity)', () => {
     expect(fnBody).not.toMatch(/getSandboxBuyingPower/)
   })
 
+  it('🚨 getAllocatedCapitalForAccount NEVER fabricates a $10,000 fallback', () => {
+    const fnBody = tradierSource.match(
+      /export async function getAllocatedCapitalForAccount[\s\S]*?^}/m,
+    )?.[0] ?? ''
+    expect(fnBody).toBeTruthy()
+    expect(fnBody).not.toMatch(/10000/)
+    expect(fnBody).toMatch(/return null/)
+  })
+
   it('getSandboxTotalEquity reads total_equity from balances', () => {
     const fnMatch = tradierSource.match(
       /async function getSandboxTotalEquity[\s\S]*?^}/m,
@@ -608,13 +656,25 @@ describe('Consistent Balance Basis (total_equity)', () => {
     expect(fnBody).toMatch(/total_equity/)
   })
 
-  it('placeIcOrderAllAccounts uses getAccountsForBotAsync (DB-backed)', () => {
+  // Account selection moved out of placeIcOrderAllAccounts into
+  // resolveEligibleAccounts on 2026-08-20, so that /api/health can ask which
+  // accounts an order would reach WITHOUT placing one. The invariant is
+  // unchanged and still asserted here — it just lives in the extracted function
+  // now, and the order path must be the caller rather than a second copy.
+  it('account selection is DB-backed (resolveEligibleAccounts), not hardcoded', () => {
+    const fnMatch = tradierSource.match(
+      /export async function resolveEligibleAccounts[\s\S]*?^}/m,
+    )
+    expect(fnMatch).toBeTruthy()
+    expect(fnMatch![0]).toMatch(/getAccountsForBotAsync/)
+  })
+
+  it('placeIcOrderAllAccounts composes its accounts through that one function', () => {
     const fnMatch = tradierSource.match(
       /export async function placeIcOrderAllAccounts[\s\S]*?^}/m,
     )
     expect(fnMatch).toBeTruthy()
-    const fnBody = fnMatch![0]
-    expect(fnBody).toMatch(/getAccountsForBotAsync/)
+    expect(fnMatch![0]).toMatch(/resolveEligibleAccounts/)
   })
 })
 
@@ -1383,5 +1443,67 @@ describe('Production Account Safety', () => {
     expect(fn).toBeTruthy()
     const body = fn![0]
     expect(body).toMatch(/acct\.baseUrl/)
+  })
+})
+
+/* ────────────────────────────────────────────────────────────────
+ * ACCOUNT-ID CACHE SEEDING (2026-08-18)
+ *
+ * `ironforge_accounts.account_id` was always SELECTed by the DB loader and
+ * then discarded. getAccountIdForKey() therefore had to DISCOVER the account
+ * number by calling /user/profile — for a key whose account number was already
+ * sitting in the row it just read.
+ *
+ * That turned an unnecessary call into a hard gate. When /user/profile does not
+ * answer for a production key, getAccountIdForKey returns null and every caller
+ * reads that as "API key invalid" — including diagnose-production step 5a. The
+ * console reported a dead production key while the SAME key returned correct
+ * balances through /accounts/{id}/balances, which never needs the discovery
+ * call. Diagnosing a VALID key as invalid is the expensive direction: it
+ * silently stops a live bot from ever placing an order.
+ * ──────────────────────────────────────────────────────────────── */
+
+describe('production account id is taken from the DB, not rediscovered', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    mockFetch.mockReset()
+    mockDbQuery.mockReset()
+  })
+
+  it('never calls /user/profile once account_id is available on the row', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-abc', account_id: '6YA12345', type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    await tradier.getLoadedSandboxAccountsAsync()
+
+    // The behaviour that matters: the discovery call is what fails for a
+    // production key and gets misread as "API key invalid". It must not happen.
+    const profileCalls = mockFetch.mock.calls.filter(
+      (c: any[]) => String(c[0]).includes('/user/profile'),
+    )
+    expect(profileCalls).toHaveLength(0)
+  })
+
+  it('reads account_id out of the accounts table', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-abc', account_id: '6YA12345', type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    await tradier.getLoadedSandboxAccountsAsync()
+    // The column was always SELECTed and then thrown away — this pins that the
+    // query still asks for it, so a future tidy-up cannot silently drop it.
+    const sql = mockDbQuery.mock.calls.map((c: any[]) => String(c[0])).join(' ')
+    expect(sql).toContain('account_id')
+    expect(sql).toContain('ironforge_accounts')
+  })
+
+  it('a row with no account_id still loads — discovery remains the fallback', async () => {
+    mockDbQuery.mockResolvedValue([
+      { person: 'Logan', api_key: 'prod-key-none', account_id: null, type: 'production' },
+    ])
+    const tradier: any = await import('../tradier')
+    const accts = await tradier.getLoadedSandboxAccountsAsync()
+    expect(Array.isArray(accts)).toBe(true)
   })
 })

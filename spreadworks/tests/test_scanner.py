@@ -1110,8 +1110,90 @@ def test_settlement_value_xsp_falls_back_to_spx_close_over_10():
         {"side": "long",  "type": "call", "strike": 506, "expiration": "2026-05-20"},
     ]
     # SPX 5030 -> XSP settle 503 -> fly payoff = 5 - |503-501| = 3.00
-    val = _settlement_value(provider, "XSP", legs, _date(2026, 5, 20))
+    val = _settlement_value(provider, "XSP", legs, _date(2026, 5, 20),
+                            "long_butterfly")
     assert val == 3.0
+
+
+# ---------------------------------------------------------------------------
+# CREDIT settlement — regression for the 2026-08-17 mis-book.
+#
+# `_settlement_value` returned max(0.0, long_intrinsic - short_intrinsic) for
+# EVERY strategy, under a comment that only held for net-long debit flies. For
+# a bull put spread that expression is the NEGATIVE of the cost to buy back,
+# so an in-the-money short leg produced exactly 0.00 -- which `close_position`
+# reads as "closed for nothing", i.e. MAX PROFIT. EBB's first live trade booked
+# +$13.00 on a real -$120.00. Only losing expiries were affected, so the ledger
+# was wrong precisely on the trades that decide whether the bot has an edge.
+# ---------------------------------------------------------------------------
+
+def _spy_daily(close):
+    return FakeChainProvider(daily_history={
+        "SPY": [{"date": "2026-08-17", "open": 776.27, "high": 776.78,
+                 "low": 772.51, "close": close}],
+    })
+
+
+_EBB_LEGS = [
+    {"side": "long",  "type": "put", "strike": 772, "expiration": "2026-08-17"},
+    {"side": "short", "type": "put", "strike": 774, "expiration": "2026-08-17"},
+]
+
+
+def test_credit_spread_itm_settles_at_cost_to_buy_back_not_zero():
+    """THE 2026-08-17 REGRESSION. SPY closed 772.67 with the 774 short put
+    $1.33 in the money; buying that spread back costs 1.33, so `close_value`
+    must be 1.33 and NOT 0.00."""
+    from backend.bots.scanner import _settlement_value
+    from datetime import date as _date
+    val = _settlement_value(_spy_daily(772.67), "SPY", _EBB_LEGS,
+                            _date(2026, 8, 17), "bull_put_spread")
+    assert val == 1.33
+    # and the P&L that falls out of it is the real loss, not max profit
+    entry_credit = 0.13
+    assert round((entry_credit - val) * 1 * 100.0, 2) == -120.00
+
+
+def test_credit_spread_beyond_the_long_strike_caps_at_the_width():
+    """Through BOTH strikes the loss stops at the wing width — the defined-risk
+    guarantee has to survive the sign flip."""
+    from backend.bots.scanner import _settlement_value
+    from datetime import date as _date
+    val = _settlement_value(_spy_daily(760.00), "SPY", _EBB_LEGS,
+                            _date(2026, 8, 17), "bull_put_spread")
+    assert val == 2.0
+
+
+def test_credit_spread_otm_still_settles_worthless():
+    """The winning case must be untouched: both strikes out of the money ->
+    nothing to buy back -> 0.00 -> full credit kept. EBB_PM's 772/770 on the
+    same session finished here legitimately."""
+    from backend.bots.scanner import _settlement_value
+    from datetime import date as _date
+    legs = [
+        {"side": "long",  "type": "put", "strike": 770, "expiration": "2026-08-17"},
+        {"side": "short", "type": "put", "strike": 772, "expiration": "2026-08-17"},
+    ]
+    val = _settlement_value(_spy_daily(772.67), "SPY", legs,
+                            _date(2026, 8, 17), "bull_put_spread")
+    assert val == 0.0
+
+
+def test_debit_fly_settlement_unchanged_by_the_credit_branch():
+    """The debit path must be byte-identical to before the fix — RIPPLE and
+    SPLASH are the bots the original clamp was written for."""
+    from backend.bots.scanner import _settlement_value
+    from datetime import date as _date
+    legs = [
+        {"side": "long",  "type": "call", "strike": 770, "expiration": "2026-08-17"},
+        {"side": "short", "type": "call", "strike": 773, "expiration": "2026-08-17"},
+        {"side": "short", "type": "call", "strike": 773, "expiration": "2026-08-17"},
+        {"side": "long",  "type": "call", "strike": 776, "expiration": "2026-08-17"},
+    ]
+    # payoff = 3 - |772.67 - 773| = 2.67
+    val = _settlement_value(_spy_daily(772.67), "SPY", legs,
+                            _date(2026, 8, 17), "long_butterfly")
+    assert val == 2.67
 
 
 # ---------------------------------------------------------------------------

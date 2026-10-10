@@ -1,0 +1,624 @@
+import base64
+import gzip
+import json
+import os
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+
+import pytest
+
+from backend.ember import fleet_runtime as fleet
+from backend.ember import runtime as xsp_runtime
+from backend.ember import astra_live, astra_runtime
+from backend.ember import xsp_flow_live
+from backend.ember.legacy import divhike, night_shift, spike
+
+
+def test_night_uses_its_own_envelope_and_fails_closed():
+    assert night_shift.buy_dollar_amount(150.0, 500.0, 20.0)[0] == 150.0
+    assert night_shift.buy_dollar_amount(150.0, 120.0, 20.0)[0] == 100.0
+    assert night_shift.buy_dollar_amount(None, 500.0, 20.0)[0] == 0.0
+    assert night_shift.buy_dollar_amount(150.0, None, 20.0)[0] == 0.0
+
+
+def test_seed_decoder_requires_a_json_object():
+    spec = fleet.SPECS["night_shift"]
+    encoded = base64.b64encode(json.dumps({"position": None}).encode()).decode()
+    assert fleet._decode_seed(encoded, spec) == {"position": None}
+    compressed = base64.b64encode(gzip.compress(json.dumps({"position": None}).encode())).decode()
+    assert fleet._decode_seed(compressed, spec) == {"position": None}
+    bad = base64.b64encode(json.dumps([1, 2]).encode()).decode()
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError):
+        fleet._decode_seed(bad, spec)
+
+
+def test_live_refuses_an_unmigrated_empty_state(monkeypatch):
+    spec = fleet.SPECS["call_diag"]
+    monkeypatch.setattr(fleet.xsp_runtime, "_validate_runtime", lambda live: None)
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="migrated"):
+        fleet._validate_live(spec, True, "fresh_empty")
+
+
+def test_seed_replaces_earlier_empty_boot_once(monkeypatch, tmp_path):
+    original = fleet.SPECS["call_diag"]
+    spec = replace(original, state_path=tmp_path / "state.json")
+    post_boot = {
+        **spec.default_state,
+        "2026-09-21": {"ref_ids": {"reconcile": "dry-run-only"}},
+    }
+    spec.state_path.write_text(json.dumps(post_boot), encoding="utf-8")
+    seed = {"positions": [{"id": "owned-1", "state": "open"}], "legs": {}}
+    encoded = base64.b64encode(json.dumps(seed).encode()).decode()
+    monkeypatch.setenv(spec.seed_env, encoded)
+    store = {spec.state_key: json.dumps(post_boot)}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_get", store.get)
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", store.__setitem__)
+
+    assert fleet._hydrate(spec) == "seed"
+    hydrated = json.loads(spec.state_path.read_text(encoding="utf-8"))
+    assert hydrated["positions"] == seed["positions"]
+    assert hydrated["2026-09-21"] == post_boot["2026-09-21"]
+    assert json.loads(store[spec.state_key]) == hydrated
+    assert store[spec.seed_key]
+    assert fleet._hydrate(spec) == "disk"
+
+
+def test_seed_refuses_to_overwrite_nonempty_runtime_state(monkeypatch, tmp_path):
+    original = fleet.SPECS["call_diag"]
+    spec = replace(original, state_path=tmp_path / "state.json")
+    current = {"positions": [{"id": "current", "state": "open"}], "legs": {}}
+    seed = {"positions": [{"id": "old", "state": "open"}], "legs": {}}
+    spec.state_path.write_text(json.dumps(current), encoding="utf-8")
+    monkeypatch.setenv(
+        spec.seed_env,
+        base64.b64encode(json.dumps(seed).encode()).decode(),
+    )
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_get", lambda key: None)
+
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="conflicts"):
+        fleet._hydrate(spec)
+
+
+def test_status_expands_tv_book_into_rr_and_bounce_and_redacts(monkeypatch):
+    monkeypatch.setattr(fleet, "_env_bool", lambda name, default=False: True)
+
+    def fake_get(key):
+        if key.endswith(".status"):
+            return json.dumps({
+                "updated_at": "2026-09-21T10:00:00-05:00",
+                "mode": "RECONCILE", "return_code": 0,
+                "last_log": "account=570892331 order_id=secret filled",
+                "hydrate_source": "seed", "dependency_gaps": [],
+            })
+        if key.endswith(".preflight"):
+            return json.dumps({
+                "checked_at": "2026-09-21T09:00:00-05:00",
+                "return_code": 0,
+                "result": "PREFLIGHT OK account=570892331",
+            })
+        return json.dumps({"positions": []})
+
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_get", fake_get)
+    rows = fleet.read_status()
+    assert {row["strategy"] for row in rows} == {
+        "call_diag", "night_shift", "divhike", "rr", "bounce", "spike"
+    }
+    assert all("570892331" not in row["last_result"] for row in rows)
+    assert all("secret" not in row["last_result"] for row in rows)
+    assert all("570892331" not in row["broker_preflight_result"] for row in rows)
+    assert all(row["ready_to_trade"] for row in rows)
+
+
+def test_night_status_counts_one_position_not_position_fields():
+    assert fleet._state_count("night_shift", {"position": None}) == 0
+    assert fleet._state_count(
+        "night_shift",
+        {"position": {"qty": 3.8, "opened_date": "2026-09-21", "dry_run": False}},
+    ) == 1
+
+
+def test_preflight_is_read_only_and_does_not_run_reconcile(monkeypatch, tmp_path):
+    spec = replace(
+        fleet.SPECS["call_diag"],
+        log_path=tmp_path / "call_diag.log",
+    )
+    monkeypatch.setitem(fleet.SPECS, "call_diag", spec)
+    monkeypatch.setenv(spec.enabled_env, "1")
+    locks = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **kwargs: locks.append(name) or object())
+    monkeypatch.setattr(fleet, "_release_lock", lambda _db, _name: None)
+
+    def fake_preflight(name, account, output):
+        output.write_text("PREFLIGHT OK broker read-only\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(fleet, "_broker_preflight", fake_preflight)
+    recorded = {}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", recorded.__setitem__)
+    monkeypatch.setattr(fleet, "_run", lambda *args, **kwargs: pytest.fail("must not replay RECONCILE"))
+
+    fleet.run_preflight("call_diag")
+
+    assert locks == ["call_diag", "agent-runtime"]
+    payload = json.loads(recorded[spec.preflight_key])
+    assert payload["return_code"] == 0
+    assert payload["result"].endswith("PREFLIGHT OK broker read-only")
+
+
+def test_startup_uses_one_shared_broker_preflight(monkeypatch, tmp_path):
+    for spec in fleet.SPECS.values():
+        monkeypatch.setenv(spec.enabled_env, "1")
+    first = replace(fleet.SPECS["call_diag"], log_path=tmp_path / "call_diag.log")
+    monkeypatch.setitem(fleet.SPECS, "call_diag", first)
+    calls = []
+    monkeypatch.setattr(fleet, "_acquire_lock", lambda name, **kwargs: object())
+    monkeypatch.setattr(fleet, "_release_lock", lambda _db, _name: None)
+
+    def fake_preflight(name, account, output):
+        calls.append((name, account))
+        output.write_text("PREFLIGHT OK broker read-only\n", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(fleet, "_broker_preflight", fake_preflight)
+    recorded = {}
+    monkeypatch.setattr(fleet.xsp_runtime, "_config_put", recorded.__setitem__)
+
+    fleet.run_fleet_preflights()
+
+    assert calls == [("fleet", fleet.call_diag.ACCOUNT)]
+    assert {
+        key for key in recorded if key.endswith(".preflight")
+    } == {spec.preflight_key for spec in fleet.SPECS.values()}
+    assert all(
+        json.loads(recorded[spec.preflight_key])["return_code"] == 0
+        for spec in fleet.SPECS.values()
+    )
+
+
+def test_all_enabled_jobs_are_registered(monkeypatch):
+    for spec in fleet.SPECS.values():
+        monkeypatch.setenv(spec.enabled_env, "1")
+
+    class Scheduler:
+        def __init__(self):
+            self.jobs = []
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs.append((func, trigger, kwargs))
+
+    scheduler = Scheduler()
+    fleet.register(scheduler)
+    ids = {kwargs["id"] for _, _, kwargs in scheduler.jobs}
+    assert "ember_fleet_preflight" in ids
+    assert not any(job_id.endswith("_preflight") for job_id in ids - {"ember_fleet_preflight"})
+    assert {
+        "ember_call_diag_cycle", "ember_night_shift_cycle", "ember_divhike_cycle",
+        "ember_tv_book_cycle", "ember_spike_enter_cycle", "ember_spike_manage_cycle",
+    }.issubset(ids)
+
+
+def test_scheduled_fleet_cycles_wait_for_the_shared_broker(monkeypatch):
+    calls = []
+    monkeypatch.setattr(fleet, "_run", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    fleet.run_call_diag()
+    fleet.run_night_shift()
+    fleet.run_divhike()
+    fleet.run_tv_book()
+    fleet.run_spike_enter()
+    fleet.run_spike_manage()
+
+    assert len(calls) == 6
+    assert all(
+        kwargs["agent_wait_seconds"] == fleet.BROKER_LOCK_WAIT_SECONDS
+        for _, kwargs in calls
+    )
+
+
+def test_xsp_waits_for_the_shared_broker_lock(monkeypatch):
+    names = []
+    global_results = iter([False, True])
+
+    class Scalar:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one(self):
+            return self.value
+
+    class Db:
+        def execute(self, _query, params):
+            names.append(params["name"])
+            if params["name"] == xsp_flow_live.BOT_ID:
+                return Scalar(True)
+            return Scalar(next(global_results))
+
+        def close(self):
+            return None
+
+    db = Db()
+    monotonic = iter([0.0, 0.0, 0.0])
+    monkeypatch.setattr(xsp_runtime, "SessionLocal", lambda: db)
+    monkeypatch.setattr(xsp_runtime.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(xsp_runtime.time, "sleep", lambda _seconds: None)
+
+    assert xsp_runtime._acquire_cycle_lock(wait_seconds=10) is db
+    assert names == [
+        xsp_flow_live.BOT_ID,
+        "ember-fleet:agent-runtime",
+        "ember-fleet:agent-runtime",
+    ]
+
+
+def test_headless_claude_command_accepts_only_allowlisted_tools():
+    tools = ["Read", "Write", "mcp__robinhood-trading__get_accounts"]
+    command = xsp_flow_live.build_claude_command("claude", tools)
+    assert command == [
+        "claude", "-p",
+        "--permission-mode", "acceptEdits",
+        "--permission-prompts", "none",
+        "--allowedTools", *tools,
+    ]
+
+
+def test_oauth_token_takes_precedence_over_legacy_api_key(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-test-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "depleted-api-key")
+    child = xsp_flow_live.read_secret_environment()
+    assert child["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-test-token"
+    assert "ANTHROPIC_API_KEY" not in child
+
+
+def test_xsp_stale_lock_recovers_when_scheduler_pid_is_still_alive(monkeypatch, tmp_path):
+    lock = tmp_path / "xsp-flow.lock"
+    lock.write_text(json.dumps({
+        "pid": os.getpid(),
+        "started_at": (datetime.now(UTC) - timedelta(minutes=13)).isoformat(),
+    }))
+    with xsp_flow_live.single_instance_lock(lock):
+        assert json.loads(lock.read_text())["pid"] == os.getpid()
+    assert not lock.exists()
+
+
+def test_astra_live_requires_migrated_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(astra_live, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setenv("ASTRA_LIVE_ARMED", "1")
+    monkeypatch.setenv("ASTRA_LIVE_DRY_RUN", "0")
+    monkeypatch.setenv("ASTRA_LIVE_FORWARD_GATE_OVERRIDE", "1")
+    monkeypatch.delenv("ASTRA_LIVE_STATE_B64", raising=False)
+    with pytest.raises(fleet.xsp_runtime.EmberRuntimeError, match="not migrated"):
+        astra_runtime._hydrate_state()
+
+
+def test_astra_state_seed_is_account_bound(monkeypatch, tmp_path):
+    monkeypatch.setattr(astra_live, "STATE_PATH", tmp_path / "state.json")
+    state = astra_live._default_state(astra_live.Config.load())
+    monkeypatch.setenv(
+        "ASTRA_LIVE_STATE_B64",
+        base64.b64encode(json.dumps(state).encode()).decode(),
+    )
+    assert astra_runtime._hydrate_state() == "seed"
+    assert json.loads(astra_live.STATE_PATH.read_text())["account"] == astra_live.ACCOUNT
+
+
+def test_astra_jobs_are_registered_when_enabled(monkeypatch):
+    monkeypatch.setenv("ASTRA_LIVE_ENABLED", "1")
+
+    class Scheduler:
+        def __init__(self):
+            self.jobs = []
+
+        def add_job(self, func, trigger, **kwargs):
+            self.jobs.append((func, trigger, kwargs))
+
+    scheduler = Scheduler()
+    astra_runtime.register(scheduler)
+    ids = {kwargs["id"] for _, _, kwargs in scheduler.jobs}
+    assert ids == {"ember_astra3_live_preflight", "ember_astra3_live_cycle"}
+
+
+def test_cloud_status_redacts_provider_credentials():
+    message = "403 for https://data.example.test/path?apiKey=secret-value&tickers=SPY"
+    redacted = fleet._redact(message)
+    assert "secret-value" not in redacted
+    assert "apiKey=[redacted]&tickers=SPY" in redacted
+
+
+def test_divhike_entry_eligibility_requires_today_bar(monkeypatch):
+    today = date(2026, 9, 21)
+    bars = []
+    for i in range(63):
+        stamp = datetime(2026, 6, 21, 12, tzinfo=divhike.CT).timestamp() + i * 86400
+        bars.append({"t": stamp * 1000, "c": 5.0, "v": 1_000_000})
+    bars[-1]["t"] = datetime(2026, 9, 21, 12, tzinfo=divhike.CT).timestamp() * 1000
+    monkeypatch.setattr(divhike, "_polygon_get", lambda *a, **k: {"results": bars})
+    ok, reason, metrics = divhike._entry_eligibility("TEST", today)
+    assert ok, reason
+    assert metrics["entry_close"] == 5.0
+    assert metrics["trailing_dolvol_median"] == 5_000_000.0
+
+
+# 2026-09-28 (later same day): Leron dropped Polygon entirely for SPIKE --
+# ThetaData is now the ONLY live market-data source (this account's Polygon
+# plan could never rescue a live gap anyway, see spike-data-fix-result-9-28.md).
+# `_load_polygon_enter_market_data`/`_load_cloud_history` no longer exist.
+
+def test_spike_cloud_uses_theta_universe_as_is(monkeypatch):
+    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    theta_rows = [
+        {"symbol": "AAA", "price": 1.0, "vol": 2_000_000, "provider": "theta"},
+        {"symbol": "BBB", "price": 2.0, "vol": 2_000_000, "provider": "theta"},
+    ]
+    theta_history = {
+        symbol: ([{"date": "2026-09-18", "close": 1.0, "volume": 1_000_000}], "theta")
+        for symbol in ("AAA", "BBB")
+    }
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (theta_rows, theta_history),
+    )
+
+    universe, history = spike._load_cloud_enter_market_data(date(2026, 9, 21))
+    assert {row["provider"] for row in universe} == {"theta"}
+    assert set(history) == {"AAA", "BBB"}
+
+
+def test_spike_dependency_requires_thetadata_polygon_is_not_a_substitute(monkeypatch):
+    """POLYGON_API_KEY can no longer satisfy SPIKE's data-source dependency --
+    THETADATA_BASE_URL is the only thing that counts now."""
+    monkeypatch.setenv("POLYGON_API_KEY", "still-set-but-irrelevant")
+    monkeypatch.delenv("THETADATA_BASE_URL", raising=False)
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
+    assert fleet._dependency_gaps(fleet.SPECS["spike"]) == ["THETADATA_BASE_URL"]
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "thetadata-proxy:10000")
+    assert fleet._dependency_gaps(fleet.SPECS["spike"]) == []
+
+
+# ---------------------------------------------------------------- 2026-09-28 fixes
+# See C:\Users\lemol\.claude\handoff\ember-fix-result-9-28.md for the root-cause writeup.
+
+def test_market_is_open_boundary_is_0830_ct():
+    from datetime import datetime as dt_
+
+    assert spike.market_is_open(dt_(2026, 9, 28, 8, 29, tzinfo=spike.CT)) is False
+    assert spike.market_is_open(dt_(2026, 9, 28, 8, 30, tzinfo=spike.CT)) is True
+    assert spike.market_is_open(dt_(2026, 9, 28, 14, 0, tzinfo=spike.CT)) is True
+
+
+def test_spike_enter_preopen_is_idle_not_a_data_outage(monkeypatch, tmp_path):
+    """08:00/08:15 CT ENTER ticks fire before the 08:30 CT open (fleet_runtime's
+    cron), so no fresh ThetaData/Polygon snapshot can exist yet. Before the fix
+    this fell all the way into load_enter_market_data() and surfaced as
+    'RuntimeError: no fresh ThetaData or Polygon SPIKE market data' -- a
+    BLOCKED cycle for a perfectly normal pre-open gap. It must now log IDLE
+    and return cleanly without ever calling the data loader."""
+    monkeypatch.setattr(spike, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(spike, "LOG_TXT", tmp_path / "log.txt")
+    monkeypatch.setattr(spike, "notify", lambda tone, line: None)
+    monkeypatch.setattr(
+        spike, "load_enter_market_data",
+        lambda today: pytest.fail("pre-open ENTER must not fetch market data"),
+    )
+    cfg = spike.Cfg(armed=True, dry_run=False, slot_pct=5.0)
+    now = datetime(2026, 9, 28, 8, 5, tzinfo=spike.CT)  # Monday, 08:05 CT -- before 08:30 open
+    rc = spike.run_enter(now, cfg)
+    assert rc == 0
+    log = (tmp_path / "log.txt").read_text(encoding="utf-8")
+    assert "IDLE" in log
+    assert "08:30" in log
+
+
+def test_spike_enter_after_open_still_loads_market_data(monkeypatch, tmp_path):
+    """Same tick, 30 minutes later -- must NOT be gated as pre-open."""
+    monkeypatch.setattr(spike, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(spike, "LOG_TXT", tmp_path / "log.txt")
+    monkeypatch.setattr(spike, "notify", lambda tone, line: None)
+    called = {}
+
+    def fake_loader(today):
+        called["hit"] = True
+        return [], {}
+
+    monkeypatch.setattr(spike, "load_enter_market_data", fake_loader)
+    cfg = spike.Cfg(armed=True, dry_run=False, slot_pct=5.0)
+    now = datetime(2026, 9, 28, 8, 30, tzinfo=spike.CT)  # exactly the open
+    rc = spike.run_enter(now, cfg)
+    assert rc == 0
+    assert called.get("hit") is True
+
+
+def test_run_agent_manage_signal_does_not_raise_keyerror(monkeypatch, tmp_path):
+    """build_manage_signal() never carries a 'slot_pct' key (MANAGE doesn't
+    size new entries) -- run_agent()'s run-started header line used to read
+    sig['slot_pct'] directly and raised KeyError for every MANAGE tick (the
+    9/25 19:45Z / 14:45 CT spike_manage cron slot). It must read cfg.slot_pct
+    instead, the same source ENTER's signal copies it from."""
+    monkeypatch.setattr(spike, "RUN_OUTPUT", tmp_path / "run-output.log")
+    monkeypatch.setattr(
+        spike.subprocess, "run",
+        lambda *a, **k: type("Result", (), {"returncode": 0})(),
+    )
+    cfg = spike.Cfg(slot_pct=7.5)
+    sig = spike.build_manage_signal(
+        datetime(2026, 9, 28, 14, 45, tzinfo=spike.CT), cfg, {"positions": []},
+    )
+    assert "slot_pct" not in sig  # confirms MANAGE really omits the key
+
+    rc = spike.run_agent(sig, cfg)
+
+    assert rc == 0
+    header = (tmp_path / "run-output.log").read_text(encoding="utf-8")
+    assert "slot_pct=7.5" in header
+
+
+def test_broker_lock_wait_budget_raised_and_shared():
+    """2026-09-28 root cause: night_shift/astra3-live/call_diag/XSP all
+    contend on the single 'ember-fleet:agent-runtime' advisory lock roughly
+    once a minute during market hours, and each cycle's own Claude/MCP
+    broker call is allowed to run up to 540-600s before releasing it -- a
+    600s wait budget is not enough headroom if two of those cycles stack
+    back-to-back. astra_runtime and runtime.py must share fleet_runtime's
+    constant rather than carry their own copy that can drift out of sync."""
+    assert fleet.BROKER_LOCK_WAIT_SECONDS == 25 * 60
+    assert astra_runtime.BROKER_LOCK_WAIT_SECONDS is fleet.BROKER_LOCK_WAIT_SECONDS
+
+
+def test_xsp_run_uses_fleet_lock_wait_budget(monkeypatch):
+    monkeypatch.setenv("EMBER_XSP_ENABLED", "true")
+    captured: dict = {}
+
+    def fake_acquire_cycle_lock(*, wait_seconds=0):
+        captured["wait_seconds"] = wait_seconds
+        return None  # busy -- _run() must log-and-return, never touch SessionLocal
+
+    monkeypatch.setattr(xsp_runtime, "_acquire_cycle_lock", fake_acquire_cycle_lock)
+    xsp_runtime._run(None)
+    assert captured["wait_seconds"] == fleet.BROKER_LOCK_WAIT_SECONDS
+
+
+# ---------------------------------------------------------------- 2026-09-28 SPIKE data-outage fix
+# See C:\Users\lemol\.claude\handoff\spike-data-fix-result-9-28.md for the root-cause writeup.
+
+def test_theta_csv_retries_transient_failure_then_succeeds(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
+    monkeypatch.setattr(spike, "_sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    class Response:
+        def __init__(self, text):
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        calls["n"] += 1
+        assert headers == {"Connection": "close"}
+        if calls["n"] == 1:
+            raise requests.exceptions.ConnectionError("wedged")
+        return Response("symbol,close,volume\nAAA,1.0,100\n")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    rows = spike._theta_csv("/v3/stock/snapshot/ohlc", {"symbol": "AAA", "venue": "nqb"})
+    assert calls["n"] == 2
+    assert rows == [{"symbol": "AAA", "close": "1.0", "volume": "100"}]
+
+
+def test_theta_csv_raises_last_exception_after_retries_exhausted(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://thetadata-proxy:10000")
+    monkeypatch.setattr(spike, "_sleep", lambda _seconds: None)
+    calls = {"n": 0}
+
+    def fake_get(url, params=None, timeout=None, headers=None):
+        calls["n"] += 1
+        raise requests.exceptions.Timeout("still wedged")
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    with pytest.raises(requests.exceptions.Timeout):
+        spike._theta_csv("/v3/stock/snapshot/ohlc", {"symbol": "AAA", "venue": "nqb"},
+                          max_retries=2, backoff_seconds=0)
+    assert calls["n"] == 3
+
+
+def test_theta_snapshot_rows_falls_back_per_symbol_on_batch_failure(monkeypatch):
+    """A batch call that chokes (e.g. on one delisted/bad symbol) must not
+    blank the whole universe -- the good symbols still come back, only the
+    genuinely bad one is dropped."""
+    calls = []
+
+    def fake_theta_csv(path, params, timeout=60, max_retries=spike.THETA_SNAPSHOT_MAX_RETRIES,
+                        backoff_seconds=spike.THETA_SNAPSHOT_BACKOFF_SECONDS):
+        calls.append(params["symbol"])
+        if "," in params["symbol"]:
+            raise RuntimeError("batch call choked on one bad symbol")
+        if params["symbol"] == "BAD":
+            raise RuntimeError("BAD not found")
+        return [{"symbol": params["symbol"], "close": "1.0", "volume": "100",
+                  "timestamp": "2026-09-25T10:01:00"}]
+
+    monkeypatch.setattr(spike, "_theta_csv", fake_theta_csv)
+    rows, dropped = spike._theta_snapshot_rows(["AAA", "BAD", "CCC"])
+    assert calls[0] == "AAA,BAD,CCC"
+    assert dropped == ["BAD"]
+    assert {r["symbol"] for r in rows} == {"AAA", "CCC"}
+
+
+def test_theta_snapshot_rows_circuit_breaker_stops_after_consecutive_failures(monkeypatch):
+    """A genuine full outage (every per-symbol probe fails) must fail FAST,
+    not serially burn the per-symbol timeout budget across all ~38 names."""
+    monkeypatch.setattr(spike, "THETA_PER_SYMBOL_CIRCUIT_BREAKER", 2)
+    probed = []
+
+    def fake_theta_csv(path, params, timeout=60, max_retries=0, backoff_seconds=0):
+        symbol = params["symbol"]
+        if "," in symbol:
+            raise RuntimeError("full outage")
+        probed.append(symbol)
+        raise RuntimeError("still down")
+
+    monkeypatch.setattr(spike, "_theta_csv", fake_theta_csv)
+    rows, dropped = spike._theta_snapshot_rows(["AAA", "BBB", "CCC", "DDD"])
+    assert rows == []
+    assert probed == ["AAA", "BBB"]                    # circuit trips after 2 consecutive failures
+    assert dropped == ["AAA", "BBB", "CCC", "DDD"]      # rest assumed the same outage, not probed
+
+
+# 2026-09-28 (later same day): Polygon dropped entirely -- ThetaData is
+# SPIKE's ONLY live market-data source now. No second provider to top up a
+# gap or leak a secret through, so the RuntimeError/partial-universe tests
+# below only need to prove ThetaData's own failure/success paths.
+
+def test_cloud_market_data_raises_closed_when_theta_is_configured_but_errors(monkeypatch):
+    """The final RuntimeError must say WHY (symbol count, whether ThetaData
+    was even configured, the error type) so the next block is diagnosable
+    from the log line alone -- and must never carry the raw exception text
+    (defense in depth: nothing in this path should ever print a secret)."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "http://thetadata-proxy:10000")
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (_ for _ in ()).throw(RuntimeError("theta proxy wedged, session=SECRETTOKEN")),
+    )
+
+    with pytest.raises(RuntimeError) as excinfo:
+        spike._load_cloud_enter_market_data(date(2026, 9, 25))
+
+    message = str(excinfo.value)
+    assert "no fresh ThetaData SPIKE market data" in message
+    assert "theta_error=RuntimeError" in message
+    assert "SECRETTOKEN" not in message
+
+
+def test_cloud_market_data_raises_closed_when_thetadata_base_url_missing(monkeypatch):
+    """No ThetaData configured at all is the same fail-closed outcome as a
+    live failure -- SPIKE has no other data source to fall back to."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "")
+
+    with pytest.raises(RuntimeError, match="no fresh ThetaData SPIKE market data"):
+        spike._load_cloud_enter_market_data(date(2026, 9, 25))
+
+
+def test_cloud_market_data_returns_a_non_empty_partial_universe_without_raising(monkeypatch):
+    """ThetaData covering PART of the universe must still produce a usable
+    (smaller) cycle instead of blocking entirely -- fail-closed only kicks in
+    when there is truly NOTHING fresh to trade on."""
+    monkeypatch.setenv("SPIKE_UNIVERSE", "AAA,BBB")
+    monkeypatch.setattr(spike, "_theta_base_url", lambda: "http://thetadata-proxy:10000")
+    monkeypatch.setattr(
+        spike, "_load_theta_enter_market_data",
+        lambda today, symbols: (
+            [{"symbol": "AAA", "price": 1.0, "vol": 1_000_000, "provider": "theta"}],
+            {"AAA": ([], "broker"), "BBB": ([], "broker")},
+        ),
+    )
+
+    universe, history = spike._load_cloud_enter_market_data(date(2026, 9, 25))
+    assert [row["symbol"] for row in universe] == ["AAA"]
+    assert set(history) == {"AAA", "BBB"}

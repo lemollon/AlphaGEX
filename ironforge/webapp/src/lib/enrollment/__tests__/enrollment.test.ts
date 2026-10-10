@@ -67,6 +67,8 @@ const READY: ActivationInput = {
   riskAcknowledged: true,
   authorizationAcknowledged: true,
   previewCurrent: true,
+  emberConflict: false,
+  emailVerified: true,
 }
 
 describe('activation predicate (§4)', () => {
@@ -78,7 +80,7 @@ describe('activation predicate (§4)', () => {
     const d = evaluateActivation({})
     expect(d.ok).toBe(false)
     // Every single gate should object, not just the first.
-    expect(d.blockers.length).toBe(9)
+    expect(d.blockers.length).toBe(10)
   })
 
   it.each([
@@ -91,6 +93,7 @@ describe('activation predicate (§4)', () => {
     ['kill switch', { killSwitchEngaged: true }, 'KILL_SWITCH_ENGAGED'],
     ['acks', { riskAcknowledged: false }, 'ACKNOWLEDGMENTS_MISSING'],
     ['preview', { previewCurrent: false }, 'PREVIEW_STALE'],
+    ['email', { emailVerified: false }, 'EMAIL_NOT_VERIFIED'],
   ])('%s alone blocks activation', (_label, patch, code) => {
     const d = evaluateActivation({ ...READY, ...patch })
     expect(d.ok).toBe(false)
@@ -131,6 +134,30 @@ describe('activation predicate (§4)', () => {
   it('marks a platform kill switch NOT remediable — never tell a customer to retry it', () => {
     const d = evaluateActivation({ ...READY, killSwitchEngaged: true })
     expect(d.blockers.find((b) => b.code === 'KILL_SWITCH_ENGAGED')!.remediable).toBe(false)
+  })
+
+  it('blocks a second Ember activation for the same person (one Ember account per person)', () => {
+    const d = evaluateActivation({ ...READY, emberConflict: true })
+    expect(d.ok).toBe(false)
+    const b = d.blockers.find((b) => b.code === 'EMBER_ALREADY_ACTIVE')
+    expect(b).toBeDefined()
+    expect(b!.remediable).toBe(true)
+  })
+
+  it('never blocks Spark/Flame on emberConflict — context.ts only ever sets it for Ember', () => {
+    expect(evaluateActivation({ ...READY, emberConflict: false })).toEqual({ ok: true, blockers: [] })
+  })
+
+  it('FAILS CLOSED empty-input count stays 10 — emberConflict is opt-in, not fail-closed', () => {
+    expect(evaluateActivation({}).blockers.length).toBe(10)
+  })
+
+  it('blocks go-live until the email is verified (en-1: not required to enroll, required before go-live)', () => {
+    const d = evaluateActivation({ ...READY, emailVerified: false })
+    expect(d.ok).toBe(false)
+    const b = d.blockers.find((b) => b.code === 'EMAIL_NOT_VERIFIED')
+    expect(b).toBeDefined()
+    expect(b!.remediable).toBe(true)
   })
 })
 

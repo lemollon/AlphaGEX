@@ -8,6 +8,7 @@ import {
   isTwoLegSpread,
   placeIcOrderAllAccounts,
   canPlaceLiveOrders,
+  describeLiveGate,
   isConfigured,
 } from '@/lib/tradier'
 
@@ -109,6 +110,15 @@ async function build(req: NextRequest, botParam: string, place: boolean) {
     max_loss_per_contract: credit != null ? Math.round((WIDTH - credit) * 100 * 100) / 100 : null,
     order_body: orderBody,
     live_orders_allowed: canPlaceLiveOrders(bot),
+    // 🚨 THE LINE ABOVE IS ABOUT *THIS* PROCESS, NOT ABOUT THE BOT.
+    // Arming is per-service env, and only the service with SCANNER_ENABLED ever
+    // places an order. On 2026-08-19 this endpoint answered `true` on the
+    // operator console — which logs "[scanner] not started" every boot — while
+    // the scanning service had no FLAME creds and traded paper only. Read
+    // `live_orders_allowed` together with `scanner_process`: false here means
+    // the answer describes a process that cannot trade.
+    scanner_process: process.env.SCANNER_ENABLED === 'true',
+    live_gate: describeLiveGate(bot),
     placed: false,
   }
 

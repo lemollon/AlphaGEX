@@ -1,12 +1,32 @@
 # Render Blueprint for SpreadWorks
 # Double Diagonal & Calendar Spread Analyzer
-# 3 services: Static Frontend + Python Backend + Node Discord Bot
+# 5 services: Static Frontend + Python Backend + private ThetaData service
+# + QQQ/SPY watcher + Node Discord Bot
 #
 # NOTE: spreadworks-backend (srv-d6mv30f5gffc73bog9a0) was created
 # from this blueprint then its live Build Command drifted in the
-# dashboard. As of 2026-05-18 the live command is pip-only and does
-# NOT match the SERVICE 2 buildCommand below. Source of truth for
-# the LIVE service is the dashboard, not this file.
+# dashboard to pip-only. Source of truth for the LIVE service is the
+# dashboard, not this file - so SERVICE 2's buildCommand below must be
+# kept in step with it by hand.
+#
+# 2026-08-19: the drift was never harmless. With a pip-only command the
+# frontend is not built at deploy time, so spreadworks/frontend/dist had
+# to be COMMITTED and served from the repo - which made a stale bundle a
+# silent way to revert the live page, and needed a CI hash guard to
+# police it.
+#
+# Verified on a throwaway service (spreadworks-nodeprobe) that Render's
+# python runtime DOES ship node - /home/render/envwrappers/node, Node
+# 24.14.1 - and that `npm ci && npm run build` completes there in 32s,
+# emitting the same index-CSlFfUDf.css that CI and a local build produce.
+# So the npm steps below are safe to run on this runtime; the fear that
+# they were not is what kept the committed-dist workaround alive.
+#
+# The LIVE dashboard Build Command (rootDir is already spreadworks) is now:
+#   pip install --upgrade pip && pip install -r requirements.txt
+#     && cd frontend && npm ci && npm run build
+# npm ci, not npm install - the lockfile pins vite/rollup/esbuild exactly,
+# and an unpinned toolchain is how the bundle drifts between machines.
 
 services:
   # SERVICE 1: React Frontend (Vite static build)
@@ -15,7 +35,7 @@ services:
     runtime: static
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks/frontend && npm install && npm run build
+    buildCommand: cd spreadworks/frontend && npm ci && npm run build
     staticPublishPath: spreadworks/frontend/dist
     headers:
       - path: /*
@@ -42,7 +62,7 @@ services:
     region: oregon
     branch: main
     autoDeploy: true
-    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm install && npm run build && cd ..
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt && cd frontend && npm ci && npm run build && cd ..
     startCommand: cd spreadworks && uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
@@ -62,12 +82,140 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Dedicated morning-plan and entry-alert route; does not enable the fleet.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_CLOUD_ENABLED
+        value: "true"
+      - key: MORNING_OPTIONS_MODEL
+        value: claude-sonnet-4-6
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
+      - key: QQQ_RETEST_WATCH_ENABLED
+        value: "true"
+      - key: QQQ_RETEST_LEVELS_DATE
+        value: "2026-09-17"
+      - key: QQQ_RETEST_SUPPORT_LOW
+        value: "714"
+      - key: QQQ_RETEST_SUPPORT_HIGH
+        value: "715"
+      - key: QQQ_RETEST_RECLAIM_LOW
+        value: "717"
+      - key: QQQ_RETEST_RECLAIM_HIGH
+        value: "718"
+      - key: QQQ_RETEST_STALE_AFTER_SECONDS
+        value: "90"
+      - key: QQQ_RETEST_POLL_SECONDS
+        value: "10"
+      - key: QQQ_RETEST_SESSIONS
+        value: "premarket,regular,postmarket"
+      - key: QQQ_RETEST_ALLOW_YAHOO_FALLBACK
+        value: "true"
+      - key: QQQ_RETEST_RUN_IN_WEB
+        value: "false"
+      - key: INTRADAY_WATCH_API_TOKEN
+        sync: false
+      - key: THETADATA_BASE_URL
+        fromService:
+          name: thetadata-proxy
+          type: pserv
+          property: hostport
       - key: DATABASE_URL
         fromDatabase:
           name: alphagex-db
           property: connectionString
 
-  # SERVICE 3: Discord Bot (Node.js worker)
+  # SERVICE 3: Private ThetaData stock/options market-data service.
+  # The Python client connects directly to ThetaData, so this has no
+  # workstation dependency and is reachable only on Render's private network.
+  - type: pserv
+    name: thetadata-proxy
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r thetadata_proxy/requirements.txt
+    startCommand: cd spreadworks && uvicorn thetadata_proxy.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /live
+    envVars:
+      - key: TZ
+        value: America/Chicago
+      - key: PYTHON_VERSION
+        value: "3.12.11"
+      - key: THETADATA_API_KEY
+        sync: false
+
+  # SERVICE 4: Dedicated QQQ/SPY market watcher (alert-only; no orders)
+  - type: worker
+    name: qqq-retest-worker
+    runtime: python
+    plan: starter
+    region: oregon
+    branch: main
+    autoDeploy: true
+    buildCommand: cd spreadworks && pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: cd spreadworks && python -m backend.qqq_retest_worker
+    envVars:
+      - key: TZ
+        value: America/Chicago
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: TRADIER_TOKEN
+        sync: false
+      - key: TRADING_VOLATILITY_API_TOKEN
+        sync: false
+      - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+      - key: INTRADAY_DISCORD_WEBHOOK_URL
+        sync: false
+      # Isolated entry-alert route; the fleet-wide Discord switch stays off.
+      - key: INTRADAY_ALERTS_ENABLED
+        value: "true"
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
+      - key: QQQ_RETEST_WATCH_ENABLED
+        value: "true"
+      - key: QQQ_RETEST_LEVELS_DATE
+        value: "2026-09-17"
+      - key: QQQ_RETEST_SUPPORT_LOW
+        value: "714"
+      - key: QQQ_RETEST_SUPPORT_HIGH
+        value: "715"
+      - key: QQQ_RETEST_RECLAIM_LOW
+        value: "717"
+      - key: QQQ_RETEST_RECLAIM_HIGH
+        value: "718"
+      - key: QQQ_RETEST_STALE_AFTER_SECONDS
+        value: "90"
+      - key: QQQ_RETEST_POLL_SECONDS
+        value: "10"
+      - key: QQQ_RETEST_SESSIONS
+        value: "premarket,regular,postmarket"
+      - key: QQQ_RETEST_ALLOW_YAHOO_FALLBACK
+        value: "true"
+      - key: INTRADAY_WATCH_API_TOKEN
+        sync: false
+      - key: INTRADAY_WATCH_POLL_SECONDS
+        value: "60"
+      - key: TV_CONTEXT_REFRESH_SECONDS
+        value: "300"
+      - key: TV_CONTEXT_MAX_AGE_SECONDS
+        value: "129600"
+      - key: TV_UNIVERSE_LIMIT
+        value: "200"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: alphagex-db
+          property: connectionString
+
+  # SERVICE 5: Discord Bot (Node.js worker)
   - type: worker
     name: spreadworks-bot
     runtime: node
@@ -86,6 +234,9 @@ services:
         sync: false
       - key: DISCORD_WEBHOOK_URL
         sync: false
+      # Master switch for ALL SpreadWorks Discord posts. Flip to "true" to re-enable.
+      - key: SPREADWORKS_DISCORD_ENABLED
+        value: "false"
       - key: VITE_API_URL
         sync: false
 

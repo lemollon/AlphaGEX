@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { getCurrentPTTier, getCTNow, formatCloseReason, type PTTier } from '@/lib/pt-tiers'
+import { describePositionAge, ageBadgeClasses } from '@/lib/position-age'
 import PositionDetail from './PositionDetail'
 
 function formatTimeCT(ts: string | null): string {
@@ -121,7 +122,7 @@ export default function PositionTable({
   spotPrice?: number | null
   tradierConnected?: boolean
   detailData?: { positions: DetailData[] } | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
   todaysClosedTrades?: ClosedTrade[]
 }) {
   const hasOpenPositions = positions.length > 0
@@ -207,7 +208,7 @@ function PositionCard({
   pos: Position
   hasLiveData: boolean
   detail: DetailData | null
-  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle' | 'spark2'
+  bot: 'flame' | 'spark' | 'inferno' | 'blaze' | 'flare' | 'kindle'
 }) {
   const [expanded, setExpanded] = useState(true)
   const [closing, setClosing] = useState(false)
@@ -245,6 +246,20 @@ function PositionCard({
     const timer = setInterval(() => setPtTier(getCurrentPTTier(getCTNow(), bot)), 1000)
     return () => clearInterval(timer)
   }, [bot])
+
+  // CT "now" for the age badge. Starts null and is filled on the client: the server
+  // render has no CT clock, and seeding date-dependent state during SSR is a
+  // hydration mismatch. Ticks every minute so a page left open overnight rolls from
+  // "expires today" to "1 day past expiry" on its own — which is exactly the case
+  // this badge exists for.
+  const [ctNow, setCtNow] = useState<Date | null>(null)
+  useEffect(() => {
+    const tick = () => setCtNow(getCTNow())
+    tick()
+    const timer = setInterval(tick, 60_000)
+    return () => clearInterval(timer)
+  }, [])
+  const age = ctNow ? describePositionAge(pos.expiration, pos.open_time, ctNow) : null
 
   // ---- Directional debit spread (BLAZE/FLARE) vs IC (FLAME/SPARK/INFERNO) ----
   // A debit spread's VALUE rises toward the profit target (debit × (1+pt%)) and
@@ -346,6 +361,16 @@ function PositionCard({
           <span className="text-xs bg-forge-border px-2 py-0.5 rounded">
             Exp: {pos.expiration}
           </span>
+          {/* 🚨 "5 days past expiry" is impossible to misread. `Exp: 2026-08-21` on its
+              own is not — it left three stranded SPARK positions looking ordinary for
+              three trading days while the log claimed they had settled. The watchdog
+              now repairs these on its own; this is what makes the state legible while
+              a repair is in flight, or when the watchdog escalated instead of acting. */}
+          {age && (
+            <span className={`text-xs px-2 py-0.5 rounded ${ageBadgeClasses(age.tone)}`}>
+              {age.tone === 'critical' ? `⚠ ${age.label}` : age.label}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3">
           {hasLiveData && pnl != null && (
@@ -528,6 +553,11 @@ function PositionCard({
       <div className="flex items-center gap-4 text-xs text-forge-muted">
         <span>Entry: ${pos.underlying_at_entry.toFixed(2)}</span>
         <span>Opened: {formatTimeCT(pos.open_time)}</span>
+        {age && (
+          <span className={age.tone === 'critical' ? 'text-red-400' : undefined}>
+            {age.heldLabel}
+          </span>
+        )}
         <button
           onClick={() => setConfirmClose(true)}
           disabled={closing}

@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -56,6 +58,112 @@ def test_status_returns_basic_fields(client):
     assert d["bot"] == "flow"
     assert d["enabled"] is False
     assert d["open_positions"] == 0
+
+
+def _insert_astra3_closed_trades(pnls, start_index=0, *, contracts=1,
+                                 entry_touch_size=None, exit_touch_size=None,
+                                 exit_depth_ok=True):
+    from datetime import datetime, timedelta
+
+    from sqlalchemy import text
+    from backend import routes_bots
+
+    opened = datetime(2026, 9, 18, 8, 31)
+    entry_size = contracts if entry_touch_size is None else entry_touch_size
+    exit_size = contracts if exit_touch_size is None else exit_touch_size
+    legs = json.dumps([{
+        "side": "long", "entry_touch_size": entry_size,
+        "exit_touch_size": exit_size, "exit_depth_ok": exit_depth_ok,
+    }])
+    with routes_bots.ENGINE.begin() as conn:
+        for offset, pnl in enumerate(pnls):
+            index = start_index + offset
+            closed = opened + timedelta(minutes=31 * index + 30)
+            conn.execute(text(
+                "INSERT INTO astra3_closed_trades ("
+                "position_id, close_price, close_time, close_reason, "
+                "realized_pnl, contracts, legs, entry_price, entry_time, "
+                "ticker, strategy) VALUES ("
+                ":pid, 0.50, :closed, 'TEST', :pnl, :contracts, :legs, 0.50, "
+                ":opened, 'SPY', 'updraft')"
+            ), {
+                "pid": f"astra3-gate-{index}",
+                "closed": closed,
+                "pnl": pnl,
+                "opened": closed - timedelta(minutes=30),
+                "contracts": contracts,
+                "legs": legs,
+            })
+
+
+def test_astra3_status_exposes_frozen_forward_gate(client):
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["state"] == "IN_PROGRESS"
+    assert gate["completed_trades"] == 0
+    assert gate["required_trades"] == 20
+    assert gate["remaining_trades"] == 20
+    assert gate["drawdown_floor"] == -80.0
+    assert gate["promotion_review_ready"] is False
+    assert gate["live_money_authorized"] is False
+    assert gate["require_touch_depth"] is True
+    assert gate["execution_depth_ok"] is True
+    assert gate["depth_failures"] == []
+
+
+def test_astra3_forward_gate_passes_only_after_twenty_positive_compliant_trades(client):
+    _insert_astra3_closed_trades([5.0] * 19)
+    before = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert before["state"] == "IN_PROGRESS"
+    assert before["cumulative_pnl"] == 95.0
+
+    _insert_astra3_closed_trades([5.0], start_index=19)
+    after = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert after["state"] == "PASS"
+    assert after["completed_trades"] == 20
+    assert after["cumulative_pnl"] == 100.0
+    assert after["max_drawdown"] == 0.0
+    assert after["promotion_review_ready"] is True
+    assert after["live_money_authorized"] is False
+    assert after["execution_compliant_trades"] == 20
+
+
+def test_astra3_forward_gate_drawdown_breach_is_permanent_failure(client):
+    _insert_astra3_closed_trades([-81.0] + [10.0] * 19)
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["completed_trades"] == 20
+    assert gate["cumulative_pnl"] == 109.0
+    assert gate["max_drawdown"] == -81.0
+    assert gate["state"] == "FAILED_DRAWDOWN"
+    assert gate["promotion_review_ready"] is False
+
+
+def test_astra3_forward_gate_waits_for_positive_pnl_after_count(client):
+    _insert_astra3_closed_trades([-1.0] * 20)
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["completed_trades"] == 20
+    assert gate["cumulative_pnl"] == -20.0
+    assert gate["max_drawdown"] == -20.0
+    assert gate["state"] == "WAIT_POSITIVE_PNL"
+    assert gate["promotion_review_ready"] is False
+
+
+@pytest.mark.parametrize(
+    "entry_size,exit_size,exit_ok",
+    [(2, 3, True), (3, 2, False)],
+)
+def test_astra3_forward_gate_permanently_fails_insufficient_touch_depth(
+    client, entry_size, exit_size, exit_ok,
+):
+    _insert_astra3_closed_trades(
+        [5.0] * 20, contracts=3, entry_touch_size=entry_size,
+        exit_touch_size=exit_size, exit_depth_ok=exit_ok,
+    )
+    gate = client.get("/api/spreadworks/bots/astra3/status").json()["forward_gate"]
+    assert gate["state"] == "FAILED_EXECUTION_DEPTH"
+    assert gate["execution_depth_ok"] is False
+    assert gate["execution_compliant_trades"] == 0
+    assert len(gate["depth_failures"]) == 20
+    assert gate["promotion_review_ready"] is False
 
 
 def test_unknown_bot_returns_404(client):
@@ -515,24 +623,22 @@ def test_ebb_registered_and_ships_disabled(client):
 
 
 def test_ebb_fleet_stats_health_watch_on_rolling_60_drawdown(client):
-    """60 closed trades summing below the -146 watch band -> status WATCH."""
+    """60 closed trades summing below the -524 watch band -> status WATCH."""
     from backend import routes_bots
     eng = routes_bots.ENGINE
-    # Bands were re-measured 2026-08-15 for the $2-wing structure (watch -146,
-    # demote -401), so the old -10/trade fixture now lands past DEMOTE. Scaled
-    # to sit in the same place relative to the new bands:
-    # -4/trade x 60 = -240, below watch_roll60 (-146) but above demote_roll60
-    # (-401) and demote_roll120 (n<120 so that gate can't fire either way).
+    # EBB is back on the $5-wing structure (2026-09-02) and its $5-wing bands
+    # (watch -524, demote -1216). -12/trade x 60 = -720 sits below
+    # watch_roll60 but above demote_roll60; demote_roll120 cannot fire (n<120).
     for i in range(60):
-        _seed_closed_trade(eng, "ebb", f"ebb-health-{i:03d}", -4.0)
+        _seed_closed_trade(eng, "ebb", f"ebb-health-{i:03d}", -12.0)
 
     r = client.get("/api/spreadworks/bots/fleet-stats")
     assert r.status_code == 200, r.text
     health = r.json()["bots"]["ebb"]["health"]
     assert health["status"] == "WATCH"
-    assert health["roll60"] == pytest.approx(-240.0)
+    assert health["roll60"] == pytest.approx(-720.0)
     assert health["roll120"] is None
-    assert health["bands"]["watch_roll60"] == -146.0
+    assert health["bands"]["watch_roll60"] == -524.0
 
 
 # ---------------------------------------------------------------------------

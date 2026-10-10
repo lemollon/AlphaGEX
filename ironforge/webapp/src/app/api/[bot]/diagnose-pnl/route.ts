@@ -171,6 +171,9 @@ export async function GET(
 
             let positionData: Record<string, unknown> = { error: 'No positions found' }
             try {
+              // Default SANDBOX_URL is correct here: this route deliberately loads
+              // only `type = 'sandbox'` rows (see the query above), so no production
+              // key ever reaches this call.
               const positions = await getSandboxAccountPositions(acct.apiKey, occSymbols)
               if (positions.length > 0) {
                 const totalGainLoss = positions.reduce((s, p) => s + p.gain_loss, 0)

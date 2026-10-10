@@ -16,7 +16,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
   // DERIVED, not hand-listed. This used to be a second list of pathnames kept in sync
   // with surface.ts CUSTOMER_PAGES by memory, and it drifted three times — most recently
   // leaving /support and /account/billing rendering the operator bot-console nav
-  // (SPARK/SPARK2/INFERNO/BLAZE/FLARE/Compare) on a signed-in customer's pages, where
+  // (SPARK/INFERNO/BLAZE/FLARE/Compare) on a signed-in customer's pages, where
   // every one of those links 404s. Adding a page to CUSTOMER_PAGES is now enough;
   // surface.test.ts fails if the two ever disagree again.
   //

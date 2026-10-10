@@ -30,7 +30,6 @@ export const BOT_STARTING_CAPITAL: Record<string, number> = {
   inferno: 10000,
   kindle: 490,
   forge: 5000,
-  spark2: 10000,
 }
 
 /** Fallback for a bot with no entry above (should not happen for live bots). */

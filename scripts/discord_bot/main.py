@@ -50,6 +50,9 @@ from economic_events import (
 # ---------------------------------------------------------------------------
 
 WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
+# Master kill switch, same name as spreadworks/backend. Default OFF so this
+# worker stays silent unless SPREADWORKS_DISCORD_ENABLED=true is set on it.
+DISCORD_ENABLED = os.environ.get("SPREADWORKS_DISCORD_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 BACKEND_URL = os.environ.get("BACKEND_URL", "https://spreadworks-backend.onrender.com")
 
 CT = pytz.timezone("America/Chicago")
@@ -97,6 +100,9 @@ def get_rotation_index(items, offset=0):
 
 def send_webhook(embed: dict):
     """Send a single embed to Discord webhook. Retries on network errors."""
+    if not DISCORD_ENABLED:
+        log.info("SPREADWORKS_DISCORD_ENABLED not true — skipping send")
+        return False
     if not WEBHOOK_URL:
         log.error("DISCORD_WEBHOOK_URL not set — skipping send")
         return False

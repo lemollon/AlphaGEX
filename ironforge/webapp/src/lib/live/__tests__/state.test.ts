@@ -106,6 +106,12 @@ describe('deriveCustomerState priority order', () => {
     expect(s.headline).toBe('No Trading Today')
   })
 
+  it('EBB vix-decay skip reason (current SPARK/FLAME gate) is BLOCKED', () => {
+    const s = deriveCustomerState({ ...base, lastScanReason: 'skip:vix_elevated(0.904>0.90)' })
+    expect(s.key).toBe('BLOCKED')
+    expect(s.headline).toBe('No Trading Today')
+  })
+
   it('open-session scanning with nothing else is WORKING_WAITING', () => {
     const s = deriveCustomerState(base)
     expect(s.key).toBe('WORKING_WAITING')

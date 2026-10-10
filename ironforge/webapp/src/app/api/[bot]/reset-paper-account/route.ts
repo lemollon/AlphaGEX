@@ -403,10 +403,10 @@ export async function POST(
       `INSERT INTO ${botTable(bot, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl,
           collateral_in_use, buying_power, total_trades,
-          high_water_mark, max_drawdown,
+          high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type,
           created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, $3, NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, $3, NOW(), NOW())`,
       [newCapital, dte, bot === PRODUCTION_BOT ? 'production' : 'sandbox'],
     )
 

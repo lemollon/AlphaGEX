@@ -6,6 +6,7 @@ directly, never this module.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from datetime import date, timedelta
 from typing import Any
@@ -23,6 +24,17 @@ ALPHAGEX_BASE_URL = os.getenv("ALPHAGEX_BASE_URL", "http://localhost:8000")
 
 def _headers() -> dict:
     return {"Authorization": f"Bearer {TRADIER_TOKEN}", "Accept": "application/json"}
+
+
+def _displayed_size(value: Any) -> int | None:
+    """Return a non-negative whole-contract quote size, else ``None``."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number) or number < 0 or not number.is_integer():
+        return None
+    return int(number)
 
 
 class LiveTradierChainProvider:
@@ -70,12 +82,30 @@ class LiveTradierChainProvider:
             "options": [
                 {"strike": o["strike"], "type": o["option_type"],
                  "bid": o.get("bid") or 0, "ask": o.get("ask") or 0,
+                 "bid_size": _displayed_size(o.get("bidsize")),
+                 "ask_size": _displayed_size(o.get("asksize")),
                  # volume is CUMULATIVE for the session, not an interval.
                  # UPDRAFT/BACKDRAFT difference it across snapshots to get a
                  # 30-minute call/put imbalance (see bots/flow_store.py).
                  # Every other strategy ignores the extra key.
                  "volume": o.get("volume") or 0,
-                 "open_interest": o.get("open_interest") or 0}
+                 "open_interest": o.get("open_interest") or 0,
+                 # Real broker-computed Greeks — already fetched (greeks=true
+                 # above), just never passed through before. Tradier is
+                 # queried and billed for this block on every chain call; only
+                 # delta made it to this dict previously (used by MONARCH /
+                 # delta_butterfly). gamma/theta/vega/iv are added here purely
+                 # additively — no existing strategy reads these keys from a
+                 # per-option dict (gamma readers elsewhere key off the
+                 # chain-level `gex` block, not `options`), so nothing that
+                 # already works can break. None when Tradier omits greeks
+                 # for a strike (delta_butterfly falls back to its own
+                 # BS-implied delta; no other consumer yet).
+                 "delta": (g := o.get("greeks") or {}).get("delta"),
+                 "gamma": g.get("gamma"),
+                 "theta": g.get("theta"),
+                 "vega": g.get("vega"),
+                 "iv": g.get("mid_iv") or g.get("smv_vol")}
                 for o in data
             ],
             # Per-expiration GEX structure (pin / magnets / walls / regime).
@@ -86,51 +116,48 @@ class LiveTradierChainProvider:
         }
 
     def _fetch_gex(self, ticker: str, expiration: str) -> dict:
-        """Fetch the WATCHTOWER gamma snapshot for `expiration` and distil it
-        to the fields the bot strategies consume. Resolving by expiration is
-        what makes the pin DTE-specific — the gamma structure differs every
-        day and across expirations. Returns {} on any failure so the scanner
-        never breaks just because GEX is briefly unavailable."""
+        """Return canonical live gamma context from SpreadWorks' own engine.
+
+        The legacy WATCHTOWER /api/watchtower/gamma endpoint is intentionally
+        no longer queried here. It was returning persistent 404s and created a
+        competing intraday gamma source with different methodology.
+
+        Only symbols supported by the canonical ORATS+Tradier market-structure
+        engine are enriched. Other symbols return {} immediately — identical to
+        the old 404 fallback behavior, but without stale/noisy upstream calls.
+
+        NOTE: the canonical map is full-chain/tenor based, not per-expiration,
+        so pin/magnet fields are left empty. Strategies already fall back
+        safely to spot when those fields are absent.
+        """
+        if ticker not in {"SPY", "QQQ", "IWM", "XSP"}:
+            return {}
         try:
-            resp = self._client.get(
-                f"{ALPHAGEX_BASE_URL}/api/watchtower/gamma",
-                params={"symbol": ticker, "expiration": expiration},
-                timeout=5.0,
-            )
-            if resp.status_code != 200:
-                logger.warning(f"gex fetch failed {resp.status_code} for {ticker} {expiration}")
+            from ..market_structure import build_gamma_snapshot
+            snap = build_gamma_snapshot(ticker)
+            if not snap.get("available"):
+                logger.debug(
+                    "canonical gamma unavailable for %s (%s)",
+                    ticker, snap.get("reason") or snap.get("confidence"),
+                )
                 return {}
-            d = resp.json().get("data", {}) or {}
-            ms = d.get("market_structure", {}) or {}
-            fp = ms.get("flip_point")
-            flip = fp.get("current") if isinstance(fp, dict) else fp
-            gw = ms.get("gamma_walls", {}) or {}
-            magnets = d.get("magnets") or []
-            pin = d.get("likely_pin")
-            # Diagnostic: butterfly bodies center on these magnets/pin. If both
-            # are missing the body silently falls back to spot — log it so a
-            # bot "opening at spot" is traceable to absent GEX vs. a code bug.
-            if not magnets and pin is None:
-                logger.warning(
-                    f"gex has no magnets and no pin for {ticker} {expiration} "
-                    f"-> butterfly body will fall back to SPOT"
-                )
-            else:
-                logger.info(
-                    f"gex for {ticker} {expiration}: magnets={len(magnets)} "
-                    f"pin={pin} flip={flip}"
-                )
             return {
-                "pin_strike": pin,
-                "pin_probability": d.get("pin_probability"),
-                "magnets": magnets,
-                "flip_point": flip,
-                "call_wall": gw.get("call_wall") if isinstance(gw, dict) else None,
-                "put_wall": gw.get("put_wall") if isinstance(gw, dict) else None,
-                "gamma_regime": d.get("gamma_regime") or ms.get("gamma_regime"),
+                "pin_strike": None,
+                "pin_probability": None,
+                "magnets": [],
+                "flip_point": snap.get("gamma_flip"),
+                "call_wall": snap.get("call_wall"),
+                "put_wall": snap.get("put_wall"),
+                "gamma_regime": snap.get("gamma_regime"),
+                "net_gex_b": snap.get("net_gex_b"),
+                "gamma_confidence": snap.get("confidence"),
+                "gamma_source": snap.get("source"),
+                "gamma_chain_timestamp": snap.get("chain_timestamp"),
+                "gamma_chain_age_seconds": snap.get("chain_age_seconds"),
+                "gamma_expiration_context": "full_chain",
             }
-        except Exception as e:  # network / parse — never fatal for a scan
-            logger.warning(f"gex fetch error for {ticker} {expiration}: {e}")
+        except Exception as e:  # never fatal for a scan
+            logger.warning("canonical gamma fetch error for %s: %s", ticker, e)
             return {}
 
     def get_leg_mids(self, *, ticker: str, legs: list[dict[str, Any]]) -> list[float | None]:
@@ -194,6 +221,58 @@ class LiveTradierChainProvider:
                 out.append(None)
                 continue
             out.append((ask - bid) / 2.0)
+        return out
+
+    def get_leg_exit_prices(self, *, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[float | None]:
+        """Executable close touches from one atomic quote response.
+
+        A long leg liquidates at bid; a short leg is bought back at ask. A
+        missing leg returns ``None`` so the scanner holds its last mark and
+        cannot fire a price exit on fabricated liquidity. A displayed zero bid
+        on a long leg is retained as the conservative liquidation floor.
+        """
+        quotes = self.get_leg_exit_quotes(ticker=ticker, legs=legs)
+        return [None if q is None else q["price"] for q in quotes]
+
+    def get_leg_exit_quotes(self, *, ticker: str,
+                            legs: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+        """Executable close touches and displayed sizes from one snapshot."""
+        symbols = [self._occ(ticker, leg) for leg in legs]
+        resp = self._client.get(
+            f"{TRADIER_BASE}/markets/quotes",
+            params={"symbols": ",".join(symbols), "greeks": "false"},
+            headers=_headers(),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"quote fetch failed: {resp.status_code}")
+        quotes = resp.json().get("quotes", {}).get("quote", []) or []
+        if isinstance(quotes, dict):
+            quotes = [quotes]
+        by_sym = {q["symbol"]: q for q in quotes if q.get("symbol")}
+        out: list[dict[str, Any] | None] = []
+        for sym, leg in zip(symbols, legs):
+            q = by_sym.get(sym)
+            if q is None:
+                out.append(None)
+                continue
+            raw_bid = q.get("bid")
+            raw_ask = q.get("ask")
+            try:
+                bid = None if raw_bid is None else float(raw_bid)
+                ask = None if raw_ask is None else float(raw_ask)
+            except (TypeError, ValueError):
+                out.append(None)
+                continue
+            if leg.get("side") == "short":
+                price = ask if ask is not None and ask > 0 else None
+                size = _displayed_size(q.get("asksize"))
+            else:
+                # A zero bid is executable and is the true lower bound for a
+                # long option. Never turn it into a negative liquidation value.
+                price = bid if bid is not None and bid >= 0 else None
+                size = _displayed_size(q.get("bidsize"))
+            out.append({"price": price, "size": size})
         return out
 
     def get_daily_history(self, *, ticker: str, days: int) -> list[dict[str, Any]]:

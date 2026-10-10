@@ -34,6 +34,11 @@ interface LoginResponse {
   policy: SessionPolicy
 }
 
+const POLICY_KEY = 'ironforge.sessionPolicy'
+export const DEFAULT_SESSION_POLICY: Pick<SessionPolicy, 'foregroundLockSec'> = {
+  foregroundLockSec: 300,
+}
+
 export async function signIn(
   email: string,
   password: string,
@@ -45,7 +50,40 @@ export async function signIn(
     ...device,
   })
   await saveTokens({ accessToken: res.accessToken, refreshToken: res.refreshToken })
+  if (res.policy) await setItem(POLICY_KEY, JSON.stringify(res.policy))
   return res
+}
+
+/**
+ * Refresh the stored session policy from the server (APP-010). Public — the app needs
+ * lock timers before sign-in, and the route itself requires no auth. Failures are
+ * swallowed: the last stored policy (or the hardcoded default) is always good enough to
+ * keep the lock gate working offline.
+ */
+export async function fetchSessionPolicy(): Promise<SessionPolicy | null> {
+  try {
+    // GET, not apiPublic — apiPublic is POST-only. The route needs no auth, but api()
+    // works fine unauthenticated: it only attaches a bearer token when one exists.
+    const res = await api<{ ok: boolean; policy: SessionPolicy }>('/api/auth/mobile/policy')
+    if (res?.policy) await setItem(POLICY_KEY, JSON.stringify(res.policy))
+    return res?.policy ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Stored policy, or the hardcoded default (APP-010) if none has ever been saved. */
+export async function getStoredSessionPolicy(): Promise<
+  Pick<SessionPolicy, 'foregroundLockSec'>
+> {
+  const raw = await getItem(POLICY_KEY)
+  if (!raw) return DEFAULT_SESSION_POLICY
+  try {
+    const parsed = JSON.parse(raw) as SessionPolicy
+    return typeof parsed.foregroundLockSec === 'number' ? parsed : DEFAULT_SESSION_POLICY
+  } catch {
+    return DEFAULT_SESSION_POLICY
+  }
 }
 
 export async function signOut(): Promise<void> {

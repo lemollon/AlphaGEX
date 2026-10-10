@@ -1,5 +1,5 @@
 import { customerQuery, customerExecute } from '@/lib/customers-db'
-import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, type AcceptedVersion } from './legal'
+import { LEGAL_DOCUMENTS, requiredDocumentsFor, staleDocumentCodes, isAutomatePlan, isEmberPlan, type AcceptedVersion } from './legal'
 import { isStripeConfigured, hasUsablePaymentMethod, findLiveSubscriptionForPrice, findPriceIdByLookupKey } from '@/lib/billing/stripe'
 import { COMMUNITY_PLAN } from '@/lib/billing/plans'
 import type { EnrollmentState } from './states'
@@ -54,6 +54,24 @@ export async function getOpenEnrollment(userId: string): Promise<EnrollmentRow |
     [userId],
   )
   return open[0] ?? null
+}
+
+/**
+ * Legal-before-brokerage, SERVER-enforced (dev-handoff "real security/compliance
+ * gap" — only the page redirect blocked this before; a direct API call sequence
+ * could skip consent entirely).
+ *
+ * Scoped to an OPEN enrollment ONLY — `getOpenEnrollment` already excludes
+ * 'complete'/'abandoned' rows, so an existing customer reconnecting or adding a
+ * brokerage from Account Settings (no open enrollment; they finished legal the first
+ * time) is never blocked by this. A brand-new or mid-funnel enrollment that has not
+ * yet accepted every required document for its (possibly still-null) plan is.
+ */
+export async function legalCompleteForOpenEnrollment(userId: string): Promise<boolean> {
+  const enrollment = await getOpenEnrollment(userId)
+  if (!enrollment) return true
+  const { outstanding } = await legalRequirementsFor(enrollment.selected_plan ?? 'automate', userId)
+  return outstanding.length === 0
 }
 
 /**
@@ -126,14 +144,14 @@ export async function setEnrollmentPlan(id: string, userId: string, plan: string
 
 /** Versions this user has ALREADY accepted, for staleness comparison. */
 export async function acceptedVersionsFor(userId: string): Promise<AcceptedVersion[]> {
-  const rows = await customerQuery<{ code: string; version: string }>(
-    `SELECT d.code, d.version
+  const rows = await customerQuery<{ code: string; version: string; accepted_at: Date }>(
+    `SELECT d.code, d.version, a.accepted_at
        FROM legal_acceptances a
        JOIN legal_documents d ON d.id = a.document_id
       WHERE a.user_id = $1`,
     [userId],
   )
-  return rows
+  return rows.map((r) => ({ code: r.code, version: r.version, acceptedAt: r.accepted_at }))
 }
 
 export interface LegalRequirement {
@@ -248,8 +266,18 @@ export async function recordAcceptances(opts: {
   ip: string | null
   userAgent: string | null
   signatureName?: string | null
-}): Promise<{ ok: true } | { ok: false; missing: string[] }> {
-  const required = requiredDocumentsFor(opts.plan)
+}): Promise<{ ok: true; nextStep: string } | { ok: false; missing: string[] }> {
+  // Web order (10/5 reorder): Agreements now runs BEFORE Choose agent, so `opts.plan`
+  // is legitimately null on every normal web visit — this is no longer the "unknown
+  // plan" edge case requiredDocumentsFor(null) still protects (that function is
+  // unchanged, and still falls back to core-only for a genuinely absent/unrecognized
+  // plan — see legal.test.ts). Here we know up front the choice is coming, so the
+  // acceptance covers the full automate-family superset via the existing 'automate'
+  // family value (already required/tested to resolve to all seven documents) rather
+  // than asking again after the agent is chosen. Accepting the superset trivially
+  // satisfies whatever narrower set Community turns out to need.
+  const docPlan = opts.plan ?? 'automate'
+  const required = requiredDocumentsFor(docPlan)
   const submitted = new Set(opts.submittedCodes)
   const missing = required.filter((d) => !submitted.has(d.code)).map((d) => d.code)
   if (missing.length > 0) return { ok: false, missing }
@@ -262,12 +290,26 @@ export async function recordAcceptances(opts: {
     userAgent: opts.userAgent,
     signatureName: opts.signatureName ?? null,
   })
+
+  // Plan not chosen yet (web, normal order) — nothing to transition; the enrollment
+  // stays exactly where it is and the next stop is Choose agent.
+  if (opts.plan == null) {
+    return { ok: true, nextStep: 'plan' }
+  }
+
+  // Ember never collects a card — free, $500-$2,000 capital, one per person — so its
+  // legal step advances straight to setup_required (broker connect), skipping the
+  // billing screen that every other automate plan goes through. See states.ts
+  // ENROLLMENT_TRANSITIONS.legal_pending, which allows this direct edge.
+  const [nextStatus, nextStep] = isEmberPlan(opts.plan)
+    ? (['setup_required', 'setup'] as const)
+    : (['billing_pending', 'billing'] as const)
   await customerExecute(
-    `UPDATE enrollments SET status = 'billing_pending', current_step = 'billing', updated_at = now()
+    `UPDATE enrollments SET status = $3, current_step = $4, updated_at = now()
       WHERE id = $1 AND user_id = $2`,
-    [opts.enrollmentId, opts.userId],
+    [opts.enrollmentId, opts.userId, nextStatus, nextStep],
   )
-  return { ok: true }
+  return { ok: true, nextStep }
 }
 
 /**
@@ -372,4 +414,52 @@ export function nextStepFor(row: Pick<EnrollmentRow, 'status' | 'selected_plan'>
     case 'complete': return 'done'
     default: return 'plan'
   }
+}
+
+/**
+ * The next step for the WEB funnel (10/5 reorder: account -> legal -> plan (Choose
+ * agent) -> broker -> billing -> review). `nextStepFor` above is left completely
+ * unchanged and is what the APP ORDER keeps using (plan -> legal -> billing -> broker
+ * -> agent -> review) — the two orders share the same five `enrollments.status` values,
+ * they just mean something different about where billing/broker sit, so routing them
+ * needs two functions, not one branch inside a pure one.
+ *
+ * Needs I/O (unlike nextStepFor) because 'draft'/'legal_pending' are ambiguous without
+ * checking what has actually been accepted:
+ *  - 'draft' can mean "brand new" (needs legal) OR, for an enrollment MIGRATING from
+ *    before this reorder, the app order's "plan not chosen yet" (also needs legal
+ *    first here, since web always does legal before plan now — a safe, non-destructive
+ *    interpretation; nothing already accepted is lost).
+ *  - 'legal_pending' can mean the web order's "plan just chosen, legal already done"
+ *    (go to broker) OR a migrating app-order row's "plan chosen, legal NOT done yet"
+ *    (go to legal — re-asking is the safe direction; skipping it is not).
+ * Both are resolved the same way: check whether the full pre-plan document set
+ * (the 'automate' family value, which already resolves to all seven documents) has
+ * been accepted. Once it has, 'draft' means "choose agent" and 'legal_pending' means
+ * "connect brokerage" — the real, non-ambiguous meanings for a web-order enrollment
+ * past that point.
+ */
+export async function resolveNextStepWeb(
+  row: Pick<EnrollmentRow, 'status' | 'selected_plan'>,
+  userId: string,
+): Promise<string> {
+  if (row.status === 'complete') return 'done'
+
+  // Community never touches broker/billing/review — it finalizes at the free-join
+  // screen (still served by /enroll/billing) the moment a plan is on record.
+  if (row.selected_plan === 'community' && row.status !== 'draft') return 'billing'
+
+  if (row.status === 'draft' || row.status === 'legal_pending') {
+    const { outstanding } = await legalRequirementsFor('automate', userId)
+    if (outstanding.length > 0) return 'legal'
+    return row.status === 'draft' ? 'plan' : 'broker'
+  }
+
+  // billing_pending / setup_required are reached, in the web order, by the broker
+  // connection itself transitioning status forward (see broker-account/route.ts) —
+  // by the time status is one of these, broker is already done.
+  if (row.status === 'billing_pending') return 'billing'
+  if (row.status === 'setup_required') return 'setup'
+
+  return 'plan'
 }

@@ -50,6 +50,7 @@ the `cooldown_min` parameter below both exist for that reason.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from datetime import date
 from typing import Any
 
@@ -109,12 +110,14 @@ class UpdraftSignal:
     em_straddle_pct: float | None = None
     # Fields the executor requires of every signal (see executor.open_position):
     # .debit, .contracts, .max_profit, .max_loss, .pt_target_pnl, .sl_target_pnl
-    debit: float = 0.0            # premium paid per contract (== call_mid)
+    debit: float = 0.0            # executable ask plus any explicit paper fee
     contracts: int = 0
     max_profit: float = 0.0       # per contract, cosmetic headline
     max_loss: float = 0.0         # per contract == debit * 100
     pt_target_pnl: float = 0.0    # $ total — deliberately unreachable
     sl_target_pnl: float = 0.0    # $ total — the -50% stop
+    entry_ask: float | None = None
+    entry_touch_size: int | None = None
 
     def legs(self) -> list[dict[str, Any]]:
         # expiration MUST be an ISO string: legs are JSON-serialised into
@@ -125,7 +128,9 @@ class UpdraftSignal:
         return [{
             "strike": self.strike, "type": self.side, "action": "buy",
             "side": "long", "quantity": 1, "expiration": exp_s,
-            "entry_price": self.call_mid,
+            "entry_price": (self.entry_ask if self.entry_ask is not None
+                            else self.debit),
+            "entry_touch_size": self.entry_touch_size,
         }]
 
     def as_dict(self) -> dict[str, Any]:
@@ -192,6 +197,28 @@ def build_updraft_signal(
     spot = float(chain.get("spot") or 0)
     if spot <= 0:
         return _reject("missing_spot")
+
+    if mode == "astra3":
+        # Frozen ASTRA-3 $500 book (2026-09-18): direct ask entry, one combined
+        # UPDRAFT/BACKDRAFT stream, 30-minute busy window and exact TRAIN-only
+        # thresholds from the real-NBBO study. The +2 call is the separately
+        # validated lower-exposure expression; first matching mechanism wins.
+        sub_diag: list[str] = []
+        for m2, ov in (
+            ("updraft", {"flow_max": -0.13376407997558806,
+                          "r30_min": 19.982448725892155,
+                          "strike_offset": 2, "hold_minutes": 30}),
+            ("backdraft", {"backdraft_flow_max": -0.35,
+                            "require_put_wall": True,
+                            "strike_offset": 2, "hold_minutes": 30}),
+        ):
+            sig = build_updraft_signal(
+                chain=chain, today=today, params={**p, **ov, "mode": m2},
+                mode=m2, config=config, equity=equity, diag=sub_diag)
+            if sig is not None:
+                return sig
+        detail = "; ".join(sub_diag)
+        return _reject(f"no_astra3_leg: {detail}" if detail else "no_astra3_leg")
 
     if mode == "tempest":
         # THE BOOK IN ONE BOT (2026-07-29, Leron's 10-trades/week mandate).
@@ -396,6 +423,18 @@ def build_updraft_signal(
         return _reject(f"no_{right}_strikes")
     bid = float(call.get("bid") or 0)
     ask = float(call.get("ask") or 0)
+    entry_touch_size: int | None = None
+    if bool(p.get("astra3_fee")):
+        if ask <= 0:
+            return _reject("entry_ask_unavailable")
+        try:
+            raw_size = float(call.get("ask_size"))
+        except (TypeError, ValueError):
+            return _reject("entry_ask_size_unavailable")
+        if (not math.isfinite(raw_size) or raw_size < 1
+                or not raw_size.is_integer()):
+            return _reject(f"entry_ask_size_unavailable: ask_size={call.get('ask_size')}")
+        entry_touch_size = int(raw_size)
     mid = (bid + ask) / 2.0
     if mid < float(p["min_option_price"]):
         return _reject(f"price_too_low: mid={mid:.2f} "
@@ -407,12 +446,20 @@ def build_updraft_signal(
 
     # --- sizing, mirroring dip_buy so the executor sees a familiar shape ---
     cfg = config or {}
-    debit = round(mid, 4)
+    # The real-NBBO research paid the displayed ask. Store that touch directly;
+    # the scanner marks this as an already-crossed fill so the executor does not
+    # add a second half-spread from a later quote request. ASTRA-3 also embeds
+    # its frozen $0.70 round-trip commission as $0.007/share in the paper debit.
+    paper_fee = (0.007 if mode in ("updraft", "backdraft")
+                 and bool(p.get("astra3_fee")) else 0.0)
+    debit = round(ask + paper_fee, 4)
     max_loss_per = debit * 100.0        # long call: max loss IS the premium
     bp_pct = float(cfg.get("bp_pct", 0.02))
     raw = int((equity * bp_pct) // max_loss_per) if max_loss_per > 0 else 0
     cap = int(cfg.get("max_contracts") or 0)
     contracts = min(raw, cap) if cap > 0 else raw
+    if entry_touch_size is not None:
+        contracts = min(contracts, entry_touch_size)
     if contracts < 1:
         return _reject(f"size_zero: equity={equity:.0f} bp={bp_pct:.3f} "
                        f"max_loss_per={max_loss_per:.0f}")
@@ -442,9 +489,14 @@ def build_updraft_signal(
                      else None),
         em_straddle_pct=(straddle if mode == "em_breach" else None),
         debit=debit,
+        entry_ask=round(ask, 4),
+        entry_touch_size=entry_touch_size,
         contracts=contracts,
         max_profit=pt_pct * max_loss_per,
         max_loss=max_loss_per,
         pt_target_pnl=pt_pct * max_loss_per * contracts,
-        sl_target_pnl=sl_pct * max_loss_per * contracts,
+        # The fee is included in P&L but not in the market stop trigger. Adding
+        # it to the loss threshold keeps the stop exactly at 50% of premium.
+        sl_target_pnl=((sl_pct * ask * 100.0 + paper_fee * 100.0)
+                       * contracts),
     )

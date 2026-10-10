@@ -58,6 +58,7 @@ export async function POST(req: NextRequest) {
         ? (raw.routeParams as Record<string, string>)
         : {},
     title: String(raw.title ?? 'IronForge'),
+    subtitle: typeof raw.subtitle === 'string' ? raw.subtitle : undefined,
     body: String(raw.body ?? ''),
     amount: typeof raw.amount === 'number' ? raw.amount : null,
     state: typeof raw.state === 'string' ? raw.state : null,

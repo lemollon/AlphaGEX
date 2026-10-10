@@ -55,7 +55,7 @@ export async function GET() {
 
   // Every plan the site can sell, with the number it shows for each.
   const plans: Array<{ plan: string; lookupKey: string; advertised: number }> = [
-    { plan: COMMUNITY_PLAN.name, lookupKey: COMMUNITY_PLAN.lookupKey, advertised: COMMUNITY_PLAN.priceMonthly },
+    // Community is free since 2026-10-05 — no Stripe price to reconcile.
     ...Object.values(BOT_PLANS).map((p) => ({
       plan: p.name,
       lookupKey: p.lookupKey,

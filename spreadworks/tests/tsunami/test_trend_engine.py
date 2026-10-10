@@ -149,6 +149,112 @@ class SignalWeight(unittest.TestCase):
         self.assertIsNone(diag["trending"])
 
 
+class ApplySplitsForBook(unittest.TestCase):
+    """Regression for the 2026-08-24 MSTU 1:10 reverse split: the book kept
+    26.131 pre-split shares at avg_cost 2.42 against a post-split price, so
+    the next SELL booked a phantom +$377. `_apply_splits_for_book()` must
+    split-adjust HELD shares (and avg_cost inversely) before any signal/
+    fill logic runs, and must fail safe (skip, never trade, never raise) if
+    the split lookup itself fails."""
+
+    def _fake_yf_splits(self, dates, ratios):
+        import sys
+        import types
+        import pandas as pd
+        splits = pd.Series(ratios, index=pd.to_datetime(dates))
+        fake = types.ModuleType("yfinance")
+        fake.Ticker = lambda _t: types.SimpleNamespace(splits=splits)
+        return patch.dict(sys.modules, {"yfinance": fake})
+
+    def _fake_conn(self):
+        executed = []
+
+        class _Cur:
+            def execute(self, sql, params=()):
+                executed.append((sql, params))
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        class _Conn:
+            def __init__(self):
+                self.commits = 0
+            def cursor(self):
+                return _Cur()
+            def commit(self):
+                self.commits += 1
+
+        return _Conn(), executed
+
+    def test_reverse_split_after_updated_at_adjusts_book_and_writes_split_trade(self):
+        from datetime import datetime, timezone
+        updated_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        book = {"MSTU": {"shares": 26.131, "avg_cost": 2.42, "updated_at": updated_at}}
+        conn, executed = self._fake_conn()
+        with self._fake_yf_splits(["2026-08-24"], [0.1]),              patch.object(trend_engine.tsunami_discord, "post_embed") as mock_post:
+            skip = trend_engine._apply_splits_for_book(
+                conn, book, datetime(2026, 8, 25, tzinfo=timezone.utc))
+        self.assertEqual(skip, set())
+        self.assertAlmostEqual(book["MSTU"]["shares"], 2.6131)
+        self.assertAlmostEqual(book["MSTU"]["avg_cost"], 24.2)
+        updates = [e for e in executed if e[0].strip().upper().startswith("UPDATE")]
+        inserts = [e for e in executed if e[0].strip().upper().startswith("INSERT")]
+        self.assertEqual(len(updates), 1)
+        self.assertIn("tsunami_trend_book", updates[0][0])
+        self.assertEqual(len(inserts), 1)
+        self.assertIn("tsunami_trend_trades", inserts[0][0])
+        self.assertIn("SPLIT", inserts[0][0])
+        self.assertEqual(conn.commits, 1)
+        mock_post.assert_called_once()
+
+    def test_split_before_updated_at_is_ignored(self):
+        from datetime import datetime, timezone
+        updated_at = datetime(2026, 8, 25, tzinfo=timezone.utc)  # AFTER the split
+        book = {"MSTU": {"shares": 2.6131, "avg_cost": 24.2, "updated_at": updated_at}}
+        conn, executed = self._fake_conn()
+        with self._fake_yf_splits(["2026-08-24"], [0.1]):
+            skip = trend_engine._apply_splits_for_book(
+                conn, book, datetime(2026, 8, 26, tzinfo=timezone.utc))
+        self.assertEqual(skip, set())
+        self.assertEqual(book["MSTU"]["shares"], 2.6131)
+        self.assertEqual(book["MSTU"]["avg_cost"], 24.2)
+        self.assertEqual(executed, [])  # no DB write for a split already priced in
+
+    def test_yfinance_failure_skips_name_no_trade_no_crash(self):
+        import sys
+        import types
+        from datetime import datetime, timezone
+
+        def _boom(_t):
+            raise RuntimeError("rate limited")
+        fake = types.ModuleType("yfinance")
+        fake.Ticker = _boom
+        updated_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        book = {"MSTU": {"shares": 26.131, "avg_cost": 2.42, "updated_at": updated_at}}
+        conn, executed = self._fake_conn()
+        with patch.dict(sys.modules, {"yfinance": fake}):
+            skip = trend_engine._apply_splits_for_book(
+                conn, book, datetime(2026, 8, 25, tzinfo=timezone.utc))
+        self.assertEqual(skip, {"MSTU"})
+        self.assertEqual(book["MSTU"]["shares"], 26.131)  # untouched -- fail safe
+        self.assertEqual(book["MSTU"]["avg_cost"], 2.42)
+        self.assertEqual(executed, [])  # no trade against a possibly-stale count
+
+    def test_forward_split_2_for_1(self):
+        from datetime import datetime, timezone
+        updated_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        book = {"TQQQ": {"shares": 10.0, "avg_cost": 50.0, "updated_at": updated_at}}
+        conn, executed = self._fake_conn()
+        with self._fake_yf_splits(["2026-08-24"], [2.0]),              patch.object(trend_engine.tsunami_discord, "post_embed"):
+            skip = trend_engine._apply_splits_for_book(
+                conn, book, datetime(2026, 8, 25, tzinfo=timezone.utc))
+        self.assertEqual(skip, set())
+        self.assertAlmostEqual(book["TQQQ"]["shares"], 20.0)
+        self.assertAlmostEqual(book["TQQQ"]["avg_cost"], 25.0)
+        self.assertEqual(len(executed), 2)  # one UPDATE + one INSERT
+
+
 class LogSignal(unittest.TestCase):
     """_log_signal() writes on an INDEPENDENT connection from whatever
     run_rebalance() is using -- a failure here must never abort or poison

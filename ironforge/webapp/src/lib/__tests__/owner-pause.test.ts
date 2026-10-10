@@ -72,7 +72,7 @@ describe('per-owner production pause', () => {
   })
 
   it("another owner's pause does not stop this one — the whole point", async () => {
-    db.pausedOwners = ['Logan', 'Spark2']
+    db.pausedOwners = ['Logan', 'Kindle']
     expect((await getProductionAccountsForBot('flame')).map((a) => a.name)).toEqual(['Flame'])
   })
 

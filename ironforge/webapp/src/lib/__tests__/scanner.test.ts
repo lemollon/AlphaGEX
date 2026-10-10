@@ -15,11 +15,13 @@ vi.mock('../db', () => ({
   num: (v: any) => { if (v == null || v === '') return 0; const n = parseFloat(v); return isNaN(n) ? 0 : n },
   int: (v: any) => { if (v == null || v === '') return 0; const n = parseInt(v, 10); return isNaN(n) ? 0 : n },
   CT_TODAY: "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Chicago')::date",
+  isSettleAtExpiryBot: (b: string) => b === 'flame' || b === 'spark',
 }))
 
 // Mock tradier module
 vi.mock('../tradier', () => ({
   getQuote: vi.fn().mockResolvedValue({ last: 585.50, bid: 585.45, ask: 585.55, symbol: 'SPY' }),
+  getDailyHistory: vi.fn().mockResolvedValue([]),
   getOptionExpirations: vi.fn().mockResolvedValue(['2026-03-18', '2026-03-19', '2026-03-20']),
   getIcEntryCredit: vi.fn().mockResolvedValue({
     putCredit: 0.15, callCredit: 0.12, totalCredit: 0.27, source: 'TRADIER_LIVE',
@@ -36,11 +38,37 @@ vi.mock('../tradier', () => ({
     { name: 'User', apiKey: 'test-key-user' },
   ]),
   getSandboxAccountPositions: vi.fn().mockResolvedValue([]),
+  getGammaExposureComponents: vi.fn().mockResolvedValue(null),
+  getOptionQuote: vi.fn().mockResolvedValue(null),
+  buildOccSymbol: vi.fn((ticker: string, exp: string, strike: number, side: string) => `${ticker}${exp}${side}${strike}`),
+  placeCallSpreadOrderAllAccounts: vi.fn().mockResolvedValue({}),
   SandboxOrderInfo: {},
   SandboxCloseInfo: {},
 }))
 
+// Mock the customer-executor module — real customer mirroring is heavy (real
+// DB queries against customer_positions/broker_accounts) and out of scope for
+// scanner-level tests; mocked here so tests can assert WHETHER/WHEN scanner.ts
+// reaches it, matching the fire-and-forget `void mirrorCloseToCustomers(...)`
+// call sites in closeFlintAtRiskBeforeBell/settleFlintExpired.
+vi.mock('../customer-executor/executor', () => ({
+  mirrorOpenToCustomers: vi.fn().mockResolvedValue(undefined),
+  mirrorFlintOpenToCustomers: vi.fn().mockResolvedValue(undefined),
+  mirrorCloseToCustomers: vi.fn().mockResolvedValue(undefined),
+  retryFailedCustomerCloses: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Mock the push dispatch module so tests can control whether it throws —
+// specifically to prove notifyBigMove's fire-and-forget contract (db-controls
+// #202 safety review): a throwing alert dispatcher must never escape into the
+// scan cycle that rides alongside it.
+vi.mock('../push/dispatch', () => ({
+  dispatchToCustomers: vi.fn().mockResolvedValue({ sent: 0, skipped: 0, reasons: [] }),
+}))
+
 import { _testing } from '../scanner'
+import { query } from '../db'
+import { dispatchToCustomers } from '../push/dispatch'
 
 const {
   ctHHMM,
@@ -58,6 +86,13 @@ const {
   MAX_CONSECUTIVE_MTM_FAILURES,
   _botConfig,
   _mtmFailureCounts,
+  logFlintDailyContext,
+  getFlintGammaContextCached,
+  FLINT_CONTEXT_TABLE,
+  closeFlintAtRiskBeforeBell,
+  settleFlintExpired,
+  assignmentGuardWindow,
+  notifyBigMove,
 } = _testing
 
 /* ------------------------------------------------------------------ */
@@ -228,37 +263,31 @@ describe('Market Hours', () => {
 /* ================================================================== */
 
 describe('Sliding Profit Target', () => {
-  describe('FLAME/SPARK (base=0.30)', () => {
-    it('MORNING (8:30-10:29): 30%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(8, 30), 0.30, 'flame')
-      expect(tier).toBe('MORNING')
-      expect(pt).toBe(0.30)
+  describe('FLAME/SPARK — EBB settle-at-expiry, never a profit target', () => {
+    it('HOLD_TO_EOD all day even when a DB override sets base 0.30 (2026-10-02 -$32 incident)', () => {
+      for (const bot of ['flame', 'spark']) {
+        for (const [h, m] of [[8, 30], [10, 30], [13, 0], [13, 50], [14, 44]] as const) {
+          const [pt, tier] = getSlidingProfitTarget(makeCT(h, m), 0.30, bot)
+          expect(tier).toBe('HOLD_TO_EOD')
+          expect(pt).toBe(1.0)
+        }
+      }
     })
+  })
 
-    it('SPARK MORNING at 10:29: 40% (SPARK tier is 40/35/30, not 30/20/15)', () => {
-      // SPARK-strategy bots moved to a higher-floor 40/35/30 ladder on 2026-07-02;
-      // the DB profit_target_pct override deliberately does NOT apply to them.
-      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 29), 0.30, 'spark')
+  describe('legacy ladder (non-EBB bots, base=0.30)', () => {
+    it('KINDLE (SPARK-strategy) MORNING at 10:29: 40%', () => {
+      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 29), 0.30, 'kindle')
       expect(tier).toBe('MORNING')
       expect(pt).toBe(0.40)
     })
 
-    it('MIDDAY (10:30-12:59): 20%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(10, 30), 0.30, 'flame')
-      expect(tier).toBe('MIDDAY')
-      expect(pt).toBeCloseTo(0.20, 10) // base - 0.10
-    })
-
-    it('AFTERNOON (13:00-14:44): 15%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(13, 0), 0.30, 'flame')
-      expect(tier).toBe('AFTERNOON')
-      expect(pt).toBe(0.15) // base - 0.15
-    })
-
-    it('AFTERNOON at 14:44: still 15%', () => {
-      const [pt, tier] = getSlidingProfitTarget(makeCT(14, 44), 0.30, 'flame')
-      expect(tier).toBe('AFTERNOON')
-      expect(pt).toBe(0.15)
+    it('generic bot MORNING 30% / MIDDAY 20% / AFTERNOON 15%', () => {
+      expect(getSlidingProfitTarget(makeCT(8, 30), 0.30, 'blaze')).toEqual([0.30, 'MORNING'])
+      const [mid, midTier] = getSlidingProfitTarget(makeCT(10, 30), 0.30, 'blaze')
+      expect(midTier).toBe('MIDDAY'); expect(mid).toBeCloseTo(0.20, 10)
+      expect(getSlidingProfitTarget(makeCT(13, 0), 0.30, 'blaze')).toEqual([0.15, 'AFTERNOON'])
+      expect(getSlidingProfitTarget(makeCT(14, 44), 0.30, 'blaze')).toEqual([0.15, 'AFTERNOON'])
     })
   })
 
@@ -286,14 +315,14 @@ describe('Sliding Profit Target', () => {
   describe('profit target price calculation', () => {
     it('MORNING 30%: PT price = entry * 0.70', () => {
       const entryCredit = 0.50
-      const [ptFrac] = getSlidingProfitTarget(makeCT(9, 0), 0.30, 'flame')
+      const [ptFrac] = getSlidingProfitTarget(makeCT(9, 0), 0.30, 'blaze')
       const ptPrice = entryCredit * (1 - ptFrac)
       expect(ptPrice).toBeCloseTo(0.35, 4) // 0.50 * 0.70
     })
 
     it('AFTERNOON 15%: PT price = entry * 0.85', () => {
       const entryCredit = 0.50
-      const [ptFrac] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'flame')
+      const [ptFrac] = getSlidingProfitTarget(makeCT(13, 30), 0.30, 'blaze')
       const ptPrice = entryCredit * (1 - ptFrac)
       expect(ptPrice).toBeCloseTo(0.425, 4) // 0.50 * 0.85
     })
@@ -771,6 +800,83 @@ describe('VIX Gate', () => {
 })
 
 /* ================================================================== */
+/*  14b. VIX Decay Gate — per-bot ceiling (FLAME 0.80, SPARK 0.90)     */
+/* ================================================================== */
+
+describe('VIX Decay Gate — per-bot ceiling', () => {
+  const { vixDecayCheck, VIX_DECAY_CEILING } = _testing
+  const queryMock = vi.mocked(query)
+
+  /** 1 "prior session" row followed by 20 "window" rows, matching the
+   *  `WHERE trade_date < $1 ORDER BY trade_date DESC LIMIT 21` shape. */
+  function rowsFor(prior: number, windowVix: number, windowCount = 20) {
+    return [{ vix: prior }, ...Array(windowCount).fill({ vix: windowVix })]
+  }
+
+  beforeEach(() => {
+    queryMock.mockReset()
+  })
+
+  it('threshold is frozen: FLAME 0.80, SPARK 0.90', () => {
+    expect(VIX_DECAY_CEILING.flame).toBe(0.80)
+    expect(VIX_DECAY_CEILING.spark).toBe(0.90)
+  })
+
+  it('FLAME skips at ratio 0.85 (above its 0.80 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(17, 20)) // 17/20 = 0.85
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBe('vix_elevated(0.850>0.80)')
+    expect(result.ratio).toBeCloseTo(0.85)
+  })
+
+  it('FLAME skips at ratio 0.81 (above its 0.80 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(16.2, 20)) // 16.2/20 = 0.81
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBe('vix_elevated(0.810>0.80)')
+  })
+
+  it('FLAME trades at ratio 0.80 (exactly at its ceiling, not above it)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(16, 20)) // 16/20 = 0.80
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBeNull()
+    expect(result.ratio).toBeCloseTo(0.80)
+  })
+
+  it('FLAME trades at ratio 0.70 (well below its ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(14, 20)) // 14/20 = 0.70
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(result.reason).toBeNull()
+    expect(result.ratio).toBeCloseTo(0.70)
+  })
+
+  it('SPARK still trades at ratio 0.85 (below its unchanged 0.90 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(17, 20)) // 17/20 = 0.85
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(result.reason).toBeNull()
+  })
+
+  it('SPARK skips at ratio 0.91 (above its unchanged 0.90 ceiling)', async () => {
+    queryMock.mockResolvedValueOnce(rowsFor(18.2, 20)) // 18.2/20 = 0.91
+    const result = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(result.reason).toBe('vix_elevated(0.910>0.90)')
+  })
+
+  it('missing history (< 21 sessions) skips both FLAME and SPARK', async () => {
+    const thinHistory = [{ vix: 20 }, { vix: 19 }, { vix: 18 }] // 3 rows, need 21
+
+    queryMock.mockResolvedValueOnce(thinHistory)
+    const flameResult = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.flame)
+    expect(flameResult.reason).toBe('vix_unknown(have=3 need=21)')
+    expect(flameResult.ratio).toBeNull()
+
+    queryMock.mockResolvedValueOnce(thinHistory)
+    const sparkResult = await vixDecayCheck('2026-09-08', VIX_DECAY_CEILING.spark)
+    expect(sparkResult.reason).toBe('vix_unknown(have=3 need=21)')
+    expect(sparkResult.ratio).toBeNull()
+  })
+})
+
+/* ================================================================== */
 /*  15. SPARK production Tradier-fill-only design                      */
 /* ================================================================== */
 
@@ -1003,9 +1109,9 @@ describe('Close position decision logic', () => {
     const midday = new Date('2026-03-18T11:00:00')  // 11 AM
     const afternoon = new Date('2026-03-18T13:30:00') // 1:30 PM
 
-    const [mPt] = getSlidingProfitTarget(morning, 0.30, 'flame')
-    const [mdPt] = getSlidingProfitTarget(midday, 0.30, 'flame')
-    const [aPt] = getSlidingProfitTarget(afternoon, 0.30, 'flame')
+    const [mPt] = getSlidingProfitTarget(morning, 0.30, 'blaze')
+    const [mdPt] = getSlidingProfitTarget(midday, 0.30, 'blaze')
+    const [aPt] = getSlidingProfitTarget(afternoon, 0.30, 'blaze')
 
     expect(mPt).toBeGreaterThan(mdPt)
     expect(mdPt).toBeGreaterThan(aPt)
@@ -1094,5 +1200,430 @@ describe('Config loading resilience', () => {
   it('syncPaperAccountCapital exists and has error handling', () => {
     expect(src).toMatch(/syncPaperAccountCapital/)
     expect(src).toMatch(/capital sync error/i)
+  })
+})
+
+/* ================================================================== */
+/*  FLINT forward-logging — daily dealer-gamma context                  */
+/* ================================================================== */
+describe('FLINT daily context logging never throws into the trading path', () => {
+  it('swallows a table-create (dbExecute) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockRejectedValueOnce(new Error('CREATE TABLE boom'))
+
+    await expect(logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 21, 13, 5)),
+      decision: 'skip:no_quote',
+      vixRatio: 0.55,
+      spot: null,
+      shortStrike: null,
+      longStrike: null,
+      entryCredit: null,
+    })).resolves.toBeUndefined()
+  })
+
+  it('swallows an INSERT (query) failure and resolves normally', async () => {
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockResolvedValueOnce(1) // table create succeeds this time
+    ;(db.query as any).mockRejectedValueOnce(new Error('INSERT boom'))
+
+    await expect(logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 22, 13, 6)),
+      decision: 'traded',
+      vixRatio: 0.90,
+      spot: 768.05,
+      shortStrike: 770,
+      longStrike: 772,
+      entryCredit: 0.22,
+    })).resolves.toBeUndefined()
+  })
+
+  it('a gamma-fetch failure (getGammaExposureComponents rejects) still writes a row, with gamma_source "unavailable" — never fabricated', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockRejectedValueOnce(new Error('tradier chain boom'))
+    const db = await import('../db')
+    ;(db.query as any).mockClear()
+    ;(db.query as any).mockResolvedValueOnce([])
+
+    await logFlintDailyContext({
+      ct: new Date(Date.UTC(2026, 8, 23, 13, 7)),
+      decision: 'traded',
+      vixRatio: 0.95,
+      spot: 770,
+      shortStrike: 772,
+      longStrike: 774,
+      entryCredit: 0.30,
+    })
+
+    expect(db.query).toHaveBeenCalled()
+    const [sql, params] = (db.query as any).mock.calls[(db.query as any).mock.calls.length - 1]
+    // INSERT column order: trade_date, evaluated_at, spot, vix_ratio,
+    // call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+    // decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+    expect(sql).toContain(FLINT_CONTEXT_TABLE)
+    expect(params).toHaveLength(15)
+    expect(params[8]).toBeNull() // call_gamma
+    expect(params[9]).toBeNull() // put_gamma
+    expect(params[14]).toBe('unavailable') // gamma_source
+  })
+
+  it('getFlintGammaContextCached never throws and falls back to "unavailable" with no spot', async () => {
+    const value = await getFlintGammaContextCached(new Date(Date.UTC(2026, 8, 24, 13, 5)), null)
+    expect(value.gammaSource).toBe('unavailable')
+    expect(value.callGamma).toBeNull()
+    expect(value.putGamma).toBeNull()
+    expect(value.putWall).toBeNull()
+    expect(value.callWall).toBeNull()
+  })
+
+  it('caches the gamma read per CT day — a second call the same day does not re-fetch', async () => {
+    const tradier = await import('../tradier')
+    ;(tradier.getGammaExposureComponents as any).mockClear()
+    ;(tradier.getGammaExposureComponents as any).mockResolvedValueOnce({ callGex: 1e10, putGex: 0.8e10, netGex: 0.2e10 })
+
+    const day = new Date(Date.UTC(2026, 8, 25, 13, 5))
+    const first = await getFlintGammaContextCached(day, 771.00)
+    expect(first.callGamma).toBe(1e10)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1)
+
+    const secondSameDay = new Date(Date.UTC(2026, 8, 25, 13, 9))
+    const second = await getFlintGammaContextCached(secondSameDay, 771.00)
+    expect(second).toEqual(first)
+    expect(tradier.getGammaExposureComponents).toHaveBeenCalledTimes(1) // not called again
+  })
+})
+
+/**
+ * FLINT assignment guard — per-account routing (Leron, 2026-09-26,
+ * follow-up: "ironforge will have a lot of accounts", profit protection
+ * and the guard both enforced PER ACCOUNT). Before this fix, closing ran
+ * against every eligible PRODUCTION account and never touched sandbox at
+ * all — with more than one account of a type, a guard triggered on one
+ * customer's position would have bought back a DIFFERENT customer's too.
+ */
+describe('FLINT assignment guard — closeFlintAtRiskBeforeBell routes per account', () => {
+  const queryMock = vi.mocked(query)
+  const CT_IN_GUARD_WINDOW = new Date(2026, 8, 26, 14, 58, 0) // 14:58 CT, inside [14:57, 15:00)
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+
+  it("FLINT_MODE unset places zero orders — closes nothing on the broker even with an at-risk row in the DB", async () => {
+    const tradier = await import('../tradier')
+    // getFlintMode() unset -> 'off': the guard must bail before even reading flint_positions.
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-USER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(result).toBe('')
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+
+  it("two accounts hold positions, only one is at risk — the buy-back targets ONLY that account, never the other customer's", async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      // User: short strike AT spot (585.50, the getQuote mock's last) -> triggers the $0.25 buffer.
+      { position_id: 'FLINT-USER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+      // Matt: short strike far OTM -> clear, never at risk.
+      { position_id: 'FLINT-MATT', expiration: '2026-09-26', call_short_strike: 600, call_long_strike: 602,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'Matt' },
+    ])
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-USER=guarded')
+    expect(result).toContain('FLINT-MATT=clear')
+    // Exactly one buy-back order, and it is routed to User — never to Matt,
+    // who was never even at risk.
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+    const call = (tradier.placeCallSpreadOrderAllAccounts as any).mock.calls[0]
+    expect(call[7]).toMatchObject({ close: true, targetPerson: 'User' })
+  })
+
+  it('a production row with mode=live is also routed by its own person, not "every production account"', async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-FLAME', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'production', mode: 'live', person: 'Flame' },
+    ])
+    await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+    const call = (tradier.placeCallSpreadOrderAllAccounts as any).mock.calls[0]
+    expect(call[7]).toMatchObject({ close: true, targetPerson: 'Flame' })
+  })
+
+  it('a paper row (no person) is closed in the DB but never sent to the broker', async () => {
+    process.env.FLINT_MODE = 'live'
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-PAPER', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'paper', mode: 'live', person: null },
+    ])
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+    expect(result).toContain('FLINT-PAPER=guarded')
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * flint_positions is bot-agnostic (no bot filter in the guard/settle SELECTs)
+ * and closeFlintAtRiskBeforeBell / settleFlintExpired are both invoked once
+ * per bot from scanBot() for 'flame' AND 'spark' every cycle — cycles that
+ * run concurrently via Promise.allSettled. Two overlapping invocations can
+ * both select the SAME open row before either one's UPDATE lands. Without a
+ * rowcount check, the loser would still compute a real closePrice/realizedPnl
+ * and fire a SECOND live broker buy-back for an already-closed position.
+ * This pins the idempotency claim: dbExecute's rowCount must gate the broker
+ * call and the edge-decay hook, not just be discarded.
+ */
+describe('FLINT guard/settle — idempotent under overlapping scan cycles', () => {
+  const queryMock = vi.mocked(query)
+  const CT_IN_GUARD_WINDOW = new Date(2026, 8, 26, 14, 58, 0) // 14:58 CT
+  const CT_AFTER_CLOSE = new Date(2026, 8, 26, 15, 5, 0) // 15:05 CT, past ASSIGNMENT_GUARD_END_HHMM
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockReset()
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+    delete process.env.FLINT_GUARD_BUFFER
+  })
+
+  it('closeFlintAtRiskBeforeBell: a row already claimed by another cycle (rowCount=0) is skipped, no second broker order', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-RACE', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    // Simulate the other concurrent cycle having already flipped this row to
+    // 'closed' — this cycle's UPDATE ... WHERE status='open' matches 0 rows.
+    ;(db.dbExecute as any).mockResolvedValueOnce(0)
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-RACE=already_closed')
+    expect(tradier.placeCallSpreadOrderAllAccounts).not.toHaveBeenCalled()
+  })
+
+  it('closeFlintAtRiskBeforeBell: a row this cycle actually claims (rowCount=1) still closes on the broker as before', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    const tradier = await import('../tradier')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SOLO', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(1)
+
+    const result = await closeFlintAtRiskBeforeBell(CT_IN_GUARD_WINDOW)
+
+    expect(result).toContain('FLINT-SOLO=guarded')
+    expect(tradier.placeCallSpreadOrderAllAccounts).toHaveBeenCalledTimes(1)
+  })
+
+  it('settleFlintExpired: a row already settled by another cycle (rowCount=0) is skipped, not double-logged', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SETTLE-RACE', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30 },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(0)
+
+    const result = await settleFlintExpired(CT_AFTER_CLOSE)
+
+    expect(result).toContain('FLINT-SETTLE-RACE=already_settled')
+  })
+
+  it('settleFlintExpired: a row this cycle actually claims (rowCount=1) settles normally', async () => {
+    process.env.FLINT_MODE = 'live'
+    const db = await import('../db')
+    queryMock.mockResolvedValueOnce([
+      { position_id: 'FLINT-SETTLE-SOLO', expiration: '2026-09-26', call_short_strike: 585.50, call_long_strike: 587.50,
+        contracts: 1, entry_credit: 0.30 },
+    ])
+    ;(db.dbExecute as any).mockResolvedValueOnce(1)
+
+    const result = await settleFlintExpired(CT_AFTER_CLOSE)
+
+    expect(result).toContain('FLINT-SETTLE-SOLO=settled')
+  })
+})
+
+/**
+ * The assignment guard's window used to be hardcoded 14:57-15:00 CT
+ * (ASSIGNMENT_GUARD_HHMM/END_HHMM), which assumes a normal 3:00 PM CT close
+ * every day. On a half day (day-after-Thanksgiving, Christmas Eve — NYSE
+ * closes 12:00 PM CT, per market-calendar.ts's EARLY_CLOSES), the real close
+ * is three hours earlier: the old hardcoded window fired at 14:57-15:00,
+ * long after a same-day 0DTE contract already had no market, and never fired
+ * at the ACTUAL at-risk window (11:57-12:00). assignmentGuardWindow(ct) now
+ * derives both boundaries from marketCloseMinuteCT(ct) instead.
+ */
+describe('assignmentGuardWindow — derives from the real close, not a hardcoded 15:00', () => {
+  it('normal trading day: window is 14:57-15:00 CT, same as before', () => {
+    const normalDay = new Date(2026, 8, 21, 12, 0, 0) // Monday 2026-09-21, no holiday/early-close
+    expect(assignmentGuardWindow(normalDay)).toEqual({ startHHMM: 1457, endHHMM: 1500 })
+  })
+
+  it('half day (day after Thanksgiving 2026-11-27): window is 11:57-12:00 CT, not 14:57-15:00', () => {
+    const halfDay = new Date(2026, 10, 27, 12, 0, 0) // Friday 2026-11-27 — EARLY_CLOSES
+    expect(assignmentGuardWindow(halfDay)).toEqual({ startHHMM: 1157, endHHMM: 1200 })
+  })
+
+  it('half day (Christmas Eve 2026-12-24): window is 11:57-12:00 CT', () => {
+    const halfDay = new Date(2026, 11, 24, 12, 0, 0) // Thursday 2026-12-24 — EARLY_CLOSES
+    expect(assignmentGuardWindow(halfDay)).toEqual({ startHHMM: 1157, endHHMM: 1200 })
+  })
+})
+
+/**
+ * End-to-end proof that the early-close window actually gates the real
+ * function, not just the pure helper — AND (2026-09-29 correction, per
+ * review) that it still gates correctly now that #3094 added its own
+ * dbExecute-rowCount idempotency claim in front of the broker call. The
+ * "fires" case must mock dbExecute to resolve a nonzero rowCount, or the
+ * claim step would swallow the row before the time-window assertion below
+ * ever gets exercised.
+ */
+describe('FLINT guard is early-close aware end to end (2026-11-27 half day)', () => {
+  const queryMock = vi.mocked(query)
+  // Same at-risk row on both timestamps below — only the clock differs.
+  const AT_RISK_ROW = [
+    { position_id: 'FLINT-HALFDAY', expiration: '2026-11-27', call_short_strike: 585.50, call_long_strike: 587.50,
+      contracts: 1, entry_credit: 0.30, account_type: 'sandbox', mode: 'live', person: 'User' },
+  ]
+
+  beforeEach(async () => {
+    queryMock.mockReset()
+    queryMock.mockResolvedValue([])
+    const db = await import('../db')
+    ;(db.dbExecute as any).mockReset()
+    ;(db.dbExecute as any).mockResolvedValue(1) // this cycle claims the row unless a test overrides it
+    const tradier = await import('../tradier')
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockReset()
+    ;(tradier.placeCallSpreadOrderAllAccounts as any).mockResolvedValue({})
+    const customerExecutor = await import('../customer-executor/executor')
+    ;(customerExecutor.mirrorCloseToCustomers as any).mockReset()
+    ;(customerExecutor.mirrorCloseToCustomers as any).mockResolvedValue(undefined)
+    process.env.FLINT_MODE = 'live'
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE
+  })
+
+  it('fires in the REAL 11:57-12:00 CT window on the half day, AND reaches customer mirroring', async () => {
+    queryMock.mockResolvedValueOnce(AT_RISK_ROW)
+    const customerExecutor = await import('../customer-executor/executor')
+    const result = await closeFlintAtRiskBeforeBell(new Date(2026, 10, 27, 11, 58, 0))
+    expect(result).toContain('FLINT-HALFDAY=guarded')
+    // The early-close fix must not just close on the broker — the customer
+    // mirror close (void mirrorCloseToCustomers(...) inside this same guard)
+    // is on the SAME gated code path, so it must fire too, at the REAL window,
+    // not the old 14:57-15:00 slot.
+    expect(customerExecutor.mirrorCloseToCustomers).toHaveBeenCalledWith(
+      'flame', 'FLINT-HALFDAY', 'assignment_guard',
+    )
+  })
+
+  it('does NOT fire at the OLD hardcoded 14:58 CT slot — market has been closed 3 hours, and customer mirroring is NOT reached either', async () => {
+    queryMock.mockResolvedValueOnce(AT_RISK_ROW)
+    const customerExecutor = await import('../customer-executor/executor')
+    const result = await closeFlintAtRiskBeforeBell(new Date(2026, 10, 27, 14, 58, 0))
+    expect(result).toBe('')
+    expect(queryMock).not.toHaveBeenCalled() // bails before even reading flint_positions
+    expect(customerExecutor.mirrorCloseToCustomers).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * db-controls #202 safety review (coordinator follow-up): "the new big_move
+ * hook in scanner.ts must never affect trading" — verified two ways. (1) its
+ * call site rides the monitor loop as `void notifyBigMove(...)`, never
+ * `await`ed, so a slow dispatcher cannot add latency to the scan cycle. (2)
+ * even called directly and awaited, as this test does, a throwing push
+ * dispatcher must resolve cleanly rather than reject — proving the function's
+ * own try/catch, independent of the fire-and-forget call site.
+ */
+describe('notifyBigMove — a throwing alert dispatcher never escapes', () => {
+  const queryMock = vi.mocked(query)
+  const dispatchMock = vi.mocked(dispatchToCustomers)
+
+  // contracts=1, total_credit=$1.00, width=5 (short 10 / long 5) -> maxProfit
+  // $100, maxLoss $400. unrealizedPnl=$60 -> +60% of maxProfit, past the 50%
+  // threshold, so notifyBigMove reaches the dispatch call every time.
+  const POS = {
+    position_id: 'SPARK-TEST-1',
+    contracts: 1,
+    total_credit: 1.0,
+    put_short_strike: 10,
+    put_long_strike: 5,
+  }
+
+  beforeEach(() => {
+    queryMock.mockReset()
+    dispatchMock.mockReset()
+  })
+
+  it('swallows a rejected dispatchToCustomers and still resolves', async () => {
+    queryMock.mockResolvedValueOnce([{ customer_id: 'cust-1' }]) // customerIdsForBot
+    dispatchMock.mockRejectedValueOnce(new Error('dispatch boom'))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(notifyBigMove('spark', POS, 60)).resolves.toBeUndefined()
+    expect(dispatchMock).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('big_move push failed'))
+
+    warnSpy.mockRestore()
+  })
+
+  it('swallows a thrown error from the customer lookup itself and still resolves', async () => {
+    queryMock.mockRejectedValueOnce(new Error('db boom')) // customerIdsForBot's own query
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(notifyBigMove('spark', POS, 60)).resolves.toBeUndefined()
+    expect(dispatchMock).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('big_move push failed'))
+
+    warnSpy.mockRestore()
+  })
+
+  it('never calls dispatch for a bot outside PUSH_BOTS, regardless of P&L', async () => {
+    await expect(notifyBigMove('inferno', POS, 60)).resolves.toBeUndefined()
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
+  })
+
+  it('never calls dispatch when the move has not crossed the threshold', async () => {
+    // unrealizedPnl=$10 -> +10% of maxProfit — under the 50% bar.
+    await expect(notifyBigMove('spark', POS, 10)).resolves.toBeUndefined()
+    expect(queryMock).not.toHaveBeenCalled()
+    expect(dispatchMock).not.toHaveBeenCalled()
   })
 })

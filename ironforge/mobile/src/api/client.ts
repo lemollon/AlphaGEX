@@ -16,6 +16,10 @@
  */
 import Constants from 'expo-constants'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
+import { ApiError } from '@/api/errors'
+import { reportNetworkSuccess, reportNetworkFailure } from '@/live/connectivity'
+
+export { ApiError }
 
 const API_BASE: string =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
@@ -31,9 +35,59 @@ export class AuthExpiredError extends Error {
   }
 }
 
+/**
+ * `fetch()` only rejects for a network-level failure — no connectivity, DNS,
+ * or (the case this exists for) `react-native-ssl-public-key-pinning`
+ * refusing the TLS handshake because the server's certificate chain no
+ * longer matches the pinned hashes in security/ssl-pinning.ts. Left
+ * unwrapped, that rejection is a raw native exception string ("Exception in
+ * HostFunction: ...", "java.io.IOException: Certificate pinning failure")
+ * surfacing wherever a screen's `catch (e) { ... (e as Error).message }`
+ * happens to render it — every screen in this app follows that exact
+ * pattern (see billing.tsx, account.tsx). Converting it here, once, means
+ * every caller already shows something a customer can act on instead of a
+ * crash-ish string, with no per-screen change needed.
+ */
+function throwSecureConnectionError(): never {
+  throw new Error('Secure connection to IronForge failed. Check your connection and try again.')
+}
+
 export interface TokenPair {
   accessToken: string
   refreshToken: string
+}
+
+/**
+ * Session-change subscribers.
+ *
+ * The root auth gate reads hasSession() ONCE at mount, so without this it never learns
+ * that the session changed while the app was running. That is not a cosmetic lag, it
+ * is a lockout in both directions:
+ *
+ *   sign IN  — tokens saved, the screen calls router.replace('/'), the gate still
+ *              believes signedIn === false and immediately replaces back to /sign-in.
+ *              The customer sees "Signing in…", then a blank login form, forever.
+ *   sign OUT — tokens cleared, the screen calls router.replace('/sign-in'), the gate
+ *              still believes signedIn === true and bounces them back INTO the app.
+ *
+ * Notifying from the two functions that own the tokens, rather than from each screen,
+ * is deliberate: a future caller cannot forget to announce the change, and the silent
+ * clearTokens() inside doRefresh() (reuse detection / idle expiry) now routes to
+ * sign-in on its own instead of leaving a signed-out app rendering empty states.
+ */
+type SessionListener = (signedIn: boolean) => void
+const sessionListeners = new Set<SessionListener>()
+
+/** Subscribe to sign-in / sign-out. Returns an unsubscribe suitable for useEffect. */
+export function onSessionChange(fn: SessionListener): () => void {
+  sessionListeners.add(fn)
+  return () => {
+    sessionListeners.delete(fn)
+  }
+}
+
+function notifySession(signedIn: boolean): void {
+  for (const fn of [...sessionListeners]) fn(signedIn)
 }
 
 export async function saveTokens(pair: TokenPair): Promise<void> {
@@ -43,11 +97,13 @@ export async function saveTokens(pair: TokenPair): Promise<void> {
     // refresh still works; the token just isn't readable from a cold locked device.
     keychainAccessible: AFTER_FIRST_UNLOCK,
   })
+  notifySession(true)
 }
 
 export async function clearTokens(): Promise<void> {
   await deleteItem(ACCESS_KEY).catch(() => {})
   await deleteItem(REFRESH_KEY).catch(() => {})
+  notifySession(false)
 }
 
 export async function getAccessToken(): Promise<string | null> {
@@ -91,7 +147,12 @@ async function doRefresh(): Promise<string | null> {
   return json.accessToken
 }
 
-async function refreshAccessToken(): Promise<string | null> {
+/**
+ * Exported for the ONE caller that cannot go through api(): the Sparky chat stream,
+ * which needs a raw streaming fetch and therefore has to drive its own 401 retry.
+ * Still single-flight — that is the whole point of sharing this promise.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
   if (!refreshInFlight) {
     refreshInFlight = doRefresh().finally(() => {
       refreshInFlight = null
@@ -99,6 +160,15 @@ async function refreshAccessToken(): Promise<string | null> {
   }
   return refreshInFlight
 }
+
+/**
+ * Capability header announcing "this build understands step-up and will present a
+ * step-up token on a gated route" (webapp's lib/auth/mobile-step-up.ts). Sent on
+ * EVERY authenticated call, not just the gated ones — the server decides per-route
+ * whether step-up applies at all; this header only tells it which protocol this
+ * client speaks. MUST match STEP_UP_CAPABLE_HEADER in that file exactly.
+ */
+const STEP_UP_CAPABLE_HEADER = 'x-ironforge-stepup'
 
 export interface ApiOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
@@ -118,16 +188,31 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
 
   const headers: Record<string, string> = {
     accept: 'application/json',
+    [STEP_UP_CAPABLE_HEADER]: '1',
     ...((opts.headers as Record<string, string>) ?? {}),
   }
   if (token) headers.authorization = `Bearer ${token}`
   if (opts.body !== undefined) headers['content-type'] = 'application/json'
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...opts,
-    headers,
-    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-  })
+  // Offline handling (#294): a network-layer failure (fetch itself rejecting — no
+  // connection, DNS, timeout) reports here directly, distinct from an ordinary HTTP
+  // error status below, which proves the request actually reached the server. This
+  // is also the case react-native-ssl-public-key-pinning triggers on a pin mismatch
+  // (security/ssl-pinning.ts), so it gets the same clear "secure connection failed"
+  // message as every other network-layer failure here — never a raw native
+  // exception string.
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...opts,
+      headers,
+      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    })
+  } catch {
+    reportNetworkFailure()
+    throwSecureConnectionError()
+  }
+  reportNetworkSuccess()
 
   if (res.status === 401 && !opts._retried && !opts.stepUpToken) {
     const fresh = await refreshAccessToken()
@@ -136,10 +221,9 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
   }
 
   if (!res.ok) {
-    const detail = await res.json().catch(() => null)
-    const msg =
-      (detail as { error?: string } | null)?.error ?? `Request failed (${res.status})`
-    throw new Error(msg)
+    const detail = (await res.json().catch(() => null)) as Record<string, unknown> | null
+    const msg = (detail?.error as string | undefined) ?? `Request failed (${res.status})`
+    throw new ApiError(msg, res.status, detail)
   }
 
   return (await res.json()) as T
@@ -151,7 +235,7 @@ export async function apiPublic<T = unknown>(path: string, body: unknown): Promi
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
-  })
+  }).catch(throwSecureConnectionError)
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok) {
     throw new Error((json?.error as string) ?? `Request failed (${res.status})`)

@@ -92,7 +92,7 @@ export default function TodayPerformanceChart({
                   domain={['auto', 'auto']}
                   width={56}
                 />
-                <ReferenceLine y={0} stroke="#78716c" strokeDasharray="4 4" />
+                <ReferenceLine y={0} stroke="#78716c" />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: '#1c1917',

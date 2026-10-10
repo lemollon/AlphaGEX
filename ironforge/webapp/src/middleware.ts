@@ -124,6 +124,14 @@ export async function middleware(req: NextRequest) {
     pathname === '/onboarding' ||
     pathname.startsWith('/onboarding/') ||
     pathname.startsWith('/api/onboarding/')
+  // The broker's OAuth redirect lands here inside the system auth browser, which has
+  // no IronForge cookie and no bearer token. The route authenticates itself with the
+  // signed, single-use OAuth `state` (consumeOAuthState), so the cookie gate must not
+  // run first — it was answering every successful Tradier approval with a 401.
+  if (
+    pathname === '/api/onboarding/brokerage/tradier/callback' ||
+    pathname === '/api/onboarding/brokerage/callback'
+  ) return withCors(res)
   if (isOnboarding) {
     if (hasSession || hasServiceToken) return withCors(res)
     const claims = await verifyOnboardingToken(req.cookies.get(ONBOARDING_COOKIE)?.value)

@@ -238,6 +238,7 @@ export async function POST(
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET current_balance = current_balance + ${realizedPnl},
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + ${realizedPnl}),
            cumulative_pnl = cumulative_pnl + ${realizedPnl},
            total_trades = total_trades + 1,
            collateral_in_use = ${actualCollateral},

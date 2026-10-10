@@ -28,7 +28,22 @@ const PUBLIC_EXACT = new Set<string>([
   '/waitlist',
   '/login',
   '/signup',
+  // One-time consent screen for a Google sign-in that would create a new account
+  // (see google/callback/route.ts). Reached with, at most, the signed
+  // google-pending-signup cookie — never an IronForge session of any kind — so it
+  // must be public exactly like /signup itself, or an unauthenticated visitor
+  // bounces to /ops/login (the OPERATOR door) instead of finishing sign-up.
+  '/signup/google-consent',
+  // Enrollment STEP 1 (Create account) since the 10/5 reorder — /signup redirects here,
+  // so it must be reachable by a visitor who has no account yet. Every LATER /enroll/*
+  // step stays customer-gated via isCustomerPath(); the page itself handles a signed-in
+  // visitor (SignedInGate). Leaving it gated sent every new visitor to /login.
+  '/enroll/account',
   '/pricing',
+  // 10.4 marketing redesign: agent grid/compare and the team/values page —
+  // same public-marketing treatment as /how-it-works and /pricing above.
+  '/agents',
+  '/about',
   '/contact',
   '/privacy',
   '/terms',
@@ -56,6 +71,13 @@ const PUBLIC_EXACT = new Set<string>([
   '/api/auth/forgot-password',
   '/api/auth/reset-password',
   '/api/health',
+  // Scanner heartbeat/health aggregate — bot name, last-scan timestamp, staleness,
+  // last skip reason, last error message. No credentials, balances, or positions.
+  // Made reachable on the customer surface (surface.ts CUSTOMER_API_EXCEPTIONS) so
+  // Render's own health check — which cannot send a session cookie or bearer token —
+  // can monitor the process that actually runs the scanner. Same public-exact
+  // treatment as /api/health, which exists for the identical reason.
+  '/api/scanner/status',
   // Public proof surface: the paper/live track record shown to prospects. Read-only
   // aggregate of CLOSED trades — no balances, no open positions, no controls.
   '/track-record',
@@ -76,6 +98,13 @@ const PUBLIC_EXACT = new Set<string>([
  */
 const CUSTOMER_EXACT = new Set<string>([
   '/home',
+  // The real member landing page (dev-handoff §6) — tabbed Overview/Community/
+  // History/Settings shell. Previously unlisted here, which is exactly why the
+  // gap audit found "/dashboard 302s to /ops/login": with no entry in this set
+  // OR in PUBLIC_EXACT, decideAccess fell through to the generic
+  // 'redirect-login' branch, which sends a BROWSER request to the OPERATOR
+  // door — a customer has no operator session and can never pass it.
+  '/dashboard',
   '/live',
   // Per-bot "Open Account" (subscribe) pages — render the customer's own setup + pricing.
   '/live/spark/open',
@@ -87,6 +116,9 @@ const CUSTOMER_EXACT = new Set<string>([
   '/community',
   '/support',
   '/account/trades',
+  // Trade-approval queue (gap audit "Account/Trade Approvals: dead code — never
+  // mounted") — the real mount point for TradeApprovalsClient.
+  '/account/approvals',
   '/account/billing',
   // Which brokerage accounts a person has linked, with masks and buying power — their
   // own money, so gated on identity like the rest of /account.
@@ -103,7 +135,6 @@ const CUSTOMER_EXACT = new Set<string>([
   // The Live page's Pause control. Self-guards ownership in-route; this only
   // establishes that an anonymous caller can never reach it at all.
   '/api/spark/production-pause',
-  '/api/spark2/production-pause',
   '/api/flame/production-pause',
 ])
 
@@ -166,10 +197,19 @@ export function isPublicPath(pathname: string): boolean {
   // password, refresh/logout check the presented refresh token, me checks the bearer, and
   // policy returns constants only. Same shape as /api/auth/customer-me.
   if (pathname.startsWith('/api/auth/mobile/')) return true
-  // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...). Public for
-  // the same reason /terms and /privacy are: partners and prospects must be able to read
-  // them before signing in, and the enrollment "Review" actions open them directly.
-  if (pathname.startsWith('/legal/')) return true
+  // Google SSO (web only): /start mints its own signed state+PKCE cookie, /callback verifies
+  // that cookie + the id_token signature before it does anything, and /status returns a config
+  // boolean only. All three must be reachable with NO session — a caller arriving at /callback
+  // has, at most, the OAuth state cookie, never an IronForge session cookie. Without this the
+  // customer-cookie gate 401'd every successful Google approval, the same #3180 lesson as the
+  // Tradier/SnapTrade brokerage callbacks above.
+  if (pathname.startsWith('/api/auth/google/')) return true
+  // Versioned legal document pages (/legal/risk, /legal/refund-policy, ...), and the
+  // /legal index that lists all of them (db-controls #203 — Settings' "Agreements &
+  // Disclosures" link). Public for the same reason /terms and /privacy are: partners
+  // and prospects must be able to read them before signing in, and the enrollment
+  // "Review" actions open them directly.
+  if (pathname === '/legal' || pathname.startsWith('/legal/')) return true
   // All /api/brokerage/* routes are middleware-open and self-guarded in-route
   // (webhook → shared secret, customer routes → customer session, internal → service
   // token). The webhook has no session of any kind, so it cannot be customer-gated.
@@ -182,6 +222,18 @@ export function isPublicPath(pathname: string): boolean {
   // Public waitlist submission — no auth by design; self-guards with validation,
   // rate limits, and a honeypot in-route.
   if (pathname === '/api/waitlist') return true
+  // Email preferences / unsubscribe pages (waitlist drip). Addressed by an opaque per-
+  // subscriber token in the URL — the token IS the credential, and a recipient clicking
+  // "Unsubscribe" has no session. A login wall on an unsubscribe link is a CAN-SPAM
+  // violation, so these must stay public.
+  if (pathname.startsWith('/email/')) return true
+  // Resend delivery webhook (bounces/complaints) — self-guarded by Svix signature in-route
+  // and fails closed when RESEND_WEBHOOK_SECRET is unset. No session exists to gate on.
+  if (pathname.startsWith('/api/email/')) return true
+  // First-party page-view beacon (TrackPageView) — fired by every anonymous
+  // visitor on every route change, so it must be reachable with no session.
+  // No IP/UA/cookie is ever persisted; see lib/track.ts and /api/track.
+  if (pathname === '/api/track') return true
   // CRM agent façade — middleware-open, self-guarded in-route by CRM_AGENT_TOKEN. The agent
   // carries its own credential rather than the service token precisely so it CANNOT reach the
   // other /api/ops/* tooling; that separation is the point, so it cannot be gated here.

@@ -19,6 +19,7 @@ from trading.agape_btc_perp.models import (
     AgapeBtcPerpSignal,
     SignalAction,
     PositionSide,
+    TradingMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -285,6 +286,8 @@ class AgapeBtcPerpSignalGenerator:
                     oracle_advice=oracle_advice, oracle_win_probability=oracle_win_prob,
                 )
 
+        if getattr(self.config, "strategy_mode", "combined_signal") == "weekly_breakout":
+            return self._weekly_breakout_signal(now, spot, market_data, prophet_data)
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
@@ -328,11 +331,66 @@ class AgapeBtcPerpSignalGenerator:
             take_profit=take_profit, quantity=quantity, max_risk_usd=max_risk,
         )
 
+    def _weekly_breakout_signal(self, now, spot, market_data, prophet_data):
+        """168h breakout entry, Asia/EU session only (trading/perp_strategies/weekly_breakout.py)."""
+        from trading.perp_strategies import weekly_breakout as wb
+
+        base = dict(
+            spot_price=spot, timestamp=now,
+            funding_rate=market_data.get("funding_rate", 0),
+            funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+            oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
+            oracle_win_probability=prophet_data.get("win_probability", 0.5),
+        )
+        d = wb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeBtcPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        stop_loss = wb.initial_stop(spot, d["direction"], d["atr"], self.config.wb_stop_atr)
+        quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
+        reasoning = (f"{d['reason']} close={sig.close:.8g} range=[{sig.lower:.8g},{sig.upper:.8g}] "
+                     f"atr={sig.atr:.8g} funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        return AgapeBtcPerpSignal(
+            **base,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
+            confidence="MEDIUM", reasoning=reasoning,
+            side=side, entry_price=spot, stop_loss=stop_loss, take_profit=None,
+            quantity=quantity, max_risk_usd=max_risk,
+        )
+
+    @staticmethod
+    def _is_degraded_data(market_data: Dict) -> bool:
+        """True when CoinGlass funding/L-S/OI/taker data is unavailable.
+
+        Mirrors has_coinglass in CryptoDataProvider._calculate_combined_signal:
+        a CoinGlass outage forces funding_regime to UNKNOWN.
+        """
+        funding_regime = market_data.get("funding_regime")
+        return funding_regime in (None, "", "UNKNOWN")
+
     def _determine_action(self, combined_signal, confidence, market_data):
         min_confidence = self.config.min_confidence
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+        # Degraded-data paper allowance: CoinGlass is down (funding_regime
+        # UNKNOWN) but the combined signal still carries a directional call
+        # from Deribit GEX / price momentum at LOW confidence. Trade it in
+        # PAPER only, without inflating the confidence label. Never applies
+        # in LIVE regardless of the flag.
+        degraded_paper_ok = (
+            self._is_degraded_data(market_data)
+            and self.config.mode == TradingMode.PAPER
+            and getattr(self.config, "allow_degraded_data_trades", True)
+        )
+
         if confidence_rank.get(confidence, 0) < confidence_rank.get(min_confidence, 1):
-            return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            if not (degraded_paper_ok and combined_signal in ("LONG", "SHORT")):
+                return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            logger.info(
+                f"AGAPE-BTC-PERP Signals: DEGRADED_NO_COINGLASS override - "
+                f"trading {combined_signal} at {confidence} confidence (CoinGlass unavailable)"
+            )
 
         direction_tracker = get_agape_btc_perp_direction_tracker(self.config)
 
@@ -340,15 +398,25 @@ class AgapeBtcPerpSignalGenerator:
             should_skip, skip_reason = direction_tracker.should_skip_direction("LONG")
             if should_skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
-            return (SignalAction.LONG, "long", self._build_reasoning("LONG", market_data))
+            reasoning = self._build_reasoning("LONG", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.LONG, "long", reasoning)
         elif combined_signal == "SHORT":
             should_skip, skip_reason = direction_tracker.should_skip_direction("SHORT")
             if should_skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{skip_reason}")
-            return (SignalAction.SHORT, "short", self._build_reasoning("SHORT", market_data))
+            reasoning = self._build_reasoning("SHORT", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.SHORT, "short", reasoning)
         elif combined_signal == "RANGE_BOUND":
+            if not getattr(self.config, "allow_range_bound_entries", False):
+                return (SignalAction.WAIT, None, "RANGE_BOUND_DISABLED")
             return self._derive_range_bound_direction(market_data, direction_tracker)
         elif combined_signal == "WAIT":
+            if not getattr(self.config, "allow_wait_fallback_entries", False):
+                return (SignalAction.WAIT, None, "WAIT_FALLBACK_DISABLED")
             return self._derive_fallback_direction(market_data, direction_tracker)
         return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
 
@@ -448,7 +516,7 @@ class AgapeBtcPerpSignalGenerator:
             parts.append(f"max_pain_dist={dist:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price: float) -> Tuple[float, float]:
+    def _calculate_position_size(self, spot_price: float, stop_distance: Optional[float] = None) -> Tuple[float, float]:
         """Calculate position size in BTC quantity (float).
 
         Returns (quantity, max_risk_usd) where quantity is a float BTC amount,
@@ -460,7 +528,8 @@ class AgapeBtcPerpSignalGenerator:
 
         # Risk per BTC based on a 2% stop distance
         base_stop_pct = 0.02
-        stop_distance_usd = spot_price * base_stop_pct * (self.config.stop_loss_pct / 100)
+        stop_distance_usd = (stop_distance if stop_distance is not None
+                             else spot_price * base_stop_pct * (self.config.stop_loss_pct / 100))
 
         # Each 1 BTC of quantity risks stop_distance_usd
         if stop_distance_usd <= 0:

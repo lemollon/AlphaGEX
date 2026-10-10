@@ -38,8 +38,14 @@ interface DeviceRow {
 /** Preferences with the schema defaults applied when the customer has no row yet. */
 async function loadPrefs(userId: string): Promise<PrefRow> {
   const rows = await customerQuery<PrefRow>(
+    // big_move/daily_summary were missing here (bug found 2026-10-06): both
+    // categories exist in CATEGORY_PREF_COLUMN and notification_prefs, but
+    // without them in this SELECT, prefs[column] was always undefined — so
+    // the Guard 1 check below (`!== true`) skipped every big_move and
+    // daily_summary push as "pref_off" even when the customer had turned it
+    // on. See push/__tests__/dispatch.test.ts.
     `SELECT trade_opened, trade_closed, trade_approval, brokerage_health, billing,
-            community, show_amounts_on_lockscreen
+            community, big_move, daily_summary, show_amounts_on_lockscreen, sound
        FROM notification_prefs WHERE user_id = $1 LIMIT 1`,
     [userId],
   )
@@ -51,7 +57,12 @@ async function loadPrefs(userId: string): Promise<PrefRow> {
       brokerage_health: true,
       billing: true,
       community: false,
+      // Matches notification_prefs' own column defaults (customers-db.ts) and
+      // the Settings API's defaults (api/notifications/preferences/route.ts).
+      big_move: false,
+      daily_summary: false,
       show_amounts_on_lockscreen: false,
+      sound: true,
     }
   )
 }
@@ -165,7 +176,20 @@ export async function dispatchToCustomers(
 
     const base = renderNotification(event, {
       showAmountsOnLockscreen: prefs.show_amounts_on_lockscreen === true,
+      sound: prefs.sound !== false,
     })
+
+    // History feed row (10.4 gap audit). ONE per customer per event, written right
+    // alongside the actual push send — never a second trigger. title/body are the
+    // event's own unredacted copy (not `base`'s lock-screen-redacted body); `data` is
+    // the exact deep-link payload the push carries, so the feed's tap handler can
+    // reuse routeFor() instead of a parallel navigation table.
+    await customerExecute(
+      `INSERT INTO customer_notifications (user_id, kind, title, body, data)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, event.category, event.title, event.body, JSON.stringify(base.data)],
+    ).catch(() => {})
+
     const messages = devices.map((d) => ({ ...base, to: d.expo_push_token }))
     const tickets = await sendExpoPush(messages)
 

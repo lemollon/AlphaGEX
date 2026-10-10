@@ -44,3 +44,7 @@ python backtest/spark_flame_backtest.py --parquet /path/to/your/spy_options.parq
 - **GitHub Release asset**: possible future option (file is under the 2 GB limit). If we standardize on that, a download helper goes here and in `spark_flame_backtest.py::load_options_data`.
 
 For now: keep the file local, off Git. Clean and quiet.
+
+## Spark/Flame strategy scope
+
+The parquet runner named above is a retained research utility. Its name does not establish parity with the current 0DTE EBB production strategy. See [September 28 current state](../../ironforge/SPARK_FLAME_CURRENT_STATE_2026-09-28.md); compare entries, guards, settlement, account sizing and feature switches before claiming a live-strategy backtest.

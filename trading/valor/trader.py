@@ -14,7 +14,11 @@ Orchestrates:
 """
 
 import logging
+import os
+from threading import Lock
 import uuid
+from dataclasses import asdict
+from .reconciliation import summarize_order
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from zoneinfo import ZoneInfo
@@ -26,6 +30,8 @@ from .models import (
     FUTURES_TICKERS, get_ticker_point_value, get_ticker_config,
 )
 from .db import ValorDatabase
+from .integrity import serialized
+from .mnq_breakout_trader import MNQBreakoutMixin
 from .signals import ValorSignalGenerator, get_gex_data_for_valor
 from .executor import TastytradeExecutor
 from .margin_manager import (
@@ -144,7 +150,7 @@ except ImportError:
     record_bot_outcome = None
 
 
-class ValorTrader:
+class ValorTrader(MNQBreakoutMixin):
     """
     VALOR - MES Futures Scalping Bot
 
@@ -219,6 +225,7 @@ class ValorTrader:
             f"tickers={self.config.tickers}, capital=${self.config.capital:,.2f}"
         )
 
+    @serialized
     def _startup_integrity_check(self) -> None:
         """
         Check data integrity on startup and RECONCILE if discrepancy found.
@@ -275,7 +282,11 @@ class ValorTrader:
         Iterates over each ticker in self.config.tickers and runs
         _run_ticker_scan(ticker) for each one independently.
         """
+        self._sync_paper_account_epoch()
         self._scan_count += 1
+        if self.config.mode == TradingMode.PAPER and self._scan_count % 5 == 1:
+            # Reconcile after rolling-deploy overlap as well as at startup.
+            self._startup_integrity_check()
         now = datetime.now(CENTRAL_TZ)
 
         # Update direction tracker
@@ -307,6 +318,8 @@ class ValorTrader:
             )
             return results
         logger.debug("VALOR GATE 1 PASSED: Market open")
+
+        self.monitor_positions()
 
         # Get shared data (VIX, account balance, overnight status) once for all tickers
         vix = self._get_vix()
@@ -407,6 +420,8 @@ class ValorTrader:
 
         This contains the per-ticker logic that was previously in run_scan().
         """
+        if ticker == "MNQ":
+            return self._run_mnq_breakout_scan(account_balance=account_balance)
         scan_id = f"VALOR-{ticker}-{uuid.uuid4().hex[:12]}"
         ticker_cfg = get_ticker_config(ticker)
 
@@ -452,6 +467,7 @@ class ValorTrader:
             bid_price = quote.get("bid", 0)
             ask_price = quote.get("ask", 0)
             quote_source = quote.get("source", "unknown")
+            scan_context["quote_evidence"] = dict(quote)
             scan_context["underlying_price"] = current_price
             scan_context["bid_price"] = bid_price
             scan_context["ask_price"] = ask_price
@@ -471,7 +487,7 @@ class ValorTrader:
             # GATE 4: GEX Data (per-ticker proxy ETF + GEX source)
             # ============================================================
             gex_symbol = ticker_cfg.get("gex_symbol", "SPY") if ticker_cfg else "SPY"
-            gex_data = get_gex_data_for_valor(symbol=gex_symbol, ticker=ticker)
+            gex_data = get_gex_data_for_valor(symbol=gex_symbol, ticker=ticker, futures_price=current_price)
             scan_context["gex_data"] = gex_data
             gex_source = gex_data.get('data_source', 'unknown')
             gex_flip = gex_data.get('flip_point', 0)
@@ -492,9 +508,24 @@ class ValorTrader:
             scan_result["positions_checked"] = len(positions)
 
             for position in positions:
-                closed = self._manage_position(position, current_price, ticker=ticker)
+                position_quote = self.executor.get_mes_quote(symbol=position.symbol, ticker=ticker)
+                if not position_quote:
+                    continue
+                closed = self._manage_position(position, position_quote["last"], ticker=ticker)
                 if closed:
                     scan_result["positions_closed"] += 1
+
+            if ticker in self.config.quarantined_tickers:
+                scan_result['status'] = 'quarantined'
+                # Still record price + GEX levels so the dashboard can chart
+                # the instrument; only new entries are blocked.
+                self._log_scan_activity(scan_id, "NO_TRADE", scan_result, scan_context,
+                                       skip_reason=f"{ticker} quarantined: entries disabled",
+                                       ticker=ticker)
+                # Keep its equity snapshots flowing so the combined equity
+                # curve includes this instrument's capital.
+                self._save_equity_snapshot(account_balance, self.db.get_open_positions(ticker=ticker), ticker=ticker)
+                return scan_result
 
             # 2. Check for new signals (if room for more positions for this ticker)
             open_count = len(self.db.get_open_positions(ticker=ticker))
@@ -550,6 +581,7 @@ class ValorTrader:
             scan_context["open_positions"] = open_count
 
             if signal:
+                signal.contract_symbol = quote.get("contract_symbol", "")
                 scan_result["signals_generated"] += 1
                 logger.info(
                     f"VALOR [{ticker}] GATE 5 PASSED: Signal - {signal.direction.value}, "
@@ -677,6 +709,54 @@ class ValorTrader:
 
         return scan_result
 
+    @serialized
+    def reconcile_pending_orders(self):
+        """Recover known fills after timeouts/restarts without resubmission."""
+        if self.config.mode == TradingMode.PAPER:
+            return
+        for intent in self.db.get_pending_order_intents():
+            try:
+                context = intent['context']
+                if not context:
+                    logger.error('Legacy intent requires manual reconciliation: %s',intent['intent_id'])
+                    continue
+                existing = self.db.get_position_by_id(context.get('position_id',intent['intent_id']))
+                if (context['kind']=='entry' and existing) or (context['kind']=='close' and existing and existing.status != PositionStatus.OPEN):
+                    self.db.complete_order_intent(intent['intent_id'])
+                    continue
+                order = self.executor.find_order(intent['intent_id'],intent['broker_order_id'])
+                if not order:
+                    continue
+                result = summarize_order(order,context['symbol'],context['contracts'],context['action'])
+                self.db.record_broker_order(intent['intent_id'],result['order_id'])
+                if not result['terminal']:
+                    if result['quantity'] > 0:
+                        # Cancel unfilled remainder before recording a stable final quantity.
+                        self.executor.cancel_order(result['order_id'])
+                    continue
+                if result['quantity'] == 0:
+                    self.db.complete_order_intent(intent['intent_id'])
+                    continue
+                if context['kind']=='entry':
+                    data = dict(context['signal'])
+                    data['direction']=TradeDirection(data['direction'])
+                    data['gamma_regime']=GammaRegime(data['gamma_regime'])
+                    data['source']=SignalSource(data['source'])
+                    result['symbol']=context['symbol']
+                    self._execute_signal_internal(FuturesSignal(**data),0,intent['intent_id'],
+                        scan_id=context['scan_id'],ticker=intent['ticker'],reconciled_order=result)
+                elif existing and result['quantity']==existing.contracts:
+                    self._close_position(existing,result['price'],PositionStatus(context['status']),
+                        context['reason'],reconciled_fill=result['price'])
+                elif existing:
+                    closed, pnl = self.db.close_position(existing.position_id,result['price'],
+                        'PARTIAL_BROKER_CLOSE',PositionStatus.CLOSED,contracts_closed=result['quantity'],
+                        execution_id=intent['intent_id'])
+                    if closed:
+                        logger.info('Reconciled partial close %s: %s contracts, pnl=%s',intent['intent_id'],result['quantity'],pnl)
+            except Exception:
+                logger.exception('VALOR reconciliation failed for %s',intent['intent_id'])
+
     def monitor_positions(self) -> Dict[str, Any]:
         """
         Lightweight position monitor - checks stops/targets only.
@@ -697,6 +777,7 @@ class ValorTrader:
         }
 
         try:
+            self.reconcile_pending_orders()
             if not self.executor.is_market_open():
                 result["status"] = "market_closed"
                 return result
@@ -712,10 +793,10 @@ class ValorTrader:
             if not all_positions:
                 return result
 
-            # Group positions by ticker for efficient quote fetching
-            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            # Never mark an old contract with the new lead contract's price.
+            positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
             for pos in all_positions:
-                t = getattr(pos, 'ticker', 'MES')
+                t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
                 if t not in positions_by_ticker:
                     positions_by_ticker[t] = []
                 positions_by_ticker[t].append(pos)
@@ -726,8 +807,8 @@ class ValorTrader:
                 logger.info(f"MONITOR HEARTBEAT: Tickers={ticker_counts}, Total={len(all_positions)}")
 
             # Check positions per-ticker (one quote per ticker)
-            for ticker, positions in positions_by_ticker.items():
-                quote = self.executor.get_mes_quote(ticker=ticker)
+            for (ticker, symbol), positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(symbol=symbol, ticker=ticker)
                 if not quote:
                     continue
 
@@ -858,6 +939,18 @@ class ValorTrader:
                 skip_reason=skip_reason,
                 ml_probability=ml_prob,
                 bayesian_probability_at_scan=bayes_prob,
+                research_context={
+                    "quote": context.get("quote_evidence", {}),
+                    "gex": {k:gex_data.get(k) for k in (
+                        "data_source", "net_gex", "flip_point", "call_wall", "put_wall",
+                        "n1_flip_point", "n1_call_wall", "n1_put_wall", "timestamp", "as_of", "expiration")},
+                    "overnight_inputs_verified": False,
+                    "code_commit": os.getenv("RENDER_GIT_COMMIT", "unknown"),
+                    "paper_execution": {"fee_per_contract": self.config.paper_round_trip_fee,
+                        "fee_source": self.config.paper_fee_source, "slippage_ticks": self.config.paper_slippage_ticks},
+                    "ticker_parameters": get_ticker_config(ticker),
+                    "rule_config": {k:v for k,v in asdict(self.config).items() if k not in {"account_id"}},
+                },
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
@@ -872,6 +965,7 @@ class ValorTrader:
     # Position Management
     # ========================================================================
 
+    @serialized
     def _manage_position(self, position: FuturesPosition, current_price: float, ticker: str = "MES") -> bool:
         """
         Manage an open position - check stops and trailing.
@@ -891,6 +985,20 @@ class ValorTrader:
         Returns True if position was closed.
         """
         try:
+            current = self.db.get_position_by_id(position.position_id)
+            if current is None or current.status != PositionStatus.OPEN:
+                return False
+            position = current
+            if position.ticker == "MNQ" and position.signal_source == SignalSource.MNQ_BREAKOUT_30M:
+                return self._manage_mnq_breakout(position, current_price)
+            opened = position.open_time
+            if opened is None or opened.tzinfo is None:
+                logger.error("Position %s has invalid open_time; requires reconciliation", position.position_id)
+                return False
+            max_hours = get_ticker_config(position.ticker).get("max_hold_hours", 24)
+            if datetime.now(CENTRAL_TZ) - opened >= timedelta(hours=max_hours):
+                return self._close_position(position, current_price, PositionStatus.CLOSED,
+                                            f"STALE_WATCHDOG_{max_hours}H")
             # Track high/low prices for backtesting (do this BEFORE checking stops)
             # This ensures we capture the price that triggered the stop
             self._update_position_high_low(position, current_price)
@@ -983,8 +1091,9 @@ class ValorTrader:
         is_long = position.direction == TradeDirection.LONG
 
         # Get config values
-        activation_pts = self.config.no_loss_activation_pts  # 3.0 pts
-        trail_distance = self.config.no_loss_trail_distance  # 2.0 pts
+        ticker_params = get_ticker_config(position.ticker) if position.ticker != "MES" else {}
+        activation_pts = ticker_params.get("no_loss_activation_pts", self.config.no_loss_activation_pts)  # 3.0 pts
+        trail_distance = ticker_params.get("no_loss_trail_distance", self.config.no_loss_trail_distance)  # 2.0 pts
 
         # OVERNIGHT HYBRID: Use the stored initial_stop distance since it was
         # calculated with correct overnight/RTH params when position was opened.
@@ -1029,8 +1138,8 @@ class ValorTrader:
         # This means the trade never went profitable and is clearly wrong direction
         # ================================================================
         if self.config.use_sar:
-            sar_trigger = self.config.sar_trigger_pts  # 2.0 pts default
-            sar_mfe_threshold = self.config.sar_mfe_threshold  # 0.5 pts default
+            sar_trigger = ticker_params.get("sar_trigger_pts", self.config.sar_trigger_pts)  # 2.0 pts default
+            sar_mfe_threshold = ticker_params.get("sar_mfe_threshold", self.config.sar_mfe_threshold)  # 0.5 pts default
 
             # Check SAR conditions: losing AND never was profitable
             if -profit_pts >= sar_trigger and max_profit_pts < sar_mfe_threshold:
@@ -1062,7 +1171,7 @@ class ValorTrader:
         # PAPER TRADING FIX: Exit at the STOP PRICE, not current price!
         # This simulates a properly executed stop order on the exchange.
         # ================================================================
-        max_loss_pts = self.config.max_unrealized_loss_pts  # 5.0 pts default
+        max_loss_pts = ticker_params.get("max_unrealized_loss_pts", self.config.max_unrealized_loss_pts)  # 5.0 pts default
 
         if -profit_pts >= max_loss_pts:
             # Calculate the simulated stop price (where the stop SHOULD have triggered)
@@ -1260,47 +1369,82 @@ class ValorTrader:
             target_price = position.entry_price - profit_target_points
             return current_price <= target_price
 
+    @serialized
     def _close_position(
         self,
         position: FuturesPosition,
         close_price: float,
         status: PositionStatus,
-        reason: str
+        reason: str,
+        reconciled_fill: Optional[float] = None,
     ) -> bool:
         """
         Close a position at the specified close_price.
 
-        PAPER TRADING STOP ORDER FIX:
-        For stop orders, close_price is the STOP PRICE where we should fill,
-        not the current market price. This simulates exchange-level stop orders.
+        The trigger price explains the exit. The executor supplies the actual
+        bid/ask paper fill or a confirmed broker fill; trigger prices are not fills.
         """
         try:
-            # Execute close order - pass intended close_price for stop order simulation
-            success, message, fill_price = self.executor.close_position_order(
-                position, reason, intended_close_price=close_price
-            )
+            current = self.db.get_position_by_id(position.position_id)
+            if current is None or current.status != PositionStatus.OPEN:
+                return False
+            position = current
+            if position.ticker == "MNQ" and position.signal_source == SignalSource.MNQ_BREAKOUT_30M:
+                return self._close_mnq_breakout(position, close_price, status, reason)
+            pending = [i for i in self.db.get_pending_order_intents()
+                       if i.get('context',{}).get('kind')=='close' and i['context'].get('position_id')==position.position_id] if self.config.mode != TradingMode.PAPER else []
+            close_intent = pending[0]['intent_id'] if pending else f"close:{uuid.uuid4().hex[:24]}"
+            if reconciled_fill is not None:
+                success, message, fill_price = True, 'Reconciled broker fill', reconciled_fill
+            else:
+                context = {'kind':'close', 'position_id':position.position_id,'symbol':position.symbol,
+                           'contracts':position.contracts,'reason':reason,'status':status.value,
+                           'action':'Sell to Close' if position.direction == TradeDirection.LONG else 'Buy to Close'}
+                if pending:
+                    return False
+                if self.config.mode != TradingMode.PAPER and not self.db.claim_order_intent(close_intent, position.ticker, context):
+                    return False
+                success, message, fill_price = self.executor.close_position_order(position, reason, intended_close_price=close_price,
+                    intent_id=close_intent)
+                if self.config.mode != TradingMode.PAPER:
+                    self.db.record_broker_order(close_intent, getattr(self.executor,'last_broker_order_id',None))
 
             if success:
-                # Use fill price from executor (should match our intended price for stops)
-                actual_close_price = fill_price if fill_price > 0 else close_price
+                # Only observed execution prices are accepted.
+                if fill_price is None or fill_price <= 0:
+                    return False
+                actual_close_price = fill_price
 
                 # Update database
                 closed, realized_pnl = self.db.close_position(
                     position.position_id,
                     actual_close_price,
                     reason,
-                    status
+                    status,
+                    paper=self.config.mode == TradingMode.PAPER,
+                    paper_fill=dict(getattr(self.executor,"last_paper_fill",None) or {}, fee_source=self.config.paper_fee_source) if self.config.mode == TradingMode.PAPER else None,
+                    paper_fee=self.config.paper_round_trip_fee * position.contracts if self.config.mode == TradingMode.PAPER else 0,
                 )
 
                 if closed:
+                    if self.config.mode != TradingMode.PAPER:
+                        self.db.complete_order_intent(close_intent)
                     # Update win tracker
                     won = realized_pnl > 0
-                    self.win_tracker.update(won, position.gamma_regime)
-                    self.db.save_win_tracker(self.win_tracker)
+                    eligible_outcome = (
+                        not reason.upper().startswith("STALE_WATCHDOG") and
+                        position.open_time is not None and position.open_time.tzinfo is not None and
+                        datetime.now(CENTRAL_TZ) - position.open_time <= timedelta(
+                            hours=get_ticker_config(position.ticker).get('max_hold_hours',24))
+                    )
+                    if eligible_outcome:
+                        self.win_tracker.update(won, position.gamma_regime)
+                        self.db.save_win_tracker(self.win_tracker)
 
                     # Resolve ML shadow prediction
                     try:
-                        self.db.resolve_shadow_prediction(position.position_id, won)
+                        if eligible_outcome:
+                            self.db.resolve_shadow_prediction(position.position_id, won)
                     except Exception as e:
                         logger.debug(f"VALOR shadow prediction resolve failed: {e}")
 
@@ -1367,43 +1511,18 @@ class ValorTrader:
                     )
 
                     # Record outcome to Prophet ML for feedback loop
-                    self._record_oracle_outcome(position, reason, realized_pnl)
+                    if eligible_outcome:
+                        self._record_oracle_outcome(position, reason, realized_pnl)
 
                     # Record outcome to Proverbs Enhanced for feedback loops
                     trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     outcome_type = self._determine_outcome_type(reason, realized_pnl)
-                    self._record_proverbs_outcome(realized_pnl, trade_date, outcome_type)
+                    if eligible_outcome:
+                        self._record_proverbs_outcome(realized_pnl, trade_date, outcome_type)
 
                     # Record outcome to Thompson Sampling for capital allocation
-                    self._record_thompson_outcome(realized_pnl)
-
-                    # Update paper trading balance if in paper mode
-                    if self.config.mode == TradingMode.PAPER:
-                        # Calculate margin released using per-instrument CME rates
-                        pos_ticker_m = getattr(position, 'ticker', 'MES')
-                        req = get_margin_requirement(pos_ticker_m)
-                        margin_per_contract = req["maintenance"]
-                        margin_released = -position.contracts * margin_per_contract
-                        success, updated_account = self.db.update_paper_balance(
-                            realized_pnl=realized_pnl,
-                            margin_change=margin_released
-                        )
-                        if success:
-                            logger.info(
-                                f"Paper balance updated: ${updated_account['current_balance']:,.2f} "
-                                f"(P&L: ${realized_pnl:+.2f}, Return: {updated_account['return_pct']:.2f}%)"
-                            )
-
-                        # CRITICAL: Verify data integrity after EVERY trade close
-                        # This catches bugs early before they cause major data loss
-                        integrity = self.db.verify_data_integrity()
-                        if not integrity.get("is_consistent", True):
-                            logger.error(
-                                f"DATA INTEGRITY CHECK FAILED after closing {position.position_id}! "
-                                f"Discrepancy: ${integrity['discrepancy']:.2f}. "
-                                f"Paper says {integrity['trade_count_account']} trades, "
-                                f"closed_trades has {integrity['trade_count_actual']}."
-                            )
+                    if eligible_outcome:
+                        self._record_thompson_outcome(realized_pnl)
 
                     # Update daily stats
                     self.daily_pnl += realized_pnl
@@ -1440,6 +1559,7 @@ class ValorTrader:
     # Stop-and-Reverse (SAR) Execution
     # ========================================================================
 
+    @serialized
     def _execute_sar(
         self,
         position: FuturesPosition,
@@ -1505,87 +1625,22 @@ class ValorTrader:
             logger.error(f"SAR: Failed to close original position {position.position_id}")
             return False
 
-        # Step 2: Open reversal position
-        # Create a new signal for the reversal
-        reversal_position_id = f"SAR-{uuid.uuid4().hex[:8]}"
-
-        # Calculate stop for reversal (use same risk parameters)
-        is_overnight = self._is_overnight_session()
-        if is_overnight and self.config.use_overnight_hybrid:
-            reversal_stop_pts = self.config.overnight_emergency_stop
-        else:
-            reversal_stop_pts = self.config.no_loss_emergency_stop
-
-        if reversal_direction == TradeDirection.LONG:
-            reversal_stop = current_price - reversal_stop_pts
-        else:
-            reversal_stop = current_price + reversal_stop_pts
-
-        # Create reversal position directly (use same ticker as original position)
-        pos_ticker = getattr(position, 'ticker', 'MES')
-        point_value = get_ticker_point_value(pos_ticker)
-        reversal_position = FuturesPosition(
-            position_id=reversal_position_id,
-            symbol=position.symbol,
-            direction=reversal_direction,
-            contracts=position.contracts,  # Same size as original
-            entry_price=current_price,
-            entry_value=current_price * position.contracts * point_value,
-            initial_stop=reversal_stop,
-            current_stop=reversal_stop,
-            breakeven_price=current_price,
-            trailing_active=False,
-            gamma_regime=position.gamma_regime,  # Same regime
-            gex_value=position.gex_value,
-            flip_point=position.flip_point,
-            call_wall=position.call_wall,
-            put_wall=position.put_wall,
-            vix_at_entry=position.vix_at_entry,
-            atr_at_entry=position.atr_at_entry,
-            signal_source=SignalSource.SAR_REVERSAL,
-            signal_confidence=0.70,  # High confidence - based on backtest data
-            win_probability=0.65,  # Based on backtest: reversal captures 3.7 pts avg
-            trade_reasoning=sar_reasoning,
-            order_id="",
-            scan_id=position.scan_id,  # Link to original scan for ML tracking
-            status=PositionStatus.OPEN,
-            open_time=datetime.now(CENTRAL_TZ),
-            ticker=pos_ticker,
-            stop_type="SAR_REVERSAL",
-            stop_points_used=reversal_stop_pts
+        ticker = position.ticker
+        stop_points = get_ticker_config(ticker).get("initial_stop_points", self.config.initial_stop_points)
+        stop = current_price - stop_points if reversal_direction == TradeDirection.LONG else current_price + stop_points
+        signal = FuturesSignal(
+            ticker=ticker, direction=reversal_direction, confidence=position.signal_confidence,
+            source=SignalSource.SAR_REVERSAL, current_price=current_price, contract_symbol=position.symbol,
+            gamma_regime=position.gamma_regime, gex_value=position.gex_value,
+            flip_point=position.flip_point, call_wall=position.call_wall, put_wall=position.put_wall,
+            vix=position.vix_at_entry, atr=position.atr_at_entry, entry_price=current_price,
+            stop_price=stop, contracts=position.contracts, win_probability=position.win_probability,
+            reasoning=sar_reasoning, stop_type="SAR_REVERSAL", stop_points_used=stop_points,
         )
-
-        # Save reversal position to database
-        self.db.save_position(reversal_position)
-
-        # Log the SAR action
-        self.db.log(
-            level="INFO",
-            action="SAR_EXECUTED",
-            message=f"SAR: Closed {original_direction.value} at {close_price:.2f}, "
-                    f"Opened {reversal_direction.value} at {current_price:.2f}",
-            details={
-                "original_position_id": position.position_id,
-                "reversal_position_id": reversal_position_id,
-                "original_direction": original_direction.value,
-                "reversal_direction": reversal_direction.value,
-                "original_entry": position.entry_price,
-                "sar_close_price": close_price,
-                "reversal_entry": current_price,
-                "mfe_at_sar": mfe_at_sar,
-                "loss_at_sar": loss_at_sar,
-                "sar_trigger_pts": self.config.sar_trigger_pts,
-                "sar_mfe_threshold": self.config.sar_mfe_threshold,
-                "gamma_regime": position.gamma_regime.value
-            },
-            ticker=pos_ticker,
-        )
-
-        logger.info(
-            f"SAR COMPLETE: Closed {original_direction.value} {position.position_id} at {close_price:.2f}, "
-            f"Opened {reversal_direction.value} {reversal_position_id} at {current_price:.2f}"
-        )
-
+        # Reversal obeys the same cooldown/quarantine/risk checks as every entry.
+        # Returning True reflects the original close even when reversal is suppressed.
+        self._execute_signal_internal(signal, self.config.capital,
+                                      f"SAR-{position.position_id}", ticker=ticker)
         return True
 
     # ========================================================================
@@ -1595,29 +1650,62 @@ class ValorTrader:
     def _execute_signal(self, signal: FuturesSignal, account_balance: float) -> bool:
         """Execute a trading signal (wrapper for backward compatibility)"""
         position_id = f"VALOR-{uuid.uuid4().hex[:8]}"
-        return self._execute_signal_internal(signal, account_balance, position_id)
+        return self._execute_signal_internal(signal, account_balance, position_id, ticker=signal.ticker)
 
-    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES") -> bool:
+    @serialized
+    def _execute_signal_internal(self, signal: FuturesSignal, account_balance: float, position_id: str, scan_id: str = "", ticker: str = "MES", reconciled_order: Optional[Dict] = None) -> bool:
         """Execute a trading signal with specified position_id and scan_id for ML tracking"""
         try:
-            # Validate order parameters
-            valid, validation_msg = self.executor.validate_order_params(signal, account_balance)
-            if not valid:
-                logger.warning(f"Order validation failed: {validation_msg}")
+            if signal.source == SignalSource.MNQ_BREAKOUT_30M:
+                if reconciled_order is not None or not self._mnq_entry_permitted(signal, account_balance):
+                    return False
+            elif ticker == "MNQ" and reconciled_order is None:
+                # Preserve legacy fill reconciliation, but do not open new GEX/SAR positions.
                 return False
+            if reconciled_order is not None:
+                signal.entry_price = reconciled_order['price']
+                signal.contracts = reconciled_order['quantity']
+                order_id = reconciled_order['order_id']
+            else:
+                if ticker != signal.ticker or ticker not in FUTURES_TICKERS:
+                    return False
+                if ticker in self.config.quarantined_tickers:
+                    logger.warning("VALOR %s entries quarantined", ticker)
+                    return False
+                if not self.db.entry_allowed(ticker, self.config.entry_cooldown_seconds):
+                    return False
+                # Validate order parameters
+                valid, validation_msg = self.executor.validate_order_params(signal, account_balance)
+                if not valid:
+                    logger.warning(f"Order validation failed: {validation_msg}")
+                    return False
 
-            # Execute order
-            success, message, order_id = self.executor.execute_signal(signal, position_id)
+                contract = getattr(signal, 'contract_symbol', '') or self.executor.get_entry_symbol(ticker)
+                if not contract:
+                    return False
+                signal.contract_symbol = contract
+                context = {'kind':'entry','signal':{k:(v.value if hasattr(v,'value') else v) for k,v in asdict(signal).items()},
+                           'symbol':contract,'scan_id':scan_id,
+                           'contracts':signal.contracts,
+                           'action':'Buy to Open' if signal.direction == TradeDirection.LONG else 'Sell to Open'}
+                if not self.db.claim_order_intent(position_id, ticker, context):
+                    return False
+                # Execute order
+                success, message, order_id = self.executor.execute_signal(signal, position_id)
 
-            if not success:
-                logger.error(f"Order execution failed: {message}")
-                return False
+                if self.config.mode != TradingMode.PAPER:
+                    self.db.record_broker_order(position_id, order_id)
+                if not success:
+                    if self.config.mode == TradingMode.PAPER:
+                        self.db.complete_order_intent(position_id)
+                    logger.error(f"Order execution failed: {message}")
+                    return False
 
             # Create position object with per-ticker point value
             point_value = get_ticker_point_value(ticker)
             position = FuturesPosition(
                 position_id=position_id,
-                symbol=self.config.get_ticker_symbol(ticker),
+                symbol=reconciled_order['symbol'] if reconciled_order else signal.contract_symbol,
                 direction=signal.direction,
                 contracts=signal.contracts,
                 entry_price=signal.entry_price,
@@ -1640,7 +1728,7 @@ class ValorTrader:
                 order_id=order_id or "",
                 scan_id=scan_id,  # Link to scan activity for ML training
                 status=PositionStatus.OPEN,
-                open_time=datetime.now(CENTRAL_TZ),
+                open_time=datetime.fromisoformat(reconciled_order['filled_at']) if reconciled_order and reconciled_order.get('filled_at') else datetime.now(CENTRAL_TZ),
                 ticker=ticker,
                 # A/B Test tracking - copy from signal
                 stop_type=signal.stop_type,
@@ -1648,23 +1736,12 @@ class ValorTrader:
             )
 
             # Save to database
-            self.db.save_position(position)
+            if not self.db.save_position(position, paper=self.config.mode == TradingMode.PAPER,
+                                         paper_fill=getattr(self.executor,"last_paper_fill",None) if self.config.mode == TradingMode.PAPER else None):
+                logger.critical("Executed position %s could not be saved; intent blocks further entries", position_id)
+                return False
 
-            # Update paper trading margin if in paper mode
-            if self.config.mode == TradingMode.PAPER:
-                # Calculate margin required using per-instrument CME rates
-                req = get_margin_requirement(ticker)
-                margin_per_contract = req["maintenance"]
-                margin_required = signal.contracts * margin_per_contract
-                success, updated_account = self.db.update_paper_balance(
-                    realized_pnl=0,  # No P&L yet, just margin allocation
-                    margin_change=margin_required
-                )
-                if success:
-                    logger.info(
-                        f"Paper margin allocated: ${margin_required:,.2f} for {signal.contracts} {ticker} contracts "
-                        f"@ ${margin_per_contract:,.0f}/ct (Available: ${updated_account['margin_available']:,.2f})"
-                    )
+            self.db.complete_order_intent(position_id)
 
             # Log
             self.db.log(
@@ -2058,14 +2135,15 @@ class ValorTrader:
             realized_pnl = ticker_stats.get(ticker, {}).get("total_pnl", 0.0)
             ticker_equity = starting_cap + realized_pnl
 
-            # Get current quote for unrealized P&L (for this ticker)
-            quote = self.executor.get_mes_quote(ticker=ticker)
-            current_price = quote.get("last", 0) if quote else 0
-
             unrealized_pnl = 0.0
             for position in positions:
-                if position.is_open and current_price > 0:
-                    unrealized_pnl += position.calculate_pnl(current_price)
+                if position.is_open:
+                    quote = self.executor.get_mes_quote(symbol=position.symbol, ticker=ticker)
+                    if not quote or quote.get("last", 0) <= 0:
+                        # Missing marks are unknown, not a zero-P&L snapshot.
+                        logger.warning("Equity snapshot awaiting quote for %s", position.symbol)
+                        return
+                    unrealized_pnl += position.calculate_pnl(quote["last"])
 
             # Get today's stats
             summary = self.db.get_daily_summary()
@@ -2235,17 +2313,19 @@ class ValorTrader:
 
                 # Max hold: per-ticker config or 24h default
                 max_hold_hours = ticker_cfg.get('max_hold_hours', 24)
+                if pos.open_time is None or pos.open_time.tzinfo is None:
+                    logger.error("Invalid open_time for %s; requires reconciliation", pos.position_id)
+                    continue
                 hold_duration = (now - pos.open_time).total_seconds() / 3600
 
                 if hold_duration > max_hold_hours:
                     # Try to get current price for accurate P&L
-                    quote = self.executor.get_mes_quote(ticker=pos_ticker)
+                    quote = self.executor.get_mes_quote(symbol=pos.symbol, ticker=pos_ticker)
                     close_price = quote.get("last", 0) if quote else 0
 
                     if close_price <= 0:
-                        # No price available — close at entry (P&L = $0)
-                        close_price = float(pos.entry_price)
-                        close_reason = f"STALE_WATCHDOG_{max_hold_hours}H_NO_QUOTE"
+                        logger.error("Stale position %s awaiting executable quote", pos.position_id)
+                        continue
                     else:
                         close_reason = f"STALE_WATCHDOG_{max_hold_hours}H"
 
@@ -2291,18 +2371,18 @@ class ValorTrader:
                 logger.info("VALOR EOD: No open positions to process")
                 return result
 
-            # Group by ticker for efficient quote fetching
-            positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+            # Group by contract to avoid closing old positions using a new expiry.
+            positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
             for pos in all_positions:
-                t = getattr(pos, 'ticker', 'MES')
+                t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
                 if t not in positions_by_ticker:
                     positions_by_ticker[t] = []
                 positions_by_ticker[t].append(pos)
 
             logger.info(f"VALOR EOD: Processing {len(all_positions)} position(s) across {list(positions_by_ticker.keys())}")
 
-            for ticker, positions in positions_by_ticker.items():
-                quote = self.executor.get_mes_quote(ticker=ticker)
+            for (ticker, symbol), positions in positions_by_ticker.items():
+                quote = self.executor.get_mes_quote(symbol=symbol, ticker=ticker)
                 current_price = quote.get("last", 0) if quote else 0
 
                 if current_price <= 0:
@@ -2353,15 +2433,15 @@ class ValorTrader:
             return {'closed': 0, 'failed': 0, 'total_pnl': 0.0, 'details': []}
 
         # Group by ticker for efficient quote fetching
-        positions_by_ticker: Dict[str, List[FuturesPosition]] = {}
+        positions_by_ticker: Dict[Tuple[str, str], List[FuturesPosition]] = {}
         for pos in positions:
-            t = getattr(pos, 'ticker', 'MES')
+            t = (getattr(pos, 'ticker', 'MES'), pos.symbol)
             if t not in positions_by_ticker:
                 positions_by_ticker[t] = []
             positions_by_ticker[t].append(pos)
 
-        for t, t_positions in positions_by_ticker.items():
-            quote = self.executor.get_mes_quote(ticker=t)
+        for (t, symbol), t_positions in positions_by_ticker.items():
+            quote = self.executor.get_mes_quote(symbol=symbol, ticker=t)
             current_price = quote.get("last", 0) if quote else 0
 
             if current_price <= 0:
@@ -2431,11 +2511,14 @@ class ValorTrader:
 
         status_dict = {
             "bot_name": "VALOR",
+            "mnq_breakout": self.mnq_breakout_status(),
             "status": "paused_loss_streak" if is_paused else ("active" if self.executor.is_market_open() else "market_closed"),
             "mode": config.mode.value,
             "symbol": config.symbol,
             "tickers": config.tickers,
             "active_ticker_filter": ticker,
+            "quarantined_tickers": config.quarantined_tickers,
+            "performance_basis": "raw_paper_ledger",
             "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             "loss_streak": {
                 "consecutive_losses": self.consecutive_losses,
@@ -2479,6 +2562,8 @@ class ValorTrader:
             "market_open": self.executor.is_market_open()
         }
 
+        if ticker is None or ticker == "MNQ":
+            status_dict["mnq_breakout"]["forward_performance"] = self.mnq_breakout_performance()
         # Add paper account info if available
         if paper_account:
             if ticker:
@@ -2535,9 +2620,28 @@ class ValorTrader:
         """Get paper trading account status"""
         return self.db.get_paper_account()
 
-    def reset_paper_account(self, starting_capital: float = 500000.0) -> bool:
-        """Reset paper trading account with new starting capital"""
-        return self.db.reset_paper_account(starting_capital)
+    def reset_paper_account(self, starting_capital: float = 600000.0, full_reset: bool = True) -> bool:
+        """Paper only; archive old data and let each process notice the new account."""
+        if self.config.mode != TradingMode.PAPER:
+            return False
+        return self.db.reset_paper_account(starting_capital, full_reset)
+
+    def _sync_paper_account_epoch(self):
+        if self.config.mode != TradingMode.PAPER:
+            return
+        account = self.db.get_paper_account()
+        if not account:
+            raise RuntimeError("Missing paper account")
+        epoch = account['id']
+        if getattr(self, '_paper_account_epoch', None) != epoch:
+            self._paper_account_epoch = epoch
+            self._loss_streaks = {t: 0 for t in self.config.tickers}
+            self._loss_pause_until = {t: None for t in self.config.tickers}
+            self._daily_losses = {t: 0.0 for t in self.config.tickers}
+            self.consecutive_losses = self.daily_trades = 0
+            self.daily_pnl = 0.0
+            self.loss_streak_pause_until = None
+            self.win_tracker = self.db.get_win_tracker()
 
     def get_intraday_equity(self, ticker: Optional[str] = None) -> List[Dict]:
         """Get today's equity curve, optionally filtered by ticker"""
@@ -2565,13 +2669,16 @@ class ValorTrader:
 # ============================================================================
 
 _trader_instance: Optional[ValorTrader] = None
+_trader_init_lock = Lock()
 
 
 def get_valor_trader() -> ValorTrader:
     """Get or create VALOR trader instance"""
     global _trader_instance
     if _trader_instance is None:
-        _trader_instance = ValorTrader()
+        with _trader_init_lock:
+            if _trader_instance is None:
+                _trader_instance = ValorTrader()
     return _trader_instance
 
 

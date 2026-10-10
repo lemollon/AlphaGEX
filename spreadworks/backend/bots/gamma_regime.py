@@ -40,8 +40,17 @@ BOTH directions — read as "get long" it was wrong 16 times out of 22. What it 
 
     every SPY squeeze since 2020 began in short gamma      33 of 33 (base rate 58%)
     ...but precision is only                               3.4%   (929 false alarms)
-    P(-4% within 5 sessions), net_gex > +5B                1.89%  (vs 10.16% base)
+    P(-4% within 5 sessions), net_gex > +5B                2.04%  (vs 4.89% base)
     P(>1% intraday break), short gamma vs long             28.2% vs 10.1%
+
+    2026-10-04: the +5B pin-side figure above was recalibrated with the
+    PRIOR-SESSION-LAGGED convention gamma_state() actually uses (the original
+    1.89%/10.16% figures used a different, unlagged definition — see
+    DEEP_LONG_B below). The effect is real and the right sign (long gamma
+    suppresses the downside tail) but about a third the size originally
+    claimed. A threshold sweep (+2.5B to +20B) found no better cutoff than
+    +5B -- the sample collapses above +7.5B (net_gex essentially never prints
+    above +15B in six years of history).
 
 So: a prerequisite for a squeeze, a strong veto for short premium, and useless as
 a direction call.
@@ -66,8 +75,14 @@ logger = logging.getLogger(__name__)
 MAX_DTE = 365
 
 # Regime thresholds, in $bn of gamma per 1% move.
-DEEP_LONG_B = 5.0     # P(-4% in 5d) = 1.89% vs a 10.16% base rate
-DEEP_SHORT_B = -10.0  # the short-premium veto; fires on ~9% of sessions
+DEEP_LONG_B = 5.0     # P(-4% in 5d) = 2.04% vs a 4.89% base rate (relagged 2026-10-04)
+# Tightened 2026-10-04 from -10.0 to -12.5 -- a threshold sweep (-5B to -20B)
+# found the break-probability LIFT at -10B (+0.32 full-sample / +0.33 on
+# 2023+ minute data) was not the strongest usable cutoff: -12.5B lifts to
+# +0.52 / +0.47 on n=27/41 sessions, still a defensible sample. -15B looked
+# even stronger (+0.55/+0.59) but n=9/16 is too thin to trust. Fires on
+# ~1.6% of sessions now (was ~9% at -10B) -- rarer, sharper.
+DEEP_SHORT_B = -12.5   # the short-premium veto
 
 # --- the normalised view, which beats the raw sign -------------------------------
 # Percentile rank of net_gex within its own trailing window. The LEVEL of gamma is
@@ -180,6 +195,7 @@ def fetch_net_gex(client: Any, ticker: str = "SPY", *, today: date | None = None
 
     horizon = (today + timedelta(days=max_dte)).isoformat()
     rows: list[dict] = []
+    failed_expirations = []
     for exp in exps:
         if exp > horizon:
             break
@@ -191,16 +207,22 @@ def fetch_net_gex(client: Any, ticker: str = "SPY", *, today: date | None = None
             )
             if r.status_code != 200:
                 logger.warning("gamma_regime: chain %s %s -> %s", ticker, exp, r.status_code)
+                failed_expirations.append(exp)
                 continue
             data = (r.json().get("options") or {}).get("option") or []
             if isinstance(data, dict):
                 data = [data]
+            if not data:
+                failed_expirations.append(exp)
             rows.extend(data)
         except Exception as e:                                    # noqa: BLE001
             logger.warning("gamma_regime: chain %s %s failed: %s", ticker, exp, e)
+            failed_expirations.append(exp)
             continue
 
     out = compute_net_gex(rows, float(spot))
+    out["failed_expirations"] = failed_expirations
+    out["chain_complete"] = not failed_expirations
     out["spot"] = float(spot)
     out["n_expirations"] = len([e for e in exps if e <= horizon])
     return out
@@ -295,6 +317,82 @@ def gamma_percentile(engine: Engine, asof: date,
             "n_history": len(rows), "reason": None}
 
 
+# ---------------------------------------------------------------------------
+# Intraday break probability by regime cell — P(>1% intraday move). Original
+# calibration measured 2020-01-02 through 2026-08-11 (1,646 sessions) off
+# DAILY OHLC bars — the sample predates minute-level SPY data, which only
+# exists in the warehouse from 2023-01-03. Cells are net_gex sign + spot vs
+# the re-solved flip; the two collapse to the SAME variable here (net gamma <
+# 0 and spot below flip agree 96.1% of the time — see the module docstring),
+# so the sign of net_gex_b alone selects a cell.
+#
+# 2026-10-04 RECALIBRATION against real minute-bar paths (bt_spy, 2023-01-03
+# through 2026-08-11, 904 sessions, prior-session-lagged classification,
+# day's own session high/low from running intraday min/max, not daily-bar
+# high/low):
+#     short_below_flip   28.8% (n=473) vs 27.5% daily-bar  — no material change
+#     long_above_flip     9.8% (n=347) vs  9.6% daily-bar  — no material change
+#     deep_short_gamma (at -10B, the threshold in force at measurement time)
+#                        53.6% (n=84)  vs 33.3% daily-bar  — REAL MISS
+# The first two cells' daily-bar-era numbers already matched minute precision
+# closely. (Tested and dropped: whether breaking the opening 30-minute range
+# adds predictive power on top of the regime cell — it does not, conditional
+# rates run flat-to-INVERSE of the base rate in all three cells, e.g.
+# short_below_flip 20.1% given an OR30 break vs 32.9% without one. Not wired
+# into anything; noted here so it is not re-tested.)
+#
+# 2026-10-04 THRESHOLD TIGHTEN: DEEP_SHORT_B moved -10.0 -> -12.5 (see its own
+# comment above) — deep_short_gamma's break probability below is there-fore
+# the -12.5B figure (68.3%, n=41, 2023+ minute data), not the -10B figure
+# (53.6%) measured just above; that -10B number is kept in the comment purely
+# as the before/after record, it is no longer what this cell means live.
+# ---------------------------------------------------------------------------
+BREAK_CELLS = {
+    "short_below_flip": 0.275,   # short gamma, spot below flip
+    "long_above_flip": 0.096,    # long gamma, spot above flip
+    "deep_short_gamma": 0.683,   # net gamma below -$12.5B — a subset of short_below_flip
+    "sample": "1,646 sessions, 2020-2026",
+}
+
+# Per-cell sample description. deep_short_gamma was recalibrated on a
+# DIFFERENT (smaller, minute-bar) sample than the other two cells, which
+# still carry the original daily-bar figure — showing BREAK_CELLS["sample"]
+# for every cell would misleadingly attach the deep_short_gamma recalibration
+# note to short_below_flip/long_above_flip readings too. Falls back to
+# BREAK_CELLS["sample"] via break_sample_for() for any cell without its own
+# entry here.
+BREAK_CELLS_SAMPLE = {
+    "deep_short_gamma": ("41 minute-bar sessions below -$12.5B, 2023-2026 "
+                         "(threshold tightened from -$10B 2026-10-04; at "
+                         "-$10B the figure was 53.6% on n=84, and the "
+                         "original 2020-2026 daily-bar figure was 33.3%)"),
+}
+
+
+def break_sample_for(cell: str | None) -> str | None:
+    """The sample description for `cell`, or None if there is no cell."""
+    if cell is None:
+        return None
+    return BREAK_CELLS_SAMPLE.get(cell, BREAK_CELLS.get("sample"))
+
+
+def break_probability(net_gex_b: float | None) -> tuple[float | None, str]:
+    """P(SPY moves >1% intraday) for today's regime cell, or (None, "no cell").
+
+    Checked most-specific first: deep short gamma is a SUBSET of "short gamma,
+    spot below flip", so it has to win the match rather than the broader cell.
+    """
+    if net_gex_b is None:
+        return None, "no cell"
+    if net_gex_b <= DEEP_SHORT_B:
+        return BREAK_CELLS["deep_short_gamma"], "deep_short_gamma"
+    if net_gex_b < 0:
+        return BREAK_CELLS["short_below_flip"], "short_below_flip"
+    if net_gex_b > 0:
+        return BREAK_CELLS["long_above_flip"], "long_above_flip"
+    return None, "no cell"
+
+
 def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     """The full verdict for a decision being made ON `asof`. Prior sessions only.
 
@@ -302,7 +400,8 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
       SQUEEZE_WATCH  gamma oversold AND VIX at its highs. 15.13% of these started a
                      squeeze (base 3.38%) and ZERO were crashes-from-highs. This is
                      where the long-convexity trade goes and where selling stands down.
-      NO_SELL        gamma below -$10B. The short-premium veto, ~9% of sessions.
+      NO_SELL        gamma below -$12.5B. The short-premium veto, ~1.6% of sessions
+                     (tightened from -$10B/~9% 2026-10-04, see DEEP_SHORT_B).
       SELL_PREMIUM   gamma overbought. Zero squeezes in 387 sessions, smallest
                      downside tail on the board.
       NEUTRAL        everything else. Trade the sell side normally.
@@ -322,9 +421,11 @@ def squeeze_signal(engine: Engine, asof: date) -> dict[str, Any]:
     vr = vix_decay_ratio(engine, asof)
     pct, ratio = gp.get("pct"), vr.get("ratio")
     b = gp.get("net_gex_b")
+    break_prob, break_cell = break_probability(b)
 
     out = {"verdict": "UNKNOWN", "gamma_pct": pct, "net_gex_b": b,
            "vix_ratio": ratio, "prior_date": gp.get("prior_date"),
+           "break_prob": break_prob, "break_cell": break_cell,
            "reason": gp.get("reason") or vr.get("reason")}
 
     if pct is None or ratio is None:
@@ -417,7 +518,9 @@ def fuel_ratio(engine: Engine, asof: date, window: int = 20) -> dict[str, Any]:
 
 
 def squeeze_outlook(engine: Engine, asof: date,
-                    window: int = PCT_WINDOW) -> dict[str, Any]:
+                    window: int = PCT_WINDOW,
+                    live_gex_b: float | None = None,
+                    live_vix_ratio: float | None = None) -> dict[str, Any]:
     """Where the triggers actually sit, so you can watch a LEVEL not a verdict.
 
     A verdict alone tells you nothing until the day it flips. What is useful
@@ -428,7 +531,21 @@ def squeeze_outlook(engine: Engine, asof: date,
     Returns trigger levels in $bn plus the gap from the current reading, a
     5-session percentile trend, a proximity label, and a per-leg breakdown.
     All None-safe: missing history yields Nones, never a misleading zero.
+
+    🚨 LIVE MODE. Pass live_gex_b / live_vix_ratio to recompute the whole card
+    from THIS MINUTE instead of the last stored close. Everything here except
+    the calendar is a function of the current gamma reading, so there was no
+    reason for the panel to sit frozen from 15:05 to 15:05 — the gaps to the
+    triggers, which leg is short, the pin band, all of it moves during the
+    session and the reader could not see it.
+
+    ⛔ THE TRIGGER LEVELS THEMSELVES STAY HISTORICAL. They are the 20th and 80th
+    percentiles of the trailing window, which is by definition made of closes.
+    Only the CURRENT reading is swapped. And live mode never writes anything:
+    the verdict is still the 15:05 capture, because that is what the backtest
+    measured.
     """
+    live = live_gex_b is not None
     from backend.bots.vix_regime import vix_decay_ratio
 
     out: dict[str, Any] = {
@@ -448,7 +565,7 @@ def squeeze_outlook(engine: Engine, asof: date,
         out["reason"] = f"insufficient_gamma_history: have={len(rows)} need={window}"
         return out
 
-    cur = float(rows[0][1]) / 1e9
+    cur = float(live_gex_b) if live else float(rows[0][1]) / 1e9
     hist = sorted(float(r[1]) / 1e9 for r in rows)
     # the value that WOULD sit at each threshold in the current window
     lo_i = max(0, int(OVERSOLD_PCT * len(hist)) - 1)
@@ -459,8 +576,12 @@ def squeeze_outlook(engine: Engine, asof: date,
     out["gap_to_oversold_b"] = cur - lo_trig       # negative once through it
     out["gap_to_overbought_b"] = hi_trig - cur
 
-    gp = gamma_percentile(engine, asof, window)
-    pct = gp.get("pct")
+    if live:
+        # Rank the live reading against the same window the stored one uses.
+        pct = sum(1 for v in hist if cur > v) / len(hist)
+    else:
+        gp = gamma_percentile(engine, asof, window)
+        pct = gp.get("pct")
     if pct is not None and len(rows) > 5:
         prior5 = [float(r[1]) for r in rows[5:]][:window]
         if len(prior5) >= 20:
@@ -480,7 +601,8 @@ def squeeze_outlook(engine: Engine, asof: date,
             out["proximity"] = "MID_RANGE"
 
     # SQUEEZE_WATCH needs BOTH legs. Say which one is short.
-    vr = vix_decay_ratio(engine, asof).get("ratio")
+    vr = (live_vix_ratio if live_vix_ratio is not None
+          else vix_decay_ratio(engine, asof).get("ratio"))
     out["legs"] = {
         "gamma_oversold": None if pct is None else bool(pct <= OVERSOLD_PCT),
         "vix_at_highs": None if vr is None else bool(vr > VIX_AT_HIGHS),
@@ -496,6 +618,7 @@ def squeeze_outlook(engine: Engine, asof: date,
 
     # Scheduled flow — the forecastable half of "the match".
     out["calendar"] = calendar_flags(asof)
+    out["live"] = live
 
     # PIN proximity is the mirror question and shares the same number: the
     # higher the percentile, the more dealer hedging damps the tape. Zero
@@ -914,6 +1037,181 @@ def signal_history(engine: Engine, n: int = 90,
         out.append({"trade_date": d, "net_gex_b": b, "pct": pct,
                     "vix_ratio": ratio, "verdict": verdict})
     return out[-n:]
+
+
+SPY_DAILY_TABLE = "sw_spy_daily"
+# Widest calendar gap that can still be ONE session: Friday to the Tuesday
+# after a Monday holiday, or Thursday to the Monday after Good Friday.
+MAX_NEXT_SESSION_GAP_DAYS = 4
+
+
+def attach_forward_returns(engine: Engine, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Tag each `signal_history` row with `fwd1_pct`: the NEXT session's SPY
+    close over THIS session's close, minus 1. Read from sw_spy_daily's own
+    closes only.
+
+    🚨 NEVER sw_gamma_daily.spot or the ORAT baseline's `spot` column — see the
+    module docstring: those are a forward mark solved off the option chain,
+    not a settle, and using them here would silently swap in a different
+    number under the same name.
+
+    Mutates `rows` in place (adds "fwd1_pct", float or None) and returns the
+    coverage the page prints alongside the strip. sw_spy_daily is populated
+    live from Tradier in a trailing window (see routes_calls._refresh_spy), so
+    a wide range routinely has sessions with no close on file yet — those are
+    left as None, never zero-filled, and the caller omits them from the strip
+    rather than plotting a manufactured "no move".
+    """
+    coverage: dict[str, Any] = {"sessions_with_fwd": 0, "sessions_total": len(rows),
+                                "first_date": None, "last_date": None}
+    if not rows:
+        return coverage
+
+    def _d(x: Any) -> date:
+        return x if isinstance(x, date) else date.fromisoformat(str(x))
+
+    dates = [_d(r["trade_date"]) for r in rows]
+    lo, hi = min(dates), max(dates)
+    with engine.begin() as conn:
+        spy_rows = conn.execute(text(
+            f"SELECT trade_date, close FROM {SPY_DAILY_TABLE} "
+            "WHERE trade_date >= :lo AND trade_date <= :hi AND close IS NOT NULL "
+            "ORDER BY trade_date"
+        ), {"lo": lo, "hi": hi + timedelta(days=10)}).fetchall()
+    spy = sorted((_d(r[0]), float(r[1])) for r in spy_rows)
+    close_by_date = dict(spy)
+    ordered_dates = [d for d, _ in spy]
+    pos = {d: i for i, d in enumerate(ordered_dates)}
+
+    # What counts as "the next session" is decided by TWO calendars agreeing:
+    # the next row in sw_spy_daily and the next row in the signal history
+    # itself (which is the gamma table's own session list). A hole in either
+    # table would otherwise turn this into a two-session return wearing the
+    # same name. When both tables skip the same weekday it is treated as a
+    # holiday — there is no holiday calendar in this service and that is the
+    # only evidence available. The calendar-gap cap is belt and braces on top:
+    # Fri -> Tue across a Monday holiday is the widest real gap there is.
+    row_dates = sorted(set(dates))
+    next_row = {a: b for a, b in zip(row_dates, row_dates[1:])}
+
+    n_fwd = 0
+    covered: list[date] = []
+    for r, d in zip(rows, dates):
+        fwd = None
+        c0 = close_by_date.get(d)
+        i = pos.get(d)
+        if c0 and i is not None and i + 1 < len(ordered_dates):
+            d1 = ordered_dates[i + 1]
+            c1 = close_by_date[d1]
+            if (c1 and next_row.get(d) == d1
+                    and (d1 - d).days <= MAX_NEXT_SESSION_GAP_DAYS):
+                fwd = (c1 / c0) - 1
+        r["fwd1_pct"] = fwd
+        if fwd is not None:
+            n_fwd += 1
+            covered.append(d)
+
+    coverage["sessions_with_fwd"] = n_fwd
+    if covered:
+        coverage["first_date"] = min(covered)
+        coverage["last_date"] = max(covered)
+    return coverage
+
+
+RIP_THRESHOLD = 0.03  # +3% forward 5-day move — matches the page's existing "rip" definition
+EPISODE_HORIZONS = (1, 3, 5)
+
+
+def episode_table(engine: Engine, threshold_b: float) -> dict[str, Any]:
+    """Every sw_gamma_daily session where net_gex_b <= threshold_b ("FALSIFICATION
+    TABLE" episodes), with the forward MAX close at 1/3/5 trading sessions forward
+    (as a % over the episode's own close, using the realized close sequence in
+    sw_spy_daily — never an intraday high, which isn't stored) and the plain
+    forward-5-session return. Mirrors attach_forward_returns' own trading-session-
+    sequence construction (position in sw_spy_daily's own ordered close list, never
+    a calendar offset).
+
+    An episode is included ONLY when its own full 5-session forward window is
+    resolvable against currently-stored SPY closes (the 1- and 3-session windows
+    are always resolvable whenever the 5-session one is, since 5 is the largest
+    horizon) — the newest few qualifying sessions are silently excluded until
+    enough future closes exist, counted in the returned summary's
+    `excluded_unresolved`, never zero-filled or guessed.
+
+    No caching, no stored snapshot: this is a single cheap query over the full
+    (currently ~1,500-row) daily tables, recomputed fresh on every call, so a new
+    qualifying session appears automatically the next time this is called after
+    its own 15:05 CT capture runs — there is no separate regeneration step.
+
+    Every qualifying session is its own episode — never deduplicated or clustered,
+    matching the page's own prior documented convention ("every qualifying session
+    is shown, not a curated subset").
+    """
+    with engine.begin() as conn:
+        gamma_rows = conn.execute(text(
+            f"SELECT trade_date, net_gex FROM {GAMMA_DAILY_TABLE} "
+            "WHERE net_gex IS NOT NULL ORDER BY trade_date"
+        )).fetchall()
+        spy_rows = conn.execute(text(
+            f"SELECT trade_date, close FROM {SPY_DAILY_TABLE} "
+            "WHERE close IS NOT NULL ORDER BY trade_date"
+        )).fetchall()
+
+    def _d(x: Any) -> date:
+        return x if isinstance(x, date) else date.fromisoformat(str(x))
+
+    spy = sorted((_d(r[0]), float(r[1])) for r in spy_rows)
+    ordered_dates = [d for d, _ in spy]
+    close_by_date = dict(spy)
+    pos = {d: i for i, d in enumerate(ordered_dates)}
+    max_h = max(EPISODE_HORIZONS)
+
+    episodes: list[dict[str, Any]] = []
+    excluded_unresolved = 0
+    for d_raw, net_gex in gamma_rows:
+        gamma_b = float(net_gex) / 1e9
+        if gamma_b > threshold_b:
+            continue
+        d = _d(d_raw)
+        i = pos.get(d)
+        c0 = close_by_date.get(d)
+        if i is None or c0 is None:
+            continue   # no SPY close on file for the episode's own session -- never guessed
+        if i + max_h >= len(ordered_dates):
+            excluded_unresolved += 1   # forward window not resolvable yet, not a loss
+            continue
+        fwd: dict[str, Any] = {}
+        for h in EPISODE_HORIZONS:
+            window_closes = [close_by_date[ordered_dates[i + k]] for k in range(1, h + 1)]
+            fwd[f"fwd_{h}d_max"] = (max(window_closes) / c0) - 1
+        fwd_5d = (close_by_date[ordered_dates[i + 5]] / c0) - 1
+        episodes.append({
+            "trade_date": d.isoformat(),
+            "net_gex_b": gamma_b,
+            **fwd,
+            "fwd_5d": fwd_5d,
+            "rip": fwd["fwd_5d_max"] >= RIP_THRESHOLD,
+        })
+
+    n = len(episodes)
+    rip_n = sum(1 for e in episodes if e["rip"])
+    fwd5_vals = [e["fwd_5d"] for e in episodes]
+    summary = {
+        "threshold_b": threshold_b,
+        "n": n,
+        "excluded_unresolved": excluded_unresolved,
+        "rip_n": rip_n,
+        "rip_pct": (rip_n / n) if n else None,
+        "mean_fwd_5d": (sum(fwd5_vals) / n) if n else None,
+        "best_fwd_5d": max(fwd5_vals) if fwd5_vals else None,
+        "worst_fwd_5d": min(fwd5_vals) if fwd5_vals else None,
+        "n_negative_fwd_5d": sum(1 for v in fwd5_vals if v < 0),
+    }
+    # Display order: most recent episode first -- built ascending above (it has
+    # to be, each one needs its own trailing position in ordered_dates), reversed
+    # only here, after the summary stats (which don't care about order) are done.
+    episodes.reverse()
+    return {"episodes": episodes, "summary": summary}
 
 
 def signal_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:

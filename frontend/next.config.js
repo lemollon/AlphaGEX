@@ -2,7 +2,7 @@
 
 // Generate build ID at build time
 const buildId = new Date().toISOString().slice(0, 16).replace('T', ' ')
-const gitCommit = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || 'local'
+const gitCommit = process.env.RENDER_GIT_COMMIT?.slice(0, 7) || 'local'
 
 const nextConfig = {
   reactStrictMode: true,
@@ -81,12 +81,12 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://s3.tradingview.com https://vercel.live",
+              "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://s3.tradingview.com",
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: https: blob:",
               "font-src 'self' data:",
               `connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 ${process.env.NEXT_PUBLIC_API_URL || ''} ${process.env.NEXT_PUBLIC_WS_URL || ''} wss: ws: https:`,
-              "frame-src 'self' https://s3.tradingview.com https://vercel.live",
+              "frame-src 'self' https://s3.tradingview.com",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",

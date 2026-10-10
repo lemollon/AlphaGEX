@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { publicOrigin } from '@/lib/public-origin'
 import { resolveCustomerUserId } from '@/lib/brokerage/identity'
 import { getCustomerIdentity } from '@/lib/auth/customer-identity'
+import { requireIdentityWithStepUp } from '@/lib/auth/mobile-step-up'
 import { isOptionsCapable } from '@/lib/brokerage/providers'
 import { createOAuthState } from '@/lib/enrollment/oauth-state'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { encryptSecret, decryptSecret } from '@/lib/crypto/secret-box'
 import { isCustomersDbConfigured, customerQuery, customerExecute } from '@/lib/customers-db'
+import { legalCompleteForOpenEnrollment } from '@/lib/enrollment/service'
 import { enqueueCrmEvent } from '@/lib/crm/outbox'
 import { mapBrokerageStatusToCrm } from '@/lib/crm/brokerage-status'
 
@@ -30,9 +32,6 @@ interface UserRow {
 }
 
 export async function POST(req: NextRequest) {
-  const uid = await resolveCustomerUserId(req)
-  if (!uid) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
-
   // Optional broker slug from the "Choose your broker" dropdown. When present, SnapTrade opens the
   // connection portal directly to that brokerage; when absent, the portal shows the full list.
   // return_to: which surface initiated this ('enroll' funnel vs legacy onboarding) — an
@@ -46,6 +45,32 @@ export async function POST(req: NextRequest) {
   } catch {
     // no/invalid body — fine, fall through to the full-list portal
   }
+
+  // The enrollment funnel (return_to: 'enroll') is exempt from step-up: it is the
+  // FIRST brokerage connection on a brand-new account, not a change to one already
+  // live, and it may be reached via the short-lived onboarding cookie that
+  // requireIdentityWithStepUp does not know about. "Connect Another Brokerage" / a
+  // reconnect from the Account tab is the real 'brokerage_connect' stepUpAction — a
+  // mobile (bearer) caller there must present a step-up token; the web dashboard
+  // cookie flow is unaffected either way (see mobile-step-up.ts).
+  // Tracked alongside uid rather than re-derived later from the Authorization header:
+  // the non-enroll branch's header may carry a step-up token (type 'step'), which a
+  // later plain getCustomerIdentity() call (type 'acc') would fail to parse and
+  // misreport as 'web' — breaking the mobile app's post-connect deep link.
+  let uid: string | null
+  let isMobileCaller = false
+  if (returnTo === 'enroll') {
+    uid = await resolveCustomerUserId(req)
+    isMobileCaller = (await getCustomerIdentity())?.source === 'bearer'
+  } else {
+    const { identity, error } = await requireIdentityWithStepUp()
+    if (error === 'step_up_required') {
+      return NextResponse.json({ ok: false, error: 'step_up_required' }, { status: 401 })
+    }
+    uid = identity?.customerId ?? null
+    isMobileCaller = identity?.source === 'bearer'
+  }
+  if (!uid) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
   // APP-041 provider allowlist, ENFORCED at the API boundary. The curated list already
   // existed but only filtered the dropdown, while this route passed the client-supplied
@@ -62,6 +87,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       { ok: false, error: 'Brokerage connection is temporarily unavailable. Please try again shortly.' },
       { status: 503 },
+    )
+  }
+
+  // Legal-before-brokerage, server-enforced (not just the page redirect). Only an
+  // OPEN enrollment can be blocked here — an existing customer with no open
+  // enrollment already finished legal and is unaffected.
+  if (!(await legalCompleteForOpenEnrollment(uid))) {
+    return NextResponse.json(
+      { ok: false, error: 'Please review and accept the required agreements before connecting a brokerage.' },
+      { status: 409 },
     )
   }
 
@@ -97,8 +132,7 @@ export async function POST(req: NextRequest) {
     // The state rides our own customRedirect as a query param. That is proven to survive
     // SnapTrade's redirect: the existing production flow already carries `return_to` the
     // same way.
-    const identity = await getCustomerIdentity()
-    const client = identity?.source === 'bearer' ? 'mobile' : 'web'
+    const client = isMobileCaller ? 'mobile' : 'web'
     const { state } = await createOAuthState({
       userId: user.id,
       brokerCode: 'snaptrade',

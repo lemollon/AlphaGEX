@@ -69,7 +69,7 @@ describe('config route inert-field list', () => {
 
   it('lists the swing bots that ignore stop_loss_pct, matching isSparkStrategy', () => {
     const swing = configRoute.split('const SWING_BOTS')[1]?.split(']')[0] ?? ''
-    for (const bot of ['spark', 'spark2', 'kindle']) {
+    for (const bot of ['kindle']) {
       expect(swing, `${bot} swings and must be listed`).toContain(bot)
     }
   })

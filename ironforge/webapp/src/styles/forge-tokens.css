@@ -1,0 +1,39 @@
+:root{
+  --bg:#ffffff;
+  --bg-2:#f6f6f7;
+  --line:#e7e7ea;
+  --line-2:#d9d9de;
+  --fg:#111114;
+  --muted:#6e6e78;
+  --accent:#f0600d;
+  --accent-ink:#ffffff;
+  --accent-soft:#fff0e6;
+  /* Deeper shade of the same hue (80% value scale of --accent) — small text and
+     text links on --bg/--bg-2/--accent-soft need 4.5:1 (WCAG AA); --accent itself
+     only clears ~2.95-3.29:1 on those surfaces. Measured: 5.09:1 on #fff, 4.57:1 on
+     --accent-soft (#fff0e6, the worst case this renders on). */
+  --accent-text:#bb4b0a;
+  --up:#0f9f6e;
+  --up-soft:#e6f6f0;
+  --spark:#1f7ae0;--flame:#f0600d;--ember:#b52fe0;
+  --av:#0b0b0f;
+  --c-spark:#1f7ae0;--c-flame:#f0600d;
+  --warn:#b7791f;--bad:#d23a2a;--down:var(--bad);
+  --brand:var(--font-barlow-condensed,"Barlow Condensed"),"Arial Narrow",sans-serif;
+  --sans:var(--font-geist-sans,"Geist"),"Segoe UI",system-ui,-apple-system,sans-serif;
+  --mono:var(--font-geist-mono,"Geist Mono"),ui-monospace,Menlo,monospace;
+  --r:12px;--r-sm:8px;
+  --wrap:1200px;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d0d0f;--bg-2:#161619;--line:#25252a;--line-2:#33333a;--fg:#f2f2f4;--muted:#9a9aa5;
+  --accent:#ff7124;--accent-ink:#0d0d0f;--accent-soft:#2c1a10;
+  /* Already clears 4.5:1 (6.05-7.15:1 measured vs --bg/--bg-2/--card/--accent-soft)
+     so the text token stays identical to --accent in dark mode — no further
+     brightening needed. */
+  --accent-text:#ff7124;--up:#2fcf93;--up-soft:#10291f;
+  --spark:#5aa6ff;--flame:#ff7124;--ember:#dd63ff;--c-spark:#3b88e0;--c-flame:#e85f15;--warn:#e0a630;--bad:#ff6b5a;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d0d0f;--bg-2:#161619;--line:#25252a;--line-2:#33333a;--fg:#f2f2f4;--muted:#9a9aa5;
+  --accent:#ff7124;--accent-ink:#0d0d0f;--accent-soft:#2c1a10;--accent-text:#ff7124;--up:#2fcf93;--up-soft:#10291f;
+  --spark:#5aa6ff;--flame:#ff7124;--ember:#dd63ff;--c-spark:#3b88e0;--c-flame:#e85f15;--warn:#e0a630;--bad:#ff6b5a;color-scheme:dark}

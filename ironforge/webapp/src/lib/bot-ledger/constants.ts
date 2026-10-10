@@ -5,6 +5,8 @@
  * client code that only needs the bot list or the locked copy.
  */
 
+import { botTagline } from '@/lib/billing/plans'
+
 export const LEDGER_BOTS = ['spark', 'flame'] as const
 export type LedgerBot = (typeof LEDGER_BOTS)[number]
 
@@ -20,8 +22,14 @@ export function isLedgerBot(v: unknown): v is LedgerBot {
 export const CALCULATION_VERSION = 1
 
 /**
- * Display metadata. Taglines mirror `src/lib/live/bots.ts` LIVE_BOT_TAGLINE so
- * the public page and the customer Live page describe the same strategy.
+ * Display metadata.
+ *
+ * This comment used to claim the taglines "mirror LIVE_BOT_TAGLINE" — they did
+ * not. They were a hand-copied snapshot, stale in BOTH slots ("Next-day" for
+ * Spark, "Two-day" for Flame, neither true since the 2026-08-16 EBB change). A
+ * comment asserting a sync that nothing enforces is worse than no comment: it
+ * stops the next reader from checking. Both now derive from BOT_PLANS, which is
+ * what LIVE_BOT_TAGLINE derives from too.
  */
 export const LEDGER_BOT_NAME: Record<LedgerBot, string> = {
   spark: 'Spark',
@@ -29,8 +37,8 @@ export const LEDGER_BOT_NAME: Record<LedgerBot, string> = {
 }
 
 export const LEDGER_BOT_TAGLINE: Record<LedgerBot, string> = {
-  spark: 'Next-day SPY spreads',
-  flame: 'Two-day SPY put credit spreads',
+  spark: botTagline('spark'),
+  flame: botTagline('flame'),
 }
 
 /**

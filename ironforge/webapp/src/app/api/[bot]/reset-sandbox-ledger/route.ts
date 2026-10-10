@@ -196,6 +196,7 @@ export async function POST(req: NextRequest, { params }: { params: { bot: string
               collateral_in_use = ${openCollateral},
               buying_power = ${newBp},
               high_water_mark = ${newBalance},
+              high_water_balance = GREATEST(${startingCapital}, ${newBalance}),
               max_drawdown = 0,
               total_trades = 0,
               updated_at = NOW()

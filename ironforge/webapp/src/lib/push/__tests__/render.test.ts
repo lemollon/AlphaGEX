@@ -90,3 +90,96 @@ describe('deep-link payload', () => {
     expect(msg.data.eventKey).toBe('trade_close:spark:1DTE:POS-1')
   })
 })
+
+describe('deep-link nav keys (mobile route-for.ts)', () => {
+  it('derives agent from routeParams.account', () => {
+    const msg = renderNotification(evt(), { showAmountsOnLockscreen: false })
+    expect(msg.data.agent).toBe('spark')
+  })
+
+  it('derives trade_id from any of the producer-chosen id keys', () => {
+    const byTradeId = renderNotification(evt({ routeParams: { tradeId: 'POS-1' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(byTradeId.data.trade_id).toBe('POS-1')
+
+    const byPositionId = renderNotification(evt({ routeParams: { positionId: 'POS-2' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(byPositionId.data.trade_id).toBe('POS-2')
+  })
+
+  it('sets kind for brokerage_health and billing, and nothing else', () => {
+    const brokerage = renderNotification(evt({ category: 'brokerage_health', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(brokerage.data.kind).toBe('brokerage')
+
+    const billing = renderNotification(evt({ category: 'billing', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(billing.data.kind).toBe('billing')
+
+    const trade = renderNotification(evt({ category: 'trade_opened', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(trade.data.kind).toBeUndefined()
+  })
+
+  it('ignores an agent value the mobile app does not recognize', () => {
+    const msg = renderNotification(evt({ routeParams: { account: 'inferno' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.agent).toBeUndefined()
+  })
+})
+
+describe('type/link payload (#269)', () => {
+  it('carries the category as `type` on every push', () => {
+    for (const category of CATEGORIES) {
+      const msg = renderNotification(evt({ category }), { showAmountsOnLockscreen: false })
+      expect(msg.data.type).toBe(category)
+    }
+  })
+
+  it('prefers a trade_id link over an agent link', () => {
+    const msg = renderNotification(evt({ routeParams: { tradeId: 'POS-1', account: 'flame' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/trade/POS-1')
+  })
+
+  it('falls back to an agent link when there is no trade_id', () => {
+    const msg = renderNotification(evt({ routeParams: { account: 'flame' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/agents/flame')
+  })
+
+  it('links brokerage_health and billing to the account tab', () => {
+    const brokerage = renderNotification(evt({ category: 'brokerage_health', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(brokerage.data.link).toBe('/account')
+
+    const billing = renderNotification(evt({ category: 'billing', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(billing.data.link).toBe('/account')
+  })
+
+  it('omits link when the payload carries none of trade_id/agent/kind — never a broken href', () => {
+    const msg = renderNotification(evt({ category: 'community', routeParams: {} }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBeUndefined()
+  })
+
+  it('still carries trade_id/agent/kind alongside link — an older app build (fallback) still routes', () => {
+    const msg = renderNotification(evt({ routeParams: { tradeId: 'POS-1' } }), {
+      showAmountsOnLockscreen: false,
+    })
+    expect(msg.data.link).toBe('/trade/POS-1')
+    expect(msg.data.trade_id).toBe('POS-1')
+  })
+})

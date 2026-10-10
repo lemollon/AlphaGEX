@@ -26,31 +26,34 @@ export const SUPPORT_KB: KbEntry[] = [
     q: 'What plans and prices does IronForge offer?',
     // Prices and names interpolated from MARKETING_TIERS. This answer hardcoded
     // "Community ($15/mo)" — the price was $10, the same discrepancy caught in Stripe —
-    // and "Forge Starter", and pointed at /pricing, which has 308'd to /#memberships
-    // since that page was retired. A support bot quoting a price we do not charge is
-    // the worst place for this to be wrong.
-    a: `Three tiers: ${MARKETING_TIERS.community.name} ($${MARKETING_TIERS.community.priceMonthly}/mo — chat + education, no trading bot), ${MARKETING_TIERS.starter.name} ($${MARKETING_TIERS.starter.priceMonthly}/mo — one automated strategy), and ${MARKETING_TIERS.pro.name} ($${MARKETING_TIERS.pro.priceMonthly}/mo — both strategies). Every bot plan includes Community. See the memberships section on the homepage.`,
+    // and "Forge Starter". A support bot quoting a price we do not charge is the worst
+    // place for this to be wrong.
+    //
+    // "Forge Pro" (MARKETING_TIERS.pro / BOTH_PLAN) dropped from this answer 2026-10-04
+    // (Leron, binding) — it is legacy/not-for-sale, so Sparky must not advertise it to a
+    // new customer as something they can buy. Spark and Flame are each sold separately.
+    a: `Three agents, each its own subscription: Spark and Flame are $${MARKETING_TIERS.starter.priceMonthly}/mo each (5-day free trial), and Ember is free (one account per person, $500–$2,000 trading capital). ${MARKETING_TIERS.community.name} (free — chat + education, no trading bot) is included with every agent and can also be joined on its own at no cost. See ironforge.trade/pricing.`,
   },
   {
     topic: 'plans',
     q: 'How much is a second strategy / the bundle?',
-    a: 'From Community only, activating your FIRST strategy upgrades your membership to $50/mo total (Community stays included — it is not $10 + $50). Adding a SECOND strategy is +$25/mo, lifting a single-strategy subscription to the $75 bundle covering both Spark and Flame. You can add either from /account/billing.',
+    a: `Community is free and already included, so activating your FIRST strategy is just $${MARKETING_TIERS.starter.priceMonthly}/mo total — nothing extra for Community. A SECOND strategy is its own separate $${MARKETING_TIERS.starter.priceMonthly}/mo subscription — there is no bundle discount for new signups. You can add either from /account/billing.`,
   },
   {
     topic: 'plans',
     q: 'Is there a free trial?',
-    a: `Yes — strategy plans start with a 5-trading-day free trial (trading days, not calendar days), so you are not charged today. Community ($${MARKETING_TIERS.community.priceMonthly}/mo) is billed immediately (no trial) since it is low-cost access.`,
+    a: `Yes — strategy plans start with a 5-trading-day free trial (trading days, not calendar days), so you are not charged today. ${MARKETING_TIERS.community.name} is free and activates immediately — there's no billing and nothing to trial.`,
   },
   // ── Billing ─────────────────────────────────────────────────────────────────
   {
     topic: 'billing',
     q: 'How do I change my card, cancel, or get receipts?',
-    a: 'Go to Manage Membership at /account/billing and click "Manage billing" — that opens the secure Stripe customer portal where you can update your card, change plan, download receipts, or cancel. You can cancel anytime.',
+    a: `Go to Manage Membership at /account/billing and click "Manage billing" — that opens the secure Stripe customer portal where you can update your card, change plan, download receipts, or cancel. You can cancel anytime. ${MARKETING_TIERS.community.name} on its own has no card or Stripe subscription to manage — there is simply nothing to cancel.`,
   },
   {
     topic: 'billing',
     q: 'How do I cancel my subscription?',
-    a: 'Open /account/billing → "Manage billing" → cancel in the Stripe portal. Access continues until the end of the current billing period.',
+    a: `Open /account/billing → "Manage billing" → cancel in the Stripe portal. Access continues until the end of the current billing period. A free ${MARKETING_TIERS.community.name}-only membership has no subscription to cancel — leave the community by signing out or asking support to remove your account.`,
   },
   {
     topic: 'billing',
@@ -61,7 +64,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'onboarding',
     q: 'How do I get started / what are the steps?',
-    a: 'Sign up, verify your email, choose your membership (Community or Forge Automate), review and sign the agreements, save a payment method, connect your brokerage, pick your agent (Spark or Flame), then review and activate. Your free trial starts at activation and you land on your agent dashboard.',
+    a: 'Sign up, verify your email, and choose your membership. Community is free — accept the agreements and you are in, no card and no brokerage needed. Forge Automate (Spark or Flame) continues on to save a payment method, connect your brokerage, pick your agent, then review and activate. Your free trial starts at activation and you land on your agent dashboard.',
   },
   {
     topic: 'onboarding',
@@ -108,7 +111,7 @@ export const SUPPORT_KB: KbEntry[] = [
   {
     topic: 'community',
     q: 'What is the Forge Community and how do I join?',
-    a: `Forge Community is the in-app chat + education space. It is included with any strategy plan, or available on its own for $${MARKETING_TIERS.community.priceMonthly}/mo. You can read the feed as a preview; posting requires an active membership. Join from /community or /account/billing.`,
+    a: `Forge Community is the in-app chat + education space. It is free — included with any strategy plan, or joinable on its own at no cost. You can read the feed as a preview; posting requires an active membership (free to activate). Join from /community or /account/billing.`,
   },
   // ── Account / security ──────────────────────────────────────────────────────
   {

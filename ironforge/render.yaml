@@ -155,6 +155,14 @@ services:
       # /api/{bot}/production-pause (self-guarded in-route).
       - key: IRONFORGE_PAUSE_PASSWORD
         sync: false
+      # Resolves relative OG/Twitter image URLs in src/app/layout.tsx's
+      # `metadata.metadataBase`. Without this, Next.js infers its own origin —
+      # which defaulted to http://localhost:3000 in production (ds-site #72)
+      # and broke every social-share preview of an ironforge.trade link. The
+      # code falls back to this same value if the var is ever unset, so this
+      # line is belt-and-braces, not load-bearing on its own.
+      - key: NEXT_PUBLIC_SITE_URL
+        value: https://ironforge.trade
       - key: NODE_ENV
         value: production
 

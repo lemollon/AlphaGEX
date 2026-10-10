@@ -30,9 +30,6 @@ function getPool(): Pool {
 const DB_PREFIX: Record<string, string> = {
   flame: 'flame',
   spark: 'spark',
-  // Same values the `|| bot` fallthrough already produced — listed explicitly so
-  // SPARK2 (a live-money bot) does not depend on an implicit default.
-  spark2: 'spark2',
   inferno: 'inferno',
   blaze: 'blaze',
   flare: 'flare',
@@ -48,7 +45,6 @@ const DB_PREFIX: Record<string, string> = {
 const HEARTBEAT_MAP: Record<string, string> = {
   flame: 'FLAME',
   spark: 'SPARK',
-  spark2: 'SPARK2',
   inferno: 'INFERNO',
   blaze: 'BLAZE',
   flare: 'FLARE',
@@ -97,7 +93,6 @@ export function dteMode(bot: string): string | null {
   if (bot === 'blaze') return '1DTE'  // BLAZE is 1DTE directional (debit vertical, not IC)
   if (bot === 'flare') return '0DTE'  // FLARE is 0DTE directional (debit vertical, sibling of BLAZE)
   if (bot === 'kindle') return '1DTE' // KINDLE is 1DTE IC (retired 2026-07-13; history only)
-  if (bot === 'spark2') return '1DTE' // SPARK2: SPARK's full v2 config on the second live account
   if (bot === 'forge') return '14DTE'  // no longer a condor -- calls measured negative (2026-08-11)
   return null
 }
@@ -122,10 +117,9 @@ export function isSettleAtExpiryBot(bot: string): boolean {
 
 let tablesReady = false
 
-/** Every bot with per-bot tables. SPARK2 (2026-07-13) = SPARK's full v2 config on
- * the second live account (ex-KINDLE 6YB***95). KINDLE is retired from scanning
- * but keeps tables/history. */
-const ALL_BOTS = ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle', 'spark2',
+/** Every bot with per-bot tables. KINDLE is retired from scanning but keeps
+ * tables/history. */
+const ALL_BOTS = ['flame', 'spark', 'inferno', 'blaze', 'flare', 'kindle',
                   'forge'] as const
 
 const INIT_DDL = `
@@ -208,7 +202,7 @@ CREATE TABLE IF NOT EXISTS ironforge_owner_pause (
   PRIMARY KEY (bot_name, person)
 );
 -- Customer → live-bot ownership for the account-aware Live page (customer_id =
--- users.id uuid in the ironforge-customers DB; bots: spark, spark2).
+-- users.id uuid in the ironforge-customers DB; bots: spark, flame).
 CREATE TABLE IF NOT EXISTS ironforge_customer_bots (
   customer_id TEXT NOT NULL,
   bot TEXT NOT NULL,
@@ -302,6 +296,7 @@ CREATE TABLE IF NOT EXISTS ${bot}_paper_account (
   collateral_in_use NUMERIC(12,2) DEFAULT 0,
   buying_power NUMERIC(12,2) NOT NULL,
   high_water_mark NUMERIC(12,2) NOT NULL,
+  high_water_balance NUMERIC(12,2),
   max_drawdown NUMERIC(12,2) DEFAULT 0,
   is_active BOOLEAN DEFAULT TRUE,
   dte_mode TEXT DEFAULT '2DTE',
@@ -393,6 +388,33 @@ CREATE TABLE IF NOT EXISTS ${bot}_equity_snapshots (
   dte_mode TEXT DEFAULT '2DTE',
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
+/*
+ * Per-POSITION intraday mark-to-market, for the per-trade P&L chart in UX-002/003.
+ *
+ * 🚨 A separate table on purpose. The obvious move is a position_id column on
+ * ${bot}_equity_snapshots — but that table is read in more than ten places, several of
+ * them doing SUM(unrealized_pnl) grouped by minute, including the query that feeds the
+ * chart itself. Extra per-position rows would silently double-count in every one of
+ * them until each was found and fixed, and equity-curve arithmetic is already the most
+ * bug-prone corner of this codebase. Nothing that exists reads this table, so nothing
+ * that exists can be broken by it.
+ *
+ * No backfill is possible: unrealized P&L per position was never recorded, so a
+ * position's series begins when the scanner first writes it.
+ */
+CREATE TABLE IF NOT EXISTS ${bot}_position_snapshots (
+  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  position_id TEXT NOT NULL,
+  snapshot_time TIMESTAMPTZ DEFAULT NOW(),
+  unrealized_pnl NUMERIC(12,2),
+  dte_mode TEXT,
+  person TEXT,
+  account_type TEXT DEFAULT 'sandbox',
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- The chart reads one position over one day; this is the index that serves it.
+CREATE INDEX IF NOT EXISTS ${bot}_position_snapshots_pos_time
+  ON ${bot}_position_snapshots (position_id, snapshot_time);
 CREATE TABLE IF NOT EXISTS ${bot}_logs (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   log_time TIMESTAMPTZ DEFAULT NOW(),
@@ -608,16 +630,6 @@ async function ensureTablesOnce(): Promise<void> {
       )
     } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
 
-    // SPARK2 born paused (2026-07-13): same guarantee as KINDLE — cannot place a
-    // real order until an explicit, deliberate unpause after preflight.
-    try {
-      await client.query(
-        `INSERT INTO ironforge_production_pause (bot_name, paused, paused_by, paused_reason)
-         VALUES ('SPARK2', TRUE, 'system', 'born paused — awaiting rotated Tradier creds + preflight + supervised first trade')
-         ON CONFLICT (bot_name) DO NOTHING`,
-      )
-    } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
-
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ALL_BOTS) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
@@ -659,6 +671,18 @@ async function ensureTablesOnce(): Promise<void> {
       // Add person column to paper_account for per-person production tracking
       try {
         await client.query(`ALTER TABLE ${bot}_paper_account ADD COLUMN IF NOT EXISTS person TEXT`)
+      } catch { /* column already exists or table doesn't exist yet */ }
+      // EBB high-water RATCHET (ADR 0013, 2026-09-04): the count ladder keys on
+      // max(starting_capital, high_water_balance). Every current_balance write
+      // GREATEST()s it, so it only ever moves up. Backfill = GREATEST(starting,
+      // current) so a pre-migration row never sizes below its funded seed.
+      try {
+        await client.query(`ALTER TABLE ${bot}_paper_account ADD COLUMN IF NOT EXISTS high_water_balance NUMERIC(12,2)`)
+        await client.query(
+          `UPDATE ${bot}_paper_account
+              SET high_water_balance = GREATEST(starting_capital, current_balance)
+            WHERE high_water_balance IS NULL`,
+        )
       } catch { /* column already exists or table doesn't exist yet */ }
       // Backfill NULL person values to 'User' so existing data matches person filter
       for (const tbl of [`${bot}_positions`, `${bot}_equity_snapshots`, `${bot}_daily_perf`]) {
@@ -890,7 +914,7 @@ async function ensureTablesOnce(): Promise<void> {
     // SPARK production/Logan on 2026-04-20. Deactivate everything except the
     // highest-id row per (bot, dte_mode, account_type, person) tuple, then
     // enforce a partial unique index so the race can't happen again.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE'], ['spark2', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
       try {
         await client.query(
           `UPDATE ${bot}_paper_account SET is_active = FALSE
@@ -920,12 +944,12 @@ async function ensureTablesOnce(): Promise<void> {
     // race window; the partial unique index above is the actual guarantee.
     // A concurrent INSERT that loses the race trips the index and is swallowed
     // here so ensureTables() doesn't abort the whole transaction.
-    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE'], ['spark2', '1DTE']] as const) {
+    for (const [bot, dte] of [['flame', '2DTE'], ['spark', '1DTE'], ['inferno', '0DTE'], ['blaze', '1DTE'], ['flare', '0DTE'], ['kindle', '1DTE']] as const) {
       try {
         await client.query(
           `INSERT INTO ${bot}_paper_account
-            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, dte_mode)
-           SELECT 10000, 10000, 0, 10000, 10000, $1
+            (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, high_water_balance, dte_mode)
+           SELECT 10000, 10000, 0, 10000, 10000, 10000, $1
            WHERE NOT EXISTS (
              SELECT 1 FROM ${bot}_paper_account WHERE is_active = TRUE AND dte_mode = $1
                AND COALESCE(account_type, 'sandbox') = 'sandbox'
@@ -954,9 +978,9 @@ async function ensureTablesOnce(): Promise<void> {
         try {
           await client.query(
             `INSERT INTO spark_paper_account
-              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
+              (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, high_water_balance, max_drawdown,
                is_active, dte_mode, account_type, person)
-             SELECT $1, $1, 0, $1, $1, 0, TRUE, '1DTE', 'production', $2
+             SELECT $1, $1, 0, $1, $1, $1, 0, TRUE, '1DTE', 'production', $2
              WHERE NOT EXISTS (
                SELECT 1 FROM spark_paper_account
                WHERE account_type = 'production' AND person = $2 AND is_active = TRUE
@@ -969,28 +993,6 @@ async function ensureTablesOnce(): Promise<void> {
       }
     } catch (err) {
       console.warn('  SPARK production paper_account seed failed (non-fatal):', err)
-    }
-
-    // Seed SPARK2's production paper_account ledger row. SPARK2's live account
-    // comes from env creds (never ironforge_accounts), and the scanner books its
-    // production fills under person='Spark2' (the ProductionAccount name from
-    // tradier.ts). Without this row the customer Live page reads is_active as
-    // false and shows "Paused" forever, and collateral/BP bookkeeping updates
-    // hit zero rows. Seeded at the account's funding value ($2,000); the Live
-    // page balance itself always comes from Tradier, not this ledger.
-    try {
-      await client.query(
-        `INSERT INTO spark2_paper_account
-          (starting_capital, current_balance, cumulative_pnl, buying_power, high_water_mark, max_drawdown,
-           is_active, dte_mode, account_type, person)
-         SELECT 2000, 2000, 0, 2000, 2000, 0, TRUE, '1DTE', 'production', 'Spark2'
-         WHERE NOT EXISTS (
-           SELECT 1 FROM spark2_paper_account
-           WHERE account_type = 'production' AND is_active = TRUE
-         )`,
-      )
-    } catch (err) {
-      console.warn('  SPARK2 production paper_account seed failed (non-fatal):', err)
     }
 
     // Normalize ironforge_accounts.bot on production accounts to own SPARK.
@@ -1203,9 +1205,22 @@ async function ensureTablesOnce(): Promise<void> {
       )
     } catch { /* ignore if table doesn't exist yet */ }
 
-    // FLAME/SPARK: fix max_contracts from legacy DB default of 10 → 0 (unlimited, sized by BP)
+    // FLAME/SPARK: rewrite the legacy DB default of 10 → 0 (unlimited, sized by BP).
     // The DB schema previously had DEFAULT 10 which gatekept sizing below 85% BP usage.
-    // max_contracts=0 means "no ceiling — size by buying power only" (matches scanner DEFAULT_CONFIG).
+    //
+    // 🚨 2026-08-27: the last line of this comment used to claim 0 "matches scanner
+    // DEFAULT_CONFIG". It has been FALSE since the 2026-08-16 EBB cutover —
+    // DEFAULT_CONFIG.flame / .spark both carry `max_contracts: 1`, and 1 lot is the
+    // whole risk story the product is sold on (1 lot on $2,000 draws 24%; two lots
+    // draw 69%). bp_pct is NOT the binding cap at these account sizes.
+    //
+    // This UPDATE is currently inert — the live FLAME row is not 10, evidenced by the
+    // real Tradier fills settling at exactly 1 × credit × 100. But it is a live trapdoor:
+    // production sizing (tradier.ts ~2019) reads max_contracts from THIS row and treats
+    // 0 as Infinity, so anything that puts a 10 back in this column silently promotes the
+    // real account from 1 contract to floor(OBP × bp_pct / $200) — 4 lots on a $4.2k
+    // account. Decide deliberately whether this should clamp to 1 instead of 0; do not
+    // let the stale comment be the reason someone leaves it at 0.
     for (const bot of ['flame', 'spark']) {
       try {
         await client.query(
@@ -1357,7 +1372,7 @@ export function validateBot(bot: string): string | null {
   // FORGE added 2026-08-10. Without it EVERY /api/forge/* route answers
   // "Invalid bot" — status, positions, config, the lot — so the bot would trade
   // its paper book while being completely invisible to the dashboard.
-  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle' && b !== 'spark2' && b !== 'forge') return null
+  if (b !== 'flame' && b !== 'spark' && b !== 'inferno' && b !== 'blaze' && b !== 'flare' && b !== 'kindle' && b !== 'forge') return null
   return b
 }
 

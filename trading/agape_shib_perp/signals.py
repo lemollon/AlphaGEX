@@ -16,6 +16,7 @@ from trading.agape_shib_perp.models import (
     AgapeShibPerpSignal,
     SignalAction,
     PositionSide,
+    TradingMode,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,6 +228,10 @@ class AgapeShibPerpSignalGenerator:
                     spot_price=spot, timestamp=now, action=SignalAction.WAIT,
                     reasoning=f"BLOCKED_ORACLE_{oracle_advice}", oracle_advice=oracle_advice,
                 )
+        if getattr(self.config, "strategy_mode", "combined_signal") == "weekly_breakout":
+            return self._weekly_breakout_signal(now, spot, market_data, prophet_data)
+        if getattr(self.config, "strategy_mode", "combined_signal") == "fade_lock_breaker":
+            return self._fade_lock_breaker_signal(now, spot, market_data, prophet_data)
         combined_signal = market_data.get("combined_signal", "WAIT")
         combined_confidence = market_data.get("combined_confidence", "LOW")
         action, side, reasoning = self._determine_action(combined_signal, combined_confidence, market_data)
@@ -266,24 +271,121 @@ class AgapeShibPerpSignalGenerator:
             take_profit=take_profit, quantity=quantity, max_risk_usd=max_risk,
         )
 
+    def _weekly_breakout_signal(self, now, spot, market_data, prophet_data):
+        """168h breakout entry, Asia/EU session only (trading/perp_strategies/weekly_breakout.py)."""
+        from trading.perp_strategies import weekly_breakout as wb
+
+        base = dict(
+            spot_price=spot, timestamp=now,
+            funding_rate=market_data.get("funding_rate", 0),
+            funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+            oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
+            oracle_win_probability=prophet_data.get("win_probability", 0.5),
+        )
+        d = wb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeShibPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        # SHIB trades ~1e-5: keep full precision (no 4-dp rounding).
+        stop_loss = wb.initial_stop(spot, d["direction"], d["atr"], self.config.wb_stop_atr)
+        quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
+        reasoning = (f"{d['reason']} close={sig.close:.10f} range=[{sig.lower:.10f},{sig.upper:.10f}] "
+                     f"atr={sig.atr:.10f} funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        return AgapeShibPerpSignal(
+            **base,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
+            confidence="MEDIUM", reasoning=reasoning,
+            side=side, entry_price=spot, stop_loss=stop_loss, take_profit=None,
+            quantity=quantity, max_risk_usd=max_risk,
+        )
+
+    def _fade_lock_breaker_signal(self, now, spot, market_data, prophet_data):
+        """H=3 daily fade + trailing-lock target + rally circuit breaker
+        (trading/perp_strategies/fade_lock_breaker.py). PAPER research."""
+        from trading.perp_strategies import fade_lock_breaker as flb
+
+        base = dict(
+            spot_price=spot, timestamp=now,
+            funding_rate=market_data.get("funding_rate", 0),
+            funding_regime=market_data.get("funding_regime", "UNKNOWN"),
+            oracle_advice=prophet_data.get("advice", "UNAVAILABLE"),
+            oracle_win_probability=prophet_data.get("win_probability", 0.5),
+        )
+        d = flb.decide_entry(self.config, self.config.ticker, self)
+        if d["direction"] == 0:
+            return AgapeShibPerpSignal(**base, action=SignalAction.WAIT, reasoning=d["reason"])
+        sig = d["signal"]
+        side = "long" if d["direction"] == 1 else "short"
+        # SHIB trades ~1e-5: keep full precision (no 4-dp rounding).
+        stop_loss = flb.initial_stop(spot, d["direction"], sig.move)
+        take_profit = flb.compute_hard_target(spot, sig.sma3)
+        quantity, max_risk = self._calculate_position_size(spot, stop_distance=abs(spot - stop_loss))
+        reasoning = (f"{d['reason']} move={sig.move:.6f} sma3={sig.sma3:.10f} "
+                     f"target={take_profit:.10f} funding={market_data.get('funding_regime', 'UNKNOWN')}")
+        return AgapeShibPerpSignal(
+            **base,
+            action=SignalAction.LONG if d["direction"] == 1 else SignalAction.SHORT,
+            confidence="MEDIUM", reasoning=reasoning,
+            side=side, entry_price=spot, stop_loss=stop_loss, take_profit=take_profit,
+            quantity=quantity, max_risk_usd=max_risk,
+        )
+
+    @staticmethod
+    def _is_degraded_data(market_data: Dict) -> bool:
+        """True when CoinGlass funding/L-S/OI/taker data is unavailable.
+
+        Mirrors has_coinglass in CryptoDataProvider._calculate_combined_signal:
+        a CoinGlass outage forces funding_regime to UNKNOWN.
+        """
+        funding_regime = market_data.get("funding_regime")
+        return funding_regime in (None, "", "UNKNOWN")
+
     def _determine_action(self, combined_signal, confidence, market_data):
         confidence_rank = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+
+        # Degraded-data paper allowance: CoinGlass is down (funding_regime
+        # UNKNOWN) but the combined signal still carries a directional call
+        # from Deribit GEX / price momentum at LOW confidence. Trade it in
+        # PAPER only, without inflating the confidence label. Never applies
+        # in LIVE regardless of the flag.
+        degraded_paper_ok = (
+            self._is_degraded_data(market_data)
+            and self.config.mode == TradingMode.PAPER
+            and getattr(self.config, "allow_degraded_data_trades", True)
+        )
+
         if confidence_rank.get(confidence, 0) < confidence_rank.get(self.config.min_confidence, 1):
-            return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            if not (degraded_paper_ok and combined_signal in ("LONG", "SHORT")):
+                return (SignalAction.WAIT, None, f"LOW_CONFIDENCE_{confidence}")
+            logger.info(
+                f"AGAPE-SHIB-PERP Signals: DEGRADED_NO_COINGLASS override - "
+                f"trading {combined_signal} at {confidence} confidence (CoinGlass unavailable)"
+            )
         tracker = get_agape_shib_perp_direction_tracker(self.config)
         if combined_signal == "LONG":
             skip, reason = tracker.should_skip_direction("LONG")
             if skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
-            return (SignalAction.LONG, "long", self._build_reasoning("LONG", market_data))
+            reasoning = self._build_reasoning("LONG", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.LONG, "long", reasoning)
         elif combined_signal == "SHORT":
             skip, reason = tracker.should_skip_direction("SHORT")
             if skip:
                 return (SignalAction.WAIT, None, f"DIRECTION_TRACKER_{reason}")
-            return (SignalAction.SHORT, "short", self._build_reasoning("SHORT", market_data))
+            reasoning = self._build_reasoning("SHORT", market_data)
+            if degraded_paper_ok:
+                reasoning += " | DEGRADED_NO_COINGLASS"
+            return (SignalAction.SHORT, "short", reasoning)
         elif combined_signal == "RANGE_BOUND":
+            if not getattr(self.config, "allow_range_bound_entries", False):
+                return (SignalAction.WAIT, None, "RANGE_BOUND_DISABLED")
             return self._derive_range_bound_direction(market_data, tracker)
         elif combined_signal == "WAIT":
+            if not getattr(self.config, "allow_wait_fallback_entries", False):
+                return (SignalAction.WAIT, None, "WAIT_FALLBACK_DISABLED")
             return self._derive_fallback_direction(market_data, tracker)
         return (SignalAction.WAIT, None, f"NO_SIGNAL_{combined_signal}")
 
@@ -406,7 +508,7 @@ class AgapeShibPerpSignalGenerator:
             parts.append(f"max_pain_dist={((mp - spot) / spot) * 100:+.1f}%")
         return " | ".join(parts)
 
-    def _calculate_position_size(self, spot_price):
+    def _calculate_position_size(self, spot_price, stop_distance=None):
         """Calculate position size in SHIB quantity.
 
         Perpetual: quantity-based sizing (not contracts).
@@ -414,7 +516,8 @@ class AgapeShibPerpSignalGenerator:
         """
         capital = self.config.starting_capital
         max_risk_usd = capital * (self.config.risk_per_trade_pct / 100)
-        stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
+        if stop_distance is None:
+            stop_distance = spot_price * 0.02 * (self.config.stop_loss_pct / 100)
         if stop_distance <= 0:
             return (self.config.default_quantity, max_risk_usd)
         risk_per_unit = stop_distance

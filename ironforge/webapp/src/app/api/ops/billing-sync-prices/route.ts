@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth/server'
 import { isStripeConfigured, findPriceByLookupKey, syncPriceToAdvertised } from '@/lib/billing/stripe'
-import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN } from '@/lib/billing/plans'
+import { BOT_PLANS } from '@/lib/billing/plans'
 
 /**
  * Make Stripe charge what the site advertises.
@@ -19,6 +19,13 @@ import { BOT_PLANS, BOTH_PLAN, COMMUNITY_PLAN } from '@/lib/billing/plans'
  *   - The target amount is ALWAYS plans.ts. Nothing in the request body can set a
  *     price; there is no amount parameter. It can only converge Stripe toward what
  *     the site already publishes.
+ *   - The legacy both_monthly bundle is deliberately excluded from `targets()` — it
+ *     is LEGACY / NOT FOR SALE (Leron, binding, 2026-10-04) and must never be synced
+ *     or repriced by this endpoint, only read by /api/ops/billing-readiness.
+ *   - community_monthly is likewise excluded as of 2026-10-05 (Leron, binding) —
+ *     Community is free for new signups, so there is no advertised price to converge
+ *     Stripe toward any more. Existing paid community_monthly subscribers are a
+ *     separate, deliberate carve-out — see GET /api/ops/community-paid-subscribers.
  *   - Operator session required, and NO public-mode bypass — unlike the read-only
  *     readiness endpoints. ironforge-legacy runs fully open; a billing WRITE must not
  *     be reachable there.
@@ -32,11 +39,7 @@ export const dynamic = 'force-dynamic'
 interface Target { plan: string; lookupKey: string; advertised: number }
 
 function targets(): Target[] {
-  return [
-    { plan: COMMUNITY_PLAN.name, lookupKey: COMMUNITY_PLAN.lookupKey, advertised: COMMUNITY_PLAN.priceMonthly },
-    ...Object.values(BOT_PLANS).map((p) => ({ plan: p.name, lookupKey: p.lookupKey, advertised: p.priceMonthly })),
-    { plan: 'Forge Pro (both bots)', lookupKey: BOTH_PLAN.lookupKey, advertised: BOTH_PLAN.priceMonthly },
-  ]
+  return Object.values(BOT_PLANS).map((p) => ({ plan: p.name, lookupKey: p.lookupKey, advertised: p.priceMonthly }))
 }
 
 async function requireOperator() {

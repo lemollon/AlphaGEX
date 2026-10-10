@@ -24,16 +24,212 @@
  */
 
 import { query, dbExecute, botTable, num, int, CT_TODAY, isSettleAtExpiryBot } from './db'
+
+/**
+ * Shout when a PRODUCTION ledger write matched no row.
+ *
+ * 🚨 THE 2026-08-23 BUG, AND WHY IT HID FOR THREE DAYS. Every production
+ * paper_account write is keyed `(account_type='production', person, is_active,
+ * dte_mode)`. FLAME began filling REAL orders on 2026-08-20 as person 'Flame'
+ * at dte_mode '0DTE' — and no such row had ever been created, because every
+ * auto-seed in this file hardcodes 'sandbox'. So the entry deduction and the
+ * close credit both updated ZERO rows and returned success. A +$21 settlement
+ * was never booked anywhere, production equity snapshots (which loop over these
+ * same rows) were never written, and the customer Live page read an empty
+ * ledger and said the account "isn't connected".
+ *
+ * An UPDATE that matches nothing is not an error in Postgres. On the real-money
+ * ledger it has to be treated as one, so it can never again be silent.
+ * Repaired with POST /api/{bot}/seed-production-ledger?confirm=true.
+ */
+function warnIfNoProductionLedger(
+  botName: string,
+  phase: 'entry' | 'close',
+  rowsAffected: number,
+  person: string,
+  dte: string | null,
+  amount: number,
+): void {
+  if (rowsAffected > 0) return
+  console.error(
+    `[scanner] 🚨 ${botName.toUpperCase()} PRODUCTION LEDGER MISS (${phase}): ` +
+    `UPDATE ${botName}_paper_account matched 0 rows for person='${person}', ` +
+    `dte_mode='${dte}', account_type='production', is_active=TRUE — $${amount.toFixed(2)} ` +
+    `was NOT booked. Real money moved and the ledger did not. ` +
+    `Fix: POST /api/${botName}/seed-production-ledger?confirm=true`,
+  )
+}
 import { acquireScannerLock } from './scanner-lock'
 import { isMarketHoliday, marketCloseMinuteCT } from './market-calendar'
-import { postFlameOpen, postFlameClose } from './discord'
+import { postFlameOpen, postFlameClose, postOpsAlert } from './discord'
+import {
+  WatchdogLedger,
+  WATCHDOG_SETTLE_REASON,
+  WATCHDOG_LOG_LEVEL,
+  WATCHDOG_ESCALATION_LEVEL,
+  WATCHDOG_MAX_ATTEMPTS,
+  decideWatchdog,
+  closeStatusPrefix,
+  isBookOnlyCloseReason,
+  normalizeExpiration,
+  settlementPnl,
+  summarizeWatchdogRun,
+  type CloseOutcome,
+  type WatchdogFailure,
+  type WatchdogRepair,
+} from './settle-watchdog'
+import {
+  HEARTBEAT_CHECK_HHMM,
+  HEARTBEAT_LOOKBACK_DAYS,
+  HEARTBEAT_SILENT_DAYS,
+  evaluateTradeHeartbeat,
+  type HeartbeatDay,
+} from './trade-heartbeat'
 import { eventCalendarRefresh } from './eventCalendar/refresh'
 import { isEventBlackoutActive } from './eventCalendar/gate'
 import { forgeBriefingsTick } from './forgeBriefings/tick'
-import { isCustomersDbConfigured } from './customers-db'
+import { isCustomersDbConfigured, customerQuery } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
-import { mirrorOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
+import { buildBigMoveEvent, buildDailySummaryEvent, bigMoveTier, positionRangePct } from './push/alert-events'
+import { dispatchToCustomers } from './push/dispatch'
+import { getLiveSummary } from './live/summary'
+import { isXspTicker, isXspSwapMode, decideXspSwap, XSP_TICKER } from './xsp-swap'
+import { settleXspSwapLegsForBot } from './xsp-swap-db'
+import type { LiveBot } from './live/bots'
+import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
+// FLAME v2 / SPARK v2 — D2 regime brain, D1 trailing band, S1 filter, call
+// spread. Every call below is shadow-by-default and wrapped so it can NEVER
+// throw into the scan tick that also places real orders — see flame-v2/engine.ts
+// header comment for the safety invariant and flame-v2/flags.ts for defaults.
+import {
+  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision,
+} from './flame-v2/engine'
+import type { D2Features } from './flame-v2/math'
+import { flameRegimeBrainMode, sparkTrailingBandMode, sparkSignalFilterMode, isLive } from './flame-v2/flags'
+import {
+  runFlameV2CallSpreadEntryTick,
+  runFlameV2CallSpreadGuardTick,
+  runFlameV2CallSpreadSettleTick,
+} from './flame-v2/call-spread-live'
+
+/**
+ * Ops-channel-only "why no trade today" copy, keyed by the same prefixes as
+ * PROTECTIVE_REASON_PREFIXES. Deliberately separate from activityFeed.ts's
+ * PROTECTIVE_GATE_LABELS (customer-facing Live page) — this wording is for
+ * the private ops Discord only and can be as candid/detailed as useful there.
+ */
+const OPS_NO_TRADE_LABELS: Record<string, string> = {
+  'skip:vix_elevated': 'Volatility spiked today, so the bot held back instead of forcing a trade into rough conditions. Capital protected, ready for tomorrow.',
+  'skip:vix_bad_window': 'Not enough VIX history yet to confirm conditions, so the bot held off rather than guess.',
+  'skip:vix_too_high': 'VIX was too high today, so the bot stayed out for safety.',
+  'skip:event_blackout': 'Sat out a scheduled market event today — avoiding unnecessary risk around the news. Planned, not a glitch.',
+  'skip:cooldown_after_first_loss': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:standdown': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:standdown_after_loss': 'Standing down after a recent loss — a built-in cooldown, not a problem. Back at it once the window clears.',
+  'skip:credit_too_low': "Today's premium wasn't worth the risk, so the bot passed rather than take a bad trade. Discipline paying off.",
+  'skip:credit_pct_too_low': "Today's premium wasn't worth the risk, so the bot passed rather than take a bad trade. Discipline paying off.",
+  'skip:neg_gamma_env': 'Conditions weren\'t favorable today, so the bot stayed out of a bad tape.',
+}
+
+/**
+ * Push notifications on trade OPEN/CLOSE (UAT #7). Scoped to the two bots on the
+ * customer product surface (live/bots.ts LIVE_BOTS) — inferno/forge are not sold to
+ * customers and have no mascot copy or deep-link target, so a push there would tap
+ * into nothing the app can open.
+ */
+const PUSH_BOTS = new Set<string>(['spark', 'flame'])
+
+/**
+ * Customers mapped to this bot — the same table live/viewer.ts uses to scope the
+ * Live page, so a push always matches what that customer can actually see (paper
+ * bots included: customers see Flame's paper ledger same as Spark's production one).
+ */
+async function customerIdsForBot(botName: string): Promise<string[]> {
+  const rows = await query<{ customer_id: string }>(
+    `SELECT customer_id FROM ironforge_customer_bots WHERE bot = $1`,
+    [botName],
+  )
+  return rows.map((r) => r.customer_id).filter((id): id is string => !!id)
+}
+
+/**
+ * Fire the trade_opened push. NEVER throws into the trade path — every failure
+ * (customer lookup, dispatch) is caught and logged here, not by the caller, exactly
+ * like mirrorOpenToCustomers/postFlameClose just above/below each call site.
+ */
+async function notifyTradeOpened(botName: string, positionId: string): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildTradeOpenedEvent({ bot: botName as LiveBot, positionId, occurredAt: new Date().toISOString() }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} trade_opened push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
+/** Fire the trade_closed push. Same never-throws contract as notifyTradeOpened. */
+async function notifyTradeClosed(botName: string, positionId: string, realizedPnl: number): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildTradeClosedEvent({
+        bot: botName as LiveBot,
+        positionId,
+        realizedPnl,
+        occurredAt: new Date().toISOString(),
+      }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} trade_closed push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
+/**
+ * Fire the big_move push (db-controls #202) when an open position's own MTM has
+ * swung past BIG_MOVE_PNL_PCT_THRESHOLD in either direction. Read-only: this
+ * computes its percentage from numbers the monitor loop already produced
+ * (unrealizedPnl, total_credit, the put strikes) and writes nothing to the
+ * position or any order — it rides alongside the position_snapshots write the
+ * same way notifyTradeOpened/Closed ride alongside the open/close paths. Same
+ * never-throws contract as those two.
+ */
+async function notifyBigMove(botName: string, pos: Record<string, any>, unrealizedPnl: number): Promise<void> {
+  if (!PUSH_BOTS.has(botName)) return
+  try {
+    const contracts = int(pos.contracts)
+    const totalCredit = num(pos.total_credit)
+    if (contracts <= 0 || !(totalCredit > 0)) return
+    const spreadWidth = num(pos.put_short_strike) - num(pos.put_long_strike)
+    const maxProfitDollars = contracts * totalCredit * 100
+    const riskDollars = contracts * (spreadWidth - totalCredit) * 100
+    const pnlPct = positionRangePct(unrealizedPnl, maxProfitDollars, riskDollars)
+    if (pnlPct == null || !bigMoveTier(pnlPct)) return
+    const customerIds = await customerIdsForBot(botName)
+    if (customerIds.length === 0) return
+    await dispatchToCustomers(
+      buildBigMoveEvent({
+        bot: botName as LiveBot,
+        positionId: String(pos.position_id),
+        pnlPct,
+        occurredAt: new Date().toISOString(),
+      }),
+      customerIds,
+    )
+  } catch (e) {
+    console.warn(`[scanner] ${botName.toUpperCase()} big_move push failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
 import {
   getQuote,
   getOptionExpirations,
@@ -46,6 +242,7 @@ import {
   isConfiguredAsync,
   placeIcOrderAllAccounts,
   canPlaceLiveOrders,
+  describeLiveGate,
   closeIcOrderAllAccounts,
   cancelSandboxOrder,
   getLoadedSandboxAccounts,
@@ -72,15 +269,48 @@ import {
   type IcMtmResult,
   getOptionQuote,
   getDailyHistory,
+  getCallSpreadEntryCredit,
+  placeCallSpreadOrderAllAccounts,
+  getGammaExposureComponents,
 } from './tradier'
+import {
+  getFlintMode,
+  getFlintMaxContracts,
+  getFlintGuardBuffer,
+  getFlintOtmOffset,
+  getFlintMinCredit,
+  computeFlintStrikes,
+  meetsFlintCreditFloor,
+  isFlintDayEligible,
+  isFlintGuardTriggered,
+  decideFlintContractsForCushion,
+  buildFlintDailyContextRow,
+  UNAVAILABLE_FLINT_GAMMA_CONTEXT,
+  getFlintFavorableUpsizeMode,
+  evaluateFlintGammaUpsize,
+  FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
+  type FlintGammaContext,
+} from './flint'
+import {
+  getFlameSkipWeekdays,
+  isWeekdayInSkipSet,
+  weekdayAbbrevFromDow,
+  weekdaySkipLogTag,
+} from './flame-skip'
 import { BOT_STARTING_CAPITAL } from './bot-capital'
 import { getTvMarketStructure, type TvMarketStructure } from './gex/trading-volatility-client'
 import { isAlertingKey, hedgeFlagged, stepStreaks, debouncedTransitions, ALERTING_SIGNAL_KEYS, classifySignalState, notifyDecision, type SignalStreak } from './volAlerts'
 import { ensureVolAlertsTable, upsertRegimeDaily, recordLadderTransitions, markNotifiedIfDue, touchEpisode, type SignalRead } from './volAlerts.server'
 import { sendVolAlertEmail } from './email'
-import { sendVolAlertSms } from './sms'
+import { sendVolAlertSms, sendOpsPush } from './sms'
 import { drainAttioSyncQueue, isAttioConfigured } from './attio'
+import { retryPendingModeration } from './community/store'
 import { drainCrmOutbox, requeuePhoneRejectedDeadLetters } from './crm/outbox'
+import { drainWaitlistDrip } from './waitlist-drip/drain'
+import { autoEnrollWaitlistDrip, autostartConfig } from './waitlist-drip/autostart'
+import { provisionObjectAttributes } from './crm/provision'
+import { isAttioConfigured as isAttioCrmConfigured } from './crm/client'
+import { isEmailConfigured, sendDailySummaryEmail } from './email'
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
@@ -107,8 +337,8 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
  * KINDLE's max_contracts:1 is its risk control.
  */
 /** SPARK's v2 sizing/gates (VIX cap 40, 0.7-SD credit walk-in floor, 30%-BP cap).
- * SPARK2 runs the identical ruleset on the second live account. KINDLE (retired)
- * intentionally never had these — its 1-contract ceiling was the risk control. */
+ * KINDLE (retired) intentionally never had these — its 1-contract ceiling was
+ * the risk control. */
 /** Regime-conditional BP caps for the SPARK v2 bots (2026-07-21).
  *  Percent-of-buying-power, NOT a contract count — size must scale with the
  *  account as it grows. Determinism comes from sizing off the full-width
@@ -120,13 +350,17 @@ const PRODUCTION_BOT_DTE = '1DTE' // Matches BOTS[] entry for PRODUCTION_BOT
 // in tradier.ts. These were two hand-copied pairs kept in sync by comment; they decide
 // how much real money enters a trade.
 import { SPARK_BP_CAP_POS, SPARK_BP_CAP_NEG } from './spark-sizing'
+import {
+  ebbLadderCapital, ebbLadderContracts, ebbRungUsd, formatEbbSizingLine, isEbbLadderBot, liquidityCappedLots,
+  EBB_LADDER_CAP, isEbbFavorableUpsizeMode, isEbbFavorableVixDay, ebbUpsizeExtraContractMaxLoss, evaluateEbbUpsizeCushion,
+} from './ebb-sizing'
 
 function isSparkV2Sizing(name: string): boolean {
-  return name === 'spark' || name === 'spark2'
+  return name === 'spark'
 }
 
 function isSparkStrategy(name: string): boolean {
-  return name === 'spark' || name === 'kindle' || name === 'spark2'
+  return name === 'spark' || name === 'kindle'
 }
 
 /**
@@ -144,10 +378,10 @@ function isSparkStrategy(name: string): boolean {
  * the 3-day stand-down after a stop-out (+64%), and the stand-down needs a
  * stop-out to trigger on. Removing the stop removes the trigger.
  *
- * SPARK2 and KINDLE keep the no-stop behavior — they are still 1DTE swings.
+ * KINDLE keeps the no-stop behavior — it is still a 1DTE swing.
  */
 function isNoStopBot(name: string): boolean {
-  return name === 'kindle' || name === 'spark2' || isSettleAtExpiryBot(name)
+  return name === 'kindle' || isSettleAtExpiryBot(name)
 }
 
 /**
@@ -167,7 +401,8 @@ function isNoStopBot(name: string): boolean {
  */
 
 /**
- * VIX DECAY GATE — the one regime filter that survived a blind OOS decade.
+ * VIX DECAY GATE — SPARK at 0.90 since 2026-09-02, FLAME at 0.80 since
+ * 2026-09-08 (see tryOpenFlamePutSpread).
  *
  *     ratio = VIX(prior session) / max(VIX over the 20 sessions before that)
  *
@@ -178,8 +413,16 @@ function isNoStopBot(name: string): boolean {
  * knowable at a 10:05 or 13:05 entry, and conditioning on it conditions on the
  * day's own outcome. Measured on EBB's PM stream: the same-day version paid
  * $+9.44/trade against the honest $+6.51 — the look-ahead was worth roughly
- * double. The AM tranche needs this gate MORE than the PM one: ungated it is
- * $+2.87/trade at t=+1.25 (no edge), gated $+6.23 at t=+2.44.
+ * double. The "AM tranche needs this gate more" line that used to sit here
+ * was measured on the WRONG AM structure (spot-1/$2 at 10:05). On the real
+ * SPARK cell (spot-2/$5) the gate's value is drawdown, not return.
+ *
+ * 🚨 FLAME'S CEILING IS 0.80, NOT SPARK'S 0.90. Honest-engine result
+ * 2026-09-08 (vault sessions/2026-09-07-honest-engine/flame_r1_r2_results.txt):
+ * gated at 0.80 FLAME makes $2,101/yr per lot vs $656 ungated, worst trade
+ * -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026, max drawdown 19% vs 69%
+ * ungated. 0.85 and 0.90 both fail for FLAME. Threshold is frozen at 0.80 —
+ * do not retune without a fresh honest-engine pass.
  *
  * 🚨 UNKNOWN BLOCKS. Too little history means the ratio is undefined and we do
  * NOT trade. A veto that degrades to always-on when its data is missing is worse
@@ -190,7 +433,22 @@ function isNoStopBot(name: string): boolean {
  * two that can disagree — but it does mean IronForge blocks if SpreadWorks stops
  * writing. Blocking is the safe direction.
  */
-const VIX_DECAY_CEILING = 0.90
+export const VIX_DECAY_CEILING = { spark: 0.90, flame: 0.80 } as const
+// A deliberately narrow, default-off live experiment.  This is NOT a global
+// retune of Flame's proven .80 regime: only the incremental (.80, .925] days
+// use the stricter admission and credit rules below.  If any confirmation data
+// is unavailable, the incremental day is skipped.
+const FLAME_HEADLINE_VIX_CEILING = 0.925
+const FLAME_HEADLINE_MIN_CREDIT = 0.20
+// SPARK's own D1 relaxed band top (PREREG_dynamic_relax_flame_spark.md:
+// BAND["S"] = (0.90, 0.975]). Only ever used to widen vixDecayCheck's
+// ceiling when SPARK_V2_TRAILING_BAND_MODE === 'live' — see flame-v2/flags.ts
+// and flame-v2/engine.ts sparkTrailingBandDecision.
+const SPARK_V2_RELAXED_VIX_CEILING = 0.975
+
+function isFlameHeadline0925Mode(): boolean {
+  return process.env.FLAME_HEADLINE_0925_LIVE === 'true'
+}
 const VIX_DECAY_WINDOW = 20
 const VIX_DECAY_MIN_HISTORY = VIX_DECAY_WINDOW + 1
 
@@ -251,7 +509,19 @@ async function ensureVixHistory(asofDate: string): Promise<void> {
   }
 }
 
-async function vixDecayBlock(asofDate: string): Promise<string | null> {
+/** Full detail behind a vixDecayBlock verdict — reason plus the raw numbers
+ *  that produced it, so callers that want to log the ratio (FLAME) don't have
+ *  to re-run the query. `ratio`/`prior`/`windowMax` are null whenever `reason`
+ *  came from a data problem (unavailable/unknown/bad window) rather than the
+ *  ratio itself clearing or missing the ceiling. */
+export type VixDecayCheck = {
+  reason: string | null
+  ratio: number | null
+  prior: number | null
+  windowMax: number | null
+}
+
+export async function vixDecayCheck(asofDate: string, ceiling: number): Promise<VixDecayCheck> {
   await ensureVixHistory(asofDate)
   let rows: Array<Record<string, unknown>>
   try {
@@ -262,20 +532,133 @@ async function vixDecayBlock(asofDate: string): Promise<string | null> {
     )
   } catch (e) {
     // A missing table or an unreachable DB must BLOCK, never wave the trade through.
-    return `vix_unavailable(${e instanceof Error ? e.message.slice(0, 60) : 'error'})`
+    return {
+      reason: `vix_unavailable(${e instanceof Error ? e.message.slice(0, 60) : 'error'})`,
+      ratio: null, prior: null, windowMax: null,
+    }
   }
   if (rows.length < VIX_DECAY_MIN_HISTORY) {
-    return `vix_unknown(have=${rows.length} need=${VIX_DECAY_MIN_HISTORY})`
+    return { reason: `vix_unknown(have=${rows.length} need=${VIX_DECAY_MIN_HISTORY})`, ratio: null, prior: null, windowMax: null }
   }
   const prior = num(rows[0].vix)
   let windowMax = 0
   for (let i = 1; i < rows.length; i++) windowMax = Math.max(windowMax, num(rows[i].vix))
-  if (!(windowMax > 0) || !(prior > 0)) return 'vix_bad_window'
+  if (!(windowMax > 0) || !(prior > 0)) return { reason: 'vix_bad_window', ratio: null, prior, windowMax }
   const ratio = prior / windowMax
-  if (ratio > VIX_DECAY_CEILING) {
-    return `vix_elevated(${ratio.toFixed(3)}>${VIX_DECAY_CEILING.toFixed(2)})`
+  if (ratio > ceiling) {
+    return { reason: `vix_elevated(${ratio.toFixed(3)}>${ceiling.toFixed(2)})`, ratio, prior, windowMax }
   }
-  return null
+  return { reason: null, ratio, prior, windowMax }
+}
+
+async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string | null> {
+  return (await vixDecayCheck(asofDate, ceiling)).reason
+}
+
+/**
+ * Returns whether the most recently completed SPY session closed above the
+ * session before it.  This is intentionally based only on completed daily
+ * bars before `asofDate`; an unavailable or incomplete history returns null
+ * so headline-only entries fail closed.
+ */
+async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
+  try {
+    const history = await getDailyHistory('SPY', 10)
+    const completed = history
+      .filter((bar) => typeof bar.date === 'string' && bar.date < asofDate && Number.isFinite(bar.close))
+      .sort((a, b) => b.date.localeCompare(a.date))
+    if (completed.length < 2) return null
+    return completed[0].close > completed[1].close
+  } catch (e) {
+    console.warn(`[scanner] FLAME headline prior-SPY gate unavailable: ${e instanceof Error ? e.message : String(e)}`)
+    return null
+  }
+}
+
+/**
+ * FLAME v2 D2 regime-brain features, built ONLY from completed daily history
+ * strictly before `asofDate` — the exact live-data counterpart of
+ * signal_on_flame_spark.py's `daily_features()` (see that file's header,
+ * 2026-xx, D2 section). Every field is either a value from a session
+ * strictly before today (SPY closes) or already-lagged VIX-family data.
+ * Returns null on any missing/short history — the caller
+ * (flameRegimeBrainDecision) fails that straight to "features_unavailable_
+ * fallback_R0", never guesses a feature.
+ *
+ *   vix_level   = prior session's VIX close (vix_l)
+ *   vix_1y_pct  = percentile rank of vix_level within its own trailing
+ *                 <=252-session window (min 60) — (count(w<=latest)/n)*100
+ *   vix_20d_chg = vix_level(t) - vix_level(t-20), both prior-day values
+ *   ts_ratio_l  = prior-day VIX / prior-day VIX3M (contango <1, backwardation
+ *                 >1) — the live reconstruction of bt_spy's ts_ratio_l column;
+ *                 this webapp has no direct read into the warehouse, so this
+ *                 is the standard VIX/VIX3M ratio convention already used
+ *                 elsewhere in this file (market-brief.ts, volatility.ts).
+ *                 Verify against bt_spy.ts_ratio_l before fully trusting the
+ *                 LIVE regime-brain decision on a new deploy.
+ *   ret20/ret60 = SPY pct-change over the 20/60 sessions ending at the most
+ *                 recently COMPLETED session before asofDate (yesterday's
+ *                 close vs. 20/60 sessions earlier) — never today's own.
+ *   above_50dma = 1 if that same completed close is above the 50-session SMA
+ *                 ending there, else 0.
+ */
+async function buildFlameD2Features(asofDate: string): Promise<D2Features | null> {
+  try {
+    const [vixHist, vix3mHist, spyHist] = await Promise.all([
+      getDailyHistory('VIX', 280),
+      getDailyHistory('VIX3M', 280),
+      getDailyHistory('SPY', 130),
+    ])
+    const closedAsc = (hist: { date: string; close: number }[]) =>
+      hist
+        .filter((h) => typeof h.date === 'string' && h.date < asofDate && Number.isFinite(h.close) && h.close > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+
+    const vixClosed = closedAsc(vixHist)
+    const vix3mClosed = closedAsc(vix3mHist)
+    const spyClosed = closedAsc(spyHist)
+
+    if (vixClosed.length < 60 || vix3mClosed.length < 1 || spyClosed.length < 61) return null
+
+    const vixLevel = vixClosed[vixClosed.length - 1].close
+    const vix3mL = vix3mClosed[vix3mClosed.length - 1].close
+    const tsRatioL = vix3mL > 0 ? vixLevel / vix3mL : NaN
+
+    const window = vixClosed.slice(-252).map((h) => h.close)
+    const vix1yPct = (window.filter((v) => v <= vixLevel).length / window.length) * 100
+
+    const vix20dChg = vixClosed.length >= 21
+      ? vixLevel - vixClosed[vixClosed.length - 21].close
+      : NaN
+
+    const closes = spyClosed.map((h) => h.close)
+    const last = closes[closes.length - 1]
+    const ret20 = closes.length >= 21 ? last / closes[closes.length - 21] - 1 : NaN
+    const ret60 = closes.length >= 61 ? last / closes[closes.length - 61] - 1 : NaN
+    const sma50 = closes.slice(-50).reduce((a, b) => a + b, 0) / 50
+    const above50dma = last > sma50 ? 1 : 0
+
+    const features: D2Features = { vixLevel, vix1yPct, vix20dChg, tsRatioL, ret20, ret60, above50dma }
+    if (!Object.values(features).every((v) => Number.isFinite(v))) return null
+    return features
+  } catch (e) {
+    console.warn('[flame-v2] buildFlameD2Features failed (fail-closed, null features):', e)
+    return null
+  }
+}
+
+/**
+ * The SAME ratio FLAME's own VIX decay gate computes (prior VIX close / max
+ * VIX close of the 20 sessions before), exposed so tradier.ts's production
+ * ladder can evaluate the EBB favorable-day upsize (EBB_FAVORABLE_UPSIZE)
+ * for TODAY without re-deriving the gate math. Pure re-read of the already-
+ * synced sw_vix_daily table — same inputs, same ceiling, so this returns the
+ * identical number the paper path's tryOpenFlamePutSpread just computed on
+ * this same scan tick.
+ */
+export async function getFlameVixRatioForUpsize(): Promise<number | null> {
+  const asofDate = getCentralTime().toISOString().slice(0, 10)
+  return (await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)).ratio
 }
 
 /**
@@ -289,13 +672,10 @@ async function vixDecayBlock(asofDate: string): Promise<string | null> {
  * constant as a VALUE (spark_* tables) — those are intentionally NOT changed.
  */
 function isProductionBot(name: string): boolean {
-  // spark2 REMOVED 2026-07-21 (operator): it is now a genuine paper bot.
-  // It had been routing real orders while the customer Live page labelled it
-  // PAPER with a $10,000 simulated balance -- and the real account could not
-  // fund even one contract, so it skipped `production_only_no_fills` on every
-  // scan from 2026-07-17 (301/370, then 319/388, then 73/73) while the page
-  // told the customer it was "looking for an opportunity". It now trades its
-  // own paper ledger and the page tells the truth.
+  // 🚨 Everything listed here routes REAL orders. A bot on this allowlist whose
+  // customer Live page says PAPER is a live-money lie -- that exact mismatch
+  // shipped once and ran for days behind a simulated balance the page kept
+  // showing. Adding a name here without flipping its page is not a cosmetic bug.
   //
   // KINDLE stays listed even though it is RETIRED, and that is deliberate. Being here
   // does NOT mean it trades: it was removed from the BOTS roster, so no scan ever
@@ -361,7 +741,7 @@ const _lastSandboxPlacedAt: Record<string, number> = {}
 // MUST be mirrored in dteMode() in lib/db.ts — when the two disagree the API
 // reads one row while the scanner runs off another, which is exactly how FLAME
 // ended up silently running DEFAULT_CONFIG.
-const BOTS = [
+export const BOTS = [
   { name: 'flame', dte: '0DTE', minDte: 0 },
   // SPARK moved 1 DTE -> 5 DTE on 2026-08-10. The 1DTE condor had no edge on real
   // fills (972-cell sweep: best-on-train -$5.13/ct out-of-sample, 37% of cells
@@ -371,14 +751,8 @@ const BOTS = [
   // strategy's history from the dead one — the old '1DTE' rows stay where they are.
   { name: 'spark', dte: '0DTE', minDte: 0 },
   { name: 'inferno', dte: '0DTE', minDte: 0 },
-  // SPARK2 (2026-07-13, replaces KINDLE): SPARK's FULL v2 strategy AND sizing
-  // (830 entry, $5 wings, $0.25 credit walk-in, tier 40/35/30, VIX cap 40,
-  // 30%-BP cap) on the SECOND live account (ex-KINDLE 6YB***95) — own tables/
-  // config/creds (TRADIER_SPARK2_* env, fallback TRADIER_KINDLE_*), physically
-  // isolated from SPARK's Iron Viper account. Born paused. KINDLE is RETIRED:
-  // removed from this roster (never scans/trades again); its tables, pages and
-  // history remain readable.
-  { name: 'spark2', dte: '1DTE', minDte: 1 },
+  // KINDLE is RETIRED: removed from this roster (never scans/trades again);
+  // its tables, pages and history remain readable.
   // FORGE (2026-08-10) -- the three-market condor. SHIPS DISARMED.
   //
   // Same 7 DTE condor run on SPY + QQQ + IWM at once, one account split three
@@ -487,9 +861,9 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // the risk control and the validated structure (registry #23b, #49r). Anyone
   // "restoring" a $10 wing here would be applying the old strategy's finding to a
   // different trade. The old text is in git history if it is ever needed.
-  // 🚨 EBB AM TRANCHE (2026-08-16). Same structure as FLAME, entry 10:05-10:20 CT.
-  // The AM tranche needs the VIX decay gate MORE than the PM one: ungated it is
-  // +$2.87/trade (t=+1.25, no edge), gated +$6.23 (t=+2.44).
+  // 🚨 EBB AM TRANCHE (2026-08-16). Entry 10:05-10:20 CT; structure comes from
+  // botStructure() (spot-2 / $5 since 8/27). The VIX decay gate applies to
+  // SPARK only (9/2): it halves SPARK's drawdown and does nothing for FLAME.
   // starting_capital 5000 is the AM rung of the sizing ladder (29% drawdown).
   spark:   { sd: 2.01, pt_pct: 1.0, sl_mult: 9999, entry_start: 1005, entry_end: 1020, max_trades: 1, max_contracts: 1, bp_pct: 0.20, starting_capital: BOT_STARTING_CAPITAL.spark, min_credit: 0.10, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
   inferno: { sd: 1.0, pt_pct: 1.0, sl_mult: 10.0, entry_start: 830, entry_end: 1430, max_trades: 0, max_contracts: 9999, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.15, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
@@ -507,15 +881,6 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // — is the fix; $2 wings retained for cold-start survivability (one max-loss day
   // is -$179, leaving room to keep trading; $3+ wings can lock up the account).
   kindle:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 1300, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.85, starting_capital: 490, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 2, min_credit_pct_width: 0.09, standdown_days: 0, skip_neg_gamma: true, fixed_strike_placement: false },
-  // SPARK2: byte-identical to SPARK's v2 config (full sizing rules incl. the
-  // 30%-BP cap + VIX 40 + 0.7-SD walk-in floor via the isSparkV2Sizing sites).
-  // starting_capital is the PAPER seed — it is what syncSandboxCapital() writes
-  // to spark2_paper_account every cycle, so it is the number the customer Live
-  // page shows. Raised 500 -> 10000 on 2026-07-21 per the operator: spark2 is a
-  // paper account and paper capital is arbitrary, so it uses the same $10k house
-  // default as the other paper bots. (The old 500 was inherited from KINDLE and
-  // rendered $500 - $208 = $292.) Any manual edit to that row is pointless —
-  // change it HERE or the scanner syncs it straight back.
   // FORGE -- see the BOTS entry. bp_pct 0.80 is the TOTAL across all three
   // books; each book gets one third and may NOT borrow from the others, because
   // independent margin pools are what keep the drawdowns independent.
@@ -532,7 +897,6 @@ const DEFAULT_CONFIG: Record<string, BotConfig> = {
   // min_credit 0.25 is a sanity floor only: median credit at $10 wings is ~$0.95.
   // standdown_days 1 fires on a LOSING TRADE (there is no stop to fire on).
   forge:   { sd: 2.10, pt_pct: 1.0, sl_mult: 3.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 1, bp_pct: 0.80, starting_capital: 5000, min_credit: 0.05, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: true },
-  spark2:  { sd: 1.2, pt_pct: 0.30, sl_mult: 2.0, entry_start: 830, entry_end: 1400, max_trades: 1, max_contracts: 0, bp_pct: 0.85, starting_capital: 10000, min_credit: 0.25, eod_cutoff_hhmm_ct: 1445, trailing_retrace_dollars: 0.05, wing_width: 5, min_credit_pct_width: 0, standdown_days: 0, skip_neg_gamma: false, fixed_strike_placement: false },
 }
 
 /**
@@ -586,6 +950,46 @@ function forgeWingWidth(equity: number): number {
  *  is code-controlled). */
 type NumericConfigKey = { [K in keyof BotConfig]: BotConfig[K] extends number ? K : never }[keyof BotConfig]
 
+/**
+ * 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) hold to the close — no
+ * intraday profit target, no stop. A stale production config row (pt 30 / sl 100)
+ * re-enabled both on FLAME and closed a live trade early for -$32. DB
+ * profit_target_pct / stop_loss_pct are ignored for these bots; the code values win.
+ */
+function pinEbbExitConfig(botName: string, merged: BotConfig): void {
+  if (!isSettleAtExpiryBot(botName)) return
+  const d = DEFAULT_CONFIG[botName]
+  if (merged.pt_pct !== d.pt_pct || merged.sl_mult !== d.sl_mult) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB exit override ignored (pt=${merged.pt_pct}, sl=${merged.sl_mult}) — ` +
+      `EBB holds to expiry; using code pt=${d.pt_pct} sl=${d.sl_mult}`,
+    )
+  }
+  merged.pt_pct = d.pt_pct
+  merged.sl_mult = d.sl_mult
+  // The validated entry window is part of the strategy, not a tunable (2026-10-02
+  // audit: a stale row set FLAME entry_end 1400, letting live FLAME enter anywhere
+  // 13:05-14:00 CT instead of 13:05-13:10).
+  if (merged.entry_start !== d.entry_start || merged.entry_end !== d.entry_end) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB entry-window override ignored ` +
+      `(${merged.entry_start}-${merged.entry_end}) — using code ${d.entry_start}-${d.entry_end} CT`,
+    )
+  }
+  merged.entry_start = d.entry_start
+  merged.entry_end = d.entry_end
+  // Paper seed is the product tier (FLAME $2,000 / SPARK $5,000, bot-capital.ts).
+  // A stale row had FLAME at $5,000, overstating paper % returns 2.5x. Production
+  // ledgers are seeded from broker equity and never read this value.
+  if (merged.starting_capital !== d.starting_capital) {
+    console.warn(
+      `[scanner] ${botName.toUpperCase()} DB starting_capital override ignored ` +
+      `($${merged.starting_capital}) — using code $${d.starting_capital}`,
+    )
+  }
+  merged.starting_capital = d.starting_capital
+}
+
 /** DB column → config key mapping (with optional transform) */
 const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number) => number }> = {
   sd_multiplier:        { key: 'sd' },
@@ -600,8 +1004,8 @@ const DB_TO_CFG: Record<string, { key: NumericConfigKey; transform?: (v: number)
   // spread_width -> wing_width. Previously UNMAPPED: the column existed, accepted
   // writes, and was silently ignored while the code constant won. That is how an
   // operator ends up believing they changed the wing width when they did not.
-  // Every bot's stored row already equals its code default (flame/spark/inferno/
-  // spark2 = 5, kindle = 2), so wiring it changes NO current behaviour.
+  // Every bot's stored row already equals its code default (flame/spark/inferno
+  // = 5, kindle = 2), so wiring it changes NO current behaviour.
   spread_width:         { key: 'wing_width' },
 }
 
@@ -669,6 +1073,7 @@ async function loadConfigOverrides(): Promise<void> {
         const [h, m] = entryEndStr.split(':').map(Number)
         if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
       }
+      pinEbbExitConfig(bot.name, merged)
 
       // eod_cutoff_et is a "HH:MM" string in CENTRAL time. The `_et` suffix is a
       // legacy misnomer — all IronForge times are CT (matching entry_end above),
@@ -764,6 +1169,7 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
       const [h, m] = entryEndStr.split(':').map(Number)
       if (!isNaN(h) && !isNaN(m)) merged.entry_end = h * 100 + m
     }
+    pinEbbExitConfig(bot.name, merged)
     // eod_cutoff_et is Central time (legacy `_et` name); parsed as-is, no shift.
     const eodCtStr = row.eod_cutoff_et
     if (eodCtStr && typeof eodCtStr === 'string' && eodCtStr.includes(':')) {
@@ -818,6 +1224,7 @@ async function syncPaperAccountCapital(): Promise<void> {
                  current_balance = $2,
                  buying_power = $3,
                  high_water_mark = GREATEST(high_water_mark, $2),
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, 0), $1, $2),
                  updated_at = NOW()
              WHERE id = $4`,
             [target, newBalance, newBp, rows[0].id],
@@ -839,14 +1246,36 @@ async function syncPaperAccountCapital(): Promise<void> {
       )
       for (const pa of prodRows) {
         try {
-          const target = await getAllocatedCapitalForAccount(pa.person, 'production')
+          const alloc = await getAllocatedCapitalForAccount(pa.person, 'production')
+
+          // 🚨 null = the broker did not answer, or this person has no credential
+          // anywhere. SKIP — do NOT write. Until 2026-08-31 this call could not
+          // return null: it fabricated $10,000 and the sync wrote it straight over
+          // FLAME's production ledger, which had been seeded from the real Tradier
+          // equity of ~$4.2k. The customer's equity curve then read $10,178.
+          // A ledger seeded from a verified number must outrank a guess.
+          if (!alloc) {
+            console.warn(
+              `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNC SKIPPED (${pa.person}): ` +
+              `broker capital unreadable — keeping starting_capital=$${num(pa.starting_capital).toLocaleString()} as seeded. ` +
+              `Re-seed with POST /api/${bot.name}/seed-production-ledger if it is genuinely wrong.`,
+            )
+            continue
+          }
+
+          // A production row MIRRORS a real account, so current_balance must equal
+          // broker equity and the basis is equity MINUS the P&L already realized in
+          // it — the same reconciliation seed-production-ledger uses. The old code
+          // set starting_capital = equity and then balance = equity + pnl, which
+          // double-counted every closed trade on each successful read.
+          const pnl = num(pa.cumulative_pnl)
+          const collateral = num(pa.collateral_in_use)
+          const target = Math.round((alloc.allocated - pnl) * 100) / 100
           const current = num(pa.starting_capital)
           if (Math.abs(current - target) < 1) continue
 
-          const pnl = num(pa.cumulative_pnl)
-          const collateral = num(pa.collateral_in_use)
-          const newBalance = target + pnl
-          const newBp = newBalance - collateral
+          const newBalance = Math.round((target + pnl) * 100) / 100
+          const newBp = Math.round((newBalance - collateral) * 100) / 100
 
           await query(
             `UPDATE ${botTable(bot.name, 'paper_account')}
@@ -854,6 +1283,7 @@ async function syncPaperAccountCapital(): Promise<void> {
                  current_balance = $2,
                  buying_power = $3,
                  high_water_mark = GREATEST(high_water_mark, $2),
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, 0), $1, $2),
                  updated_at = NOW()
              WHERE id = $4`,
             [target, newBalance, newBp, pa.id],
@@ -861,7 +1291,8 @@ async function syncPaperAccountCapital(): Promise<void> {
           console.log(
             `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNCED (${pa.person}): ` +
             `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
-            `(balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+            `(broker equity=$${alloc.equity.toLocaleString()} via ${alloc.source} creds, pct=${alloc.pct}%, ` +
+            `realized=$${pnl.toLocaleString()}, balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
           )
         } catch { /* non-critical — sandbox is the primary account */ }
       }
@@ -1113,6 +1544,13 @@ function hasWorkingEntryOrder(
  */
 function getSlidingProfitTarget(ct: Date, basePt: number, botName: string): [number, string] {
   if (botName === 'inferno') return [1.0, 'HOLD_TO_EOD']
+  // 🚨 2026-10-02: EBB settle-at-expiry bots (FLAME, SPARK) NEVER take an intraday
+  // profit target, whatever the DB says. A production config row overrode FLAME's
+  // pt_pct 1.0 → 0.30; the AFTERNOON tier turned that into a 15% target, the PT
+  // close's debit limit was rejected, the cascade fell back to market legs and a
+  // 4-lot $0.22 credit spread was bought back for $0.30 (-$32) at ~1:50 PM CT
+  // (FLAME-SPY-20261002-Y7RZKZ). Code-controlled, like the SPARK tier shape below.
+  if (isSettleAtExpiryBot(botName)) return [1.0, 'HOLD_TO_EOD']
 
   // basePt >= 1.0 is the engine's OFF switch for the profit target, and it must
   // stay off all day. Before 2026-08-10 only the MORNING tier honored it: the
@@ -1400,12 +1838,92 @@ async function monitorPosition(bot: BotDef, ct: Date): Promise<{ status: string;
       console.error(`[scanner] ${bot.name.toUpperCase()}: position monitor error:`, r.reason)
     }
   }
+
+  // ── Per-position mark, for the per-trade chart (UX-002/003) ────────────────
+  //
+  // The aggregate equity snapshot written later in the scan sums every open
+  // position, so a chart per trade cannot be recovered from it. This records each
+  // position's own mark in its own table — nothing existing reads it, so nothing
+  // existing can be double-counted by it.
+  //
+  // 🚨 ONLY for a position that is still open AND whose mark actually succeeded.
+  // monitorSinglePosition returns unrealizedPnl: 0 both when a position closes and
+  // when the mark-to-market FAILS. Writing that 0 would draw a trade diving to
+  // breakeven on a minute when the quote feed simply blinked — the same phantom the
+  // "null means quotes unavailable, never $0.00" rule exists to prevent. A gap in
+  // the line is honest; an invented zero is not.
+  //
+  // Best-effort throughout: this is a chart, and it must never be able to disturb
+  // the trading loop it rides along with.
+  await Promise.allSettled(
+    results.map(async (r, i) => {
+      if (r.status !== 'fulfilled') return
+      const st = r.value.status
+      if (!st.startsWith('monitoring') || st.includes('mtm_failed')) return
+      const pos = positions[i]
+      if (!pos?.position_id) return
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'position_snapshots')}
+           (position_id, unrealized_pnl, dte_mode, person, account_type)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            String(pos.position_id),
+            r.value.unrealizedPnl,
+            bot.dte,
+            pos.person ?? null,
+            pos.account_type ?? 'sandbox',
+          ],
+        )
+      } catch (e) {
+        console.warn(
+          `[scanner] ${bot.name.toUpperCase()}: position snapshot write failed for ` +
+            `${pos.position_id}:`,
+          e,
+        )
+      }
+      // db-controls #202 — "big moves on an open trade". Independent of the
+      // snapshot write above (never gated on it succeeding) and NEVER awaited
+      // (fire-and-forget, same contract as notifyTradeOpened/Closed below) —
+      // notifyBigMove already catches everything internally, but `void` here
+      // is what guarantees a slow push/DB call cannot add latency to this
+      // monitor cycle, on top of that.
+      void notifyBigMove(bot.name, pos, r.value.unrealizedPnl)
+    }),
+  )
+
   return { status: anyAction, unrealizedPnl: totalUnrealized }
 }
 
 async function monitorSinglePosition(
   bot: BotDef, ct: Date, pos: Record<string, any>,
 ): Promise<{ status: string; unrealizedPnl: number }> {
+  // ── AN EXPIRED CONTRACT IS SETTLED, NOT TRADED ────────────────────────────
+  //
+  // 🚨 2026-08-22: SPARK-SPY-20260821-R4K55H opened Fri 10:05 CT, expired that
+  // afternoon, and was STILL `open` on Saturday — spraying one fresh close order
+  // per minute (37455483 … 37456466, a different id every cycle). With max 1
+  // concurrent position that stranded SPARK completely: 1 trade all week against
+  // FLAME's 9, which reads like a losing strategy and is actually a stuck bot.
+  //
+  // The loop is two branches fighting:
+  //   1. close placed -> Tradier returns no fill -> DEFER, store pending state
+  //   2. next cycle, past EOD -> CANCEL the pending order, clear the state,
+  //      fall through to the EOD market close -> which re-places -> (1)
+  // Neither can win, because a 0DTE that already expired cannot be filled at any
+  // price. The runbook says so outright: "0DTE options can't be closed after
+  // ~2:45 PM CT. They auto-expire at settlement."
+  //
+  // settleExpiredPositions() already owns exactly this row (`status='open' AND
+  // expiration <= today`) and books it on intrinsic. So once the contract is at
+  // or past expiry and the session is done, monitoring must get out of the way
+  // rather than keep trading a contract that no longer exists.
+  const monExp = pos.expiration?.toISOString?.()?.slice(0, 10)
+    || String(pos.expiration).slice(0, 10)
+  const monToday = ct.toISOString().slice(0, 10) // same derivation settleExpiredPositions uses
+  if (monExp && (monExp < monToday || (monExp === monToday && ctHHMM(ct) >= 1500))) {
+    return { status: 'awaiting_settlement', unrealizedPnl: 0 }
+  }
   // Exit thresholds (stop loss, profit target, EOD cutoff, trailing) MUST come
   // from the position's OWN account config. cfg(bot) only ever holds the
   // SANDBOX/paper row — loadConfigOverrides() filters account_type='sandbox',
@@ -1585,13 +2103,14 @@ async function monitorSinglePosition(
                 ],
               )
             } catch { /* log failure must not block close */ }
-            await closePosition(bot, pid, ticker, expiration,
+            const tlOutcome = await closePosition(bot, pid, ticker, expiration,
               num(pos.put_short_strike), num(pos.put_long_strike),
               num(pos.call_short_strike), num(pos.call_long_strike),
               contracts, entryCredit, collateral, 'trailing_lockin', cclLast,
               'debit', marketablePrice)
             _mtmFailureCounts.delete(pid)
-            return { status: `closed:trailing_lockin@${cclLast.toFixed(4)}`, unrealizedPnl: 0 }
+            return reportClose(bot, pid, tlOutcome, 'trailing_lockin',
+              `trailing_lockin@${cclLast.toFixed(4)}`)
           }
           } // end of tier-floor-guard else branch
         }
@@ -1919,7 +2438,10 @@ async function monitorSinglePosition(
             // Use closePosition with orderType='debit' — same path the initial
             // PT trigger uses.
             try {
-              await closePosition(
+              // Expected outcome here is 'deferred' — a fresh debit limit that has not
+              // filled yet. 'failed' means the reprice never reached the broker, and the
+              // stamping below would then be decorating a pending JSON that did not move.
+              const repriceOutcome = await closePosition(
                 bot, pid, ticker, expiration,
                 num(pos.put_short_strike), num(pos.put_long_strike),
                 num(pos.call_short_strike), num(pos.call_long_strike),
@@ -1927,6 +2449,13 @@ async function monitorSinglePosition(
                 `${pendingInfo._pending_reason ?? 'profit_target'}_slippage_reprice`,
                 aggressivePrice, 'debit', aggressivePrice,
               )
+              if (repriceOutcome === 'failed') {
+                console.warn(
+                  `[scanner] ${bot.name.toUpperCase()} ${pid}: slippage reprice to ` +
+                  `$${aggressivePrice.toFixed(4)} DID NOT reach the broker — the pending ` +
+                  `close is unchanged and the old limit still stands.`,
+                )
+              }
               // Stamp the running reprice counter onto the freshly-written
               // pending JSON. closePosition writes its own _slippage_reprice_count=0
               // implicitly via spread {...sandboxCloseInfo}; we merge the carried
@@ -2012,9 +2541,10 @@ async function monitorSinglePosition(
                 if (rowsAffected > 0) {
                   // Route paper_account update based on position's account_type
                   if (posAccountType === 'production') {
-                    await query(
+                    const creditedPending = await dbExecute(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
                        SET current_balance = current_balance + $1,
+                           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                            cumulative_pnl = cumulative_pnl + $1,
                            total_trades = total_trades + 1,
                            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2023,10 +2553,12 @@ async function monitorSinglePosition(
                        WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
                       [realizedPnl, collateral, posPerson, bot.dte],
                     )
+                    warnIfNoProductionLedger(bot.name, 'close', creditedPending, posPerson, bot.dte, realizedPnl)
                   } else {
                     await query(
                       `UPDATE ${botTable(bot.name, 'paper_account')}
                        SET current_balance = current_balance + $1,
+                           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                            cumulative_pnl = cumulative_pnl + $1,
                            total_trades = total_trades + 1,
                            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2047,6 +2579,16 @@ async function monitorSinglePosition(
                   console.log(`[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE COMPLETE ${pid}: $${realizedPnl.toFixed(2)} [${closeReason}] (fill=$${fill.toFixed(4)})`)
                 }
                 _mtmFailureCounts.delete(pid)
+                // The guard above wraps the BOOKING, but this return used to sit
+                // outside it — so a 0-row UPDATE (already closed by another path)
+                // still reported `closed:deferred_fill`. Report what the row did.
+                if (rowsAffected === 0) {
+                  console.warn(
+                    `[scanner] ${bot.name.toUpperCase()} DEFERRED CLOSE ${pid}: fill arrived ` +
+                    `($${fill.toFixed(4)}) but the UPDATE matched 0 rows — nothing was booked.`,
+                  )
+                  return { status: `close_failed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
+                }
                 return { status: `closed:deferred_fill@${fill.toFixed(4)}`, unrealizedPnl: 0 }
               } else {
                 // Re-poll returned no fill — check if broker position even exists anymore.
@@ -2212,9 +2754,10 @@ async function monitorSinglePosition(
                   )
                   if (rowsAffected > 0) {
                     if (posAccountType === 'production') {
-                      await query(
+                      const creditedPending = await dbExecute(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
                          SET current_balance = current_balance + $1,
+                             high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                              cumulative_pnl = cumulative_pnl + $1,
                              total_trades = total_trades + 1,
                              collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2223,10 +2766,12 @@ async function monitorSinglePosition(
                          WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
                         [realizedPnl, collateral, posPerson, bot.dte],
                       )
+                      warnIfNoProductionLedger(bot.name, 'close', creditedPending, posPerson, bot.dte, realizedPnl)
                     } else {
                       await query(
                         `UPDATE ${botTable(bot.name, 'paper_account')}
                          SET current_balance = current_balance + $1,
+                             high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                              cumulative_pnl = cumulative_pnl + $1,
                              total_trades = total_trades + 1,
                              collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2359,21 +2904,25 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
+    // A THROW is not the only way this fails. The retry below covers the exception
+    // path; `fcOutcome` covers the quieter one where closePosition returns normally
+    // without having moved the row.
+    let fcOutcome: CloseOutcome = 'failed'
     try {
-      await closePosition(bot, pid, ticker, expiration,
+      fcOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, reason)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       console.warn(`[scanner] ${bot.name.toUpperCase()}: Force-close failed, retrying at entry credit: ${msg}`)
-      await closePosition(bot, pid, ticker, expiration,
+      fcOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, reason, entryCredit)
     }
     _mtmFailureCounts.delete(pid) // Clear on close
-    return { status: `closed:${reason}`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, fcOutcome, reason, reason)
   }
 
   // Get MTM
@@ -2498,12 +3047,13 @@ async function monitorSinglePosition(
           ],
         )
       } catch { /* log failure must not block close */ }
-      await closePosition(bot, pid, ticker, expiration,
+      const dfOutcome = await closePosition(bot, pid, ticker, expiration,
         num(pos.put_short_strike), num(pos.put_long_strike),
         num(pos.call_short_strike), num(pos.call_long_strike),
         contracts, entryCredit, collateral, 'data_feed_failure', entryCredit)
       _mtmFailureCounts.delete(pid)
-      return { status: `closed:data_feed_failure(${failCount})`, unrealizedPnl: 0 }
+      return reportClose(bot, pid, dfOutcome, 'data_feed_failure',
+        `data_feed_failure(${failCount})`)
     }
 
     return { status: `monitoring:mtm_failed(${failCount}/${MAX_CONSECUTIVE_MTM_FAILURES})`, unrealizedPnl: 0 }
@@ -2583,12 +3133,16 @@ async function monitorSinglePosition(
     const CROSS_ASK_OFFSET = 0.01
     const askCrossPrice = Math.max(0, Math.round((costToClose + CROSS_ASK_OFFSET) * 10000) / 10000)
     const initialLimitPrice = Math.min(profitTargetPrice, askCrossPrice)
-    await closePosition(bot, pid, ticker, expiration,
+    // A DEBIT LIMIT usually DEFERS on the first pass — the order is live and the fill
+    // is pending. That is `pending_close:`, not `closed:` and not a failure; the
+    // pending-close branch above re-polls it next cycle.
+    const ptOutcome = await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, `profit_target_${ptTier}`, costToCloseLast,
       'debit', initialLimitPrice)
-    return { status: `closed:profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, ptOutcome, `profit_target_${ptTier}`,
+      `profit_target@${costToCloseLast.toFixed(4)}(${ptTier})`)
   }
 
   // SWING HOLD (2026-07-14): past the 14:45 CT cutoff on a NON-expiry day.
@@ -2622,21 +3176,23 @@ async function monitorSinglePosition(
           ],
         )
       } catch { /* log failure must not block close */ }
+      let sgOutcome: CloseOutcome = 'failed'
       try {
-        await closePosition(bot, pid, ticker, expiration,
+        sgOutcome = await closePosition(bot, pid, ticker, expiration,
           num(pos.put_short_strike), num(pos.put_long_strike),
           num(pos.call_short_strike), num(pos.call_long_strike),
           contracts, entryCredit, collateral, 'eod_cutoff', costToClose)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err)
         console.warn(`[scanner] ${bot.name.toUpperCase()}: Swing green-bank close failed, retrying at entry credit: ${msg}`)
-        await closePosition(bot, pid, ticker, expiration,
+        sgOutcome = await closePosition(bot, pid, ticker, expiration,
           num(pos.put_short_strike), num(pos.put_long_strike),
           num(pos.call_short_strike), num(pos.call_long_strike),
           contracts, entryCredit, collateral, 'eod_cutoff', entryCredit)
       }
       _mtmFailureCounts.delete(pid)
-      return { status: `closed:eod_cutoff@${costToClose.toFixed(4)}(swing_green_bank)`, unrealizedPnl: 0 }
+      return reportClose(bot, pid, sgOutcome, 'eod_cutoff',
+        `eod_cutoff@${costToClose.toFixed(4)}(swing_green_bank)`)
     }
 
     // Red (or break-even) at the cutoff → hold overnight. DB-log once per day.
@@ -2677,7 +3233,7 @@ async function monitorSinglePosition(
   }
 
   // Stop loss uses BID/ASK (conservative) — better to exit early on losses.
-  // SPARK2 / KINDLE SWING: they never hard-stop — they ride to the profit target or
+  // KINDLE SWING: it never hard-stops — it rides to the profit target or
   // EOD. Backtest: ~82% of would-be-stopped trades recover by close; with the small
   // %-based sizing (bp_pct ≤ 0.30 cap) this lifts win rate to ~98% and slashes
   // drawdown. Position SIZE is the risk control with the stop off.
@@ -2710,11 +3266,12 @@ async function monitorSinglePosition(
         ],
       )
     } catch { /* log failure must not block close */ }
-    await closePosition(bot, pid, ticker, expiration,
+    const slOutcome = await closePosition(bot, pid, ticker, expiration,
       num(pos.put_short_strike), num(pos.put_long_strike),
       num(pos.call_short_strike), num(pos.call_long_strike),
       contracts, entryCredit, collateral, 'stop_loss', costToClose)
-    return { status: `closed:stop_loss@${costToClose.toFixed(4)}`, unrealizedPnl: 0 }
+    return reportClose(bot, pid, slOutcome, 'stop_loss',
+      `stop_loss@${costToClose.toFixed(4)}`)
   }
 
   // Unrealized P&L uses last trade prices to match Tradier's portfolio Gain/Loss
@@ -2730,6 +3287,35 @@ async function monitorSinglePosition(
 /*  Fix 5: Double-close guard using dbExecute rowCount                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * REPORT WHAT ACTUALLY HAPPENED, not what we asked for.
+ *
+ * Every exit path used to `await closePosition(...)` and then return
+ * `closed:<reason>` unconditionally. That string drives
+ * `action = status.startsWith('closed:') ? 'closed' : 'monitoring'` and is written
+ * into the bot's own log — so a profit-target or stop-loss close that never landed
+ * was recorded as a completed close, at full confidence. That is the identical lie
+ * that left SPARK's positions open for three trading days while the log said SETTLED.
+ *
+ * `deferred` is NOT a failure: the order is live and the fill is pending, which is the
+ * normal path for a debit-limit exit. It reads as `pending_close:` and stays quiet.
+ */
+function reportClose(
+  bot: BotDef,
+  positionId: string,
+  outcome: CloseOutcome,
+  reason: string,
+  detail: string,
+): { status: string; unrealizedPnl: number } {
+  if (outcome === 'failed') {
+    console.warn(
+      `[scanner] ${bot.name.toUpperCase()} CLOSE DID NOT COMPLETE ${positionId} ` +
+      `[${reason}] — position stays OPEN and will retry next cycle.`,
+    )
+  }
+  return { status: `${closeStatusPrefix(outcome)}${detail}`, unrealizedPnl: 0 }
+}
+
 async function closePosition(
   bot: BotDef,
   positionId: string,
@@ -2744,7 +3330,26 @@ async function closePosition(
   closePrice?: number,
   orderType?: 'market' | 'debit',
   limitPrice?: number,
-): Promise<void> {
+  /**
+   * 🚨 THERE IS NO NEXT CYCLE. Set by the assignment guard only.
+   *
+   * The DEFER branch below returns 'deferred' when the broker has the order but the
+   * fill has not landed, on the explicit promise that "next cycle will re-poll".
+   * That promise is true at 10:00 and FALSE at 14:57 on a 0DTE: the market closes in
+   * three minutes, ASSIGNMENT_GUARD_END_HHMM shuts the window, and the contract
+   * expires. A deferred close at the bell is not deferred, it is ABANDONED, and the
+   * caller reads a soft status for a position that is about to be assigned.
+   *
+   * SPARK-SPY-20260828-K9JKRK proved it: guard fired correctly on a short put 773
+   * with SPY at 769.6, closePosition returned 'deferred' twice, SPY settled 769.39
+   * and the position went into settlement $3.61 ITM. Sandbox, 1 lot — but SPARK is
+   * isProductionBot(), so this is the same code path a live account runs.
+   *
+   * When true: never place a SECOND close order on top of a live one, and never
+   * report a resting order as anything but a failure to close.
+   */
+  mustCloseNow?: boolean,
+): Promise<CloseOutcome> {
   // Read person and account_type from position for daily_perf attribution and close routing
   let posPerson = 'User'
   let posAccountType = 'sandbox'
@@ -2757,6 +3362,36 @@ async function closePosition(
     if (posMetaRow[0]?.person) posPerson = posMetaRow[0].person
     if (posMetaRow[0]?.account_type) posAccountType = posMetaRow[0].account_type
   } catch { /* default */ }
+
+  // 🚨 HOLD-TO-EXPIRY LOCK (2026-10-02, FLAME-SPY-20261002-Y7RZKZ). FLAME and SPARK
+  // are EBB settle-at-expiry bots: the ONLY scanner exits are the assignment guard
+  // (final minutes before the close) and book-only settlement. A profit target that
+  // should never have been live bought back a live 4-lot at ~1:50 PM CT for -$32;
+  // held to the close it made +$88. Whatever triggers an early exit in future —
+  // a stale DB override, a data-feed failure, a new rule — no close order reaches
+  // the broker before the guard window. Operator force-close uses its own route.
+  if (isSettleAtExpiryBot(bot.name) && reason !== ASSIGNMENT_GUARD_REASON
+      && !isBookOnlyCloseReason(reason) && reason !== 'stale_holdover') {
+    const ctNow = getCentralTime()
+    const hhmm = ctNow.getHours() * 100 + ctNow.getMinutes()
+    const { startHHMM } = assignmentGuardWindow(ctNow)
+    if (hhmm < startHHMM) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} EARLY CLOSE BLOCKED *** ${positionId} reason=${reason} ` +
+        `at ${hhmm} CT (before guard ${startHHMM}) — EBB holds to expiry; no broker order sent.`,
+      )
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          ['CRITICAL', `EARLY CLOSE BLOCKED: ${positionId} reason=${reason}`,
+            JSON.stringify({ position_id: positionId, reason, hhmm_ct: hhmm, guard_start: startHHMM, account_type: posAccountType }),
+            bot.dte],
+        )
+      } catch { /* log failure must not unblock */ }
+      return 'failed'
+    }
+  }
 
   // Determine estimated close price if not provided.
   // Put credit spread detection: callShort === 0 (FLAME after Apr 2026 migration).
@@ -2775,10 +3410,40 @@ async function closePosition(
   // Mirror close to Tradier — FLAME requires close to succeed (1:1 sync).
   // SPARK + INFERNO: paper-only, no Tradier positions to close.
   let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
-  const isProductionBotClose = isProductionBot(bot.name)
+  // 🚨 canPlaceLiveOrders IS THE SECOND PREDICATE ON PURPOSE — same fix as the
+  // 2026-08-31 production-only catch-up path (line ~6041 in this file). The
+  // local isProductionBot() above is SPARK + KINDLE only, so on its own this
+  // NEVER opened the broker-close branch for FLAME, despite the comment above
+  // (and the assignment guard, closeAtRiskBeforeBell) assuming it did: the
+  // guard's `closePosition(..., ASSIGNMENT_GUARD_REASON, ..., mustCloseNow)`
+  // call would book the DB row closed and skip the real Tradier buy-back
+  // entirely, leaving FLAME's live spread open into settlement — assignment
+  // risk unmitigated on every account (2026-09-27, Leron: guard ON for every
+  // FLAME account). canPlaceLiveOrders('spark') is false (paper-only since
+  // 2026-08-16) so SPARK's routing is unchanged; for FLAME it is
+  // isFlameLiveArmed(), so this widens the broker-close path to exactly the
+  // bot that places live orders today — sandbox or production alike, since
+  // shouldCloseSandbox below still routes by the position's own account_type.
+  const isProductionBotClose = isProductionBot(bot.name) || canPlaceLiveOrders(bot.name)
+
+  // 🚨 AN EXPIRED CONTRACT HAS NO MARKET, SO IT CAN NEVER PRODUCE A FILL PRICE.
+  // Tradier rejects every close order against one — "There is no price. Security
+  // symbol: SPY260824P00762000" — which means `fill_price` never arrives and the
+  // DEFER branch below re-fires forever. SPARK's 8/21, 8/24 and 8/25 positions each
+  // fired 3 rejected multileg orders EVERY 60s scan cycle from their expiry through
+  // 8/26, logged "SETTLED" every single time, and stayed `status = open`. With max 1
+  // concurrent position that blocked every new entry for three trading days while the
+  // log said the trades had settled. The broker has already expired the contract;
+  // there is nothing left to close there. Settle it on the books and only on the books.
+  const expDateStr =
+    (expiration as unknown as { toISOString?: () => string })?.toISOString?.()?.slice(0, 10)
+    || String(expiration).slice(0, 10)
+  const isExpiredContract =
+    isBookOnlyCloseReason(reason) ||
+    expDateStr < getCentralTime().toISOString().slice(0, 10)
 
   // Only FLAME has real Tradier positions (sandbox OR production). SPARK/INFERNO are paper-only.
-  const shouldCloseSandbox = isProductionBotClose
+  const shouldCloseSandbox = isProductionBotClose && !isExpiredContract
 
   if (shouldCloseSandbox) {
     const sbRows = await query(
@@ -2875,7 +3540,7 @@ async function closePosition(
       `(estimated=$${estimatedPrice.toFixed(4)}, diff=${(userClose.fill_price - estimatedPrice).toFixed(4)})`,
     )
     effectivePrice = userClose.fill_price
-  } else if (isProductionBotClose && userClose?.order_id && userClose.order_id > 0) {
+  } else if (isProductionBotClose && !isExpiredContract && userClose?.order_id && userClose.order_id > 0) {
     // Sandbox close order exists but fill price is missing (should be rare with unlimited polling).
     // DEFER: store the close info on the position so next cycle can re-poll.
     // Do NOT close paper with estimated price — that causes drift.
@@ -2914,8 +3579,40 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return // Exit without closing paper — next cycle will re-poll
-  } else if (isProductionBotClose) {
+    // DEFERRED, not failed: the order is live at the broker and the fill is coming.
+    // The position is deliberately still open. Reporting this as a failure would flag
+    // every healthy FLAME debit-limit profit-target close as broken.
+    //
+    // 🚨 …UNLESS there is no next cycle. The whole justification above is "the fill is
+    // coming" — that is a statement about FUTURE cycles, and the assignment guard has
+    // none: the window shuts at ASSIGNMENT_GUARD_END_HHMM and the contract expires at
+    // the bell. On that path a resting order is not a pending success, it is a close
+    // that did not happen, and it MUST read as 'failed' so the caller escalates.
+    if (mustCloseNow) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} MUST-CLOSE DEFERRED ${positionId} *** ` +
+        `order ${userClose.order_id} is live at the broker with no fill price and there is ` +
+        `NO next cycle before expiry — reporting as FAILED, not deferred.`,
+      )
+      await query(
+        `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          'CRITICAL',
+          `MUST-CLOSE DEFERRED: ${positionId} — close order ${userClose.order_id} placed but ` +
+          `unfilled at the bell; no cycle remains before expiry`,
+          JSON.stringify({
+            position_id: positionId, reason,
+            close_order_id: userClose.order_id,
+            sandbox_close_info: sandboxCloseInfo,
+          }),
+          bot.dte,
+        ],
+      )
+      return 'failed'
+    }
+    return 'deferred' // Exit without closing paper — next cycle will re-poll
+  } else if (isProductionBotClose && !isExpiredContract) {
     // Broker close failed ENTIRELY (no order_id). PREVIOUSLY this fell through and
     // booked the paper close at an estimated price — but the REAL Tradier IC stayed
     // OPEN, creating an ORPHAN with a wrong P&L (KINDLE 2026-06-25: "paper closed but
@@ -2939,7 +3636,7 @@ async function closePosition(
         bot.dte,
       ],
     )
-    return // do NOT book the paper close — keep position open, retry broker close next cycle
+    return 'failed' // do NOT book the paper close — keep position open, retry broker close next cycle
   }
 
   const pnlPerContract = (entryCredit - effectivePrice) * 100
@@ -2965,7 +3662,7 @@ async function closePosition(
       `(already closed by another scan). Skipping paper_account update to prevent ` +
       `double-counting. realized_pnl would have been $${realizedPnl.toFixed(2)}`,
     )
-    return
+    return 'failed'
   }
 
   // Phase B: close customer mirrors of this master position (fire-and-forget, never
@@ -2975,9 +3672,10 @@ async function closePosition(
   // Update paper account — route to correct row based on account_type
   if (posAccountType === 'production') {
     // Production positions update the production paper_account (filtered by person + account_type)
-    await query(
+    const credited = await dbExecute(
       `UPDATE ${botTable(bot.name, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            total_trades = total_trades + 1,
            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -2989,11 +3687,13 @@ async function closePosition(
        WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
       [realizedPnl, collateral, posPerson, bot.dte],
     )
+    warnIfNoProductionLedger(bot.name, 'close', credited, posPerson, bot.dte, realizedPnl)
   } else {
     // Sandbox positions update the shared sandbox paper_account
     await query(
       `UPDATE ${botTable(bot.name, 'paper_account')}
        SET current_balance = current_balance + $1,
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
            cumulative_pnl = cumulative_pnl + $1,
            total_trades = total_trades + 1,
            collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -3070,6 +3770,10 @@ async function closePosition(
     })
   }
 
+  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+  // notifyTradeClosed catches everything internally.
+  void notifyTradeClosed(bot.name, positionId, realizedPnl)
+
   // Post-close: if same-day open+close = day trade, update PDT tracking.
   // Production and sandbox PDT are tracked SEPARATELY:
   //   - Sandbox: increments shared ironforge_pdt_config.day_trade_count (used by scanner gate)
@@ -3135,6 +3839,8 @@ async function closePosition(
     const msg = pdtErr instanceof Error ? pdtErr.message : String(pdtErr)
     console.warn(`[scanner] PDT counter update failed: ${msg}`)
   }
+
+  return 'closed'
 }
 
 /* ------------------------------------------------------------------ */
@@ -3317,7 +4023,32 @@ const FLAME_BOOKS = ['SPY'] as const
  * The two tranches are NOT diversifying: same underlying, same session, they max
  * together. Worst pair day is roughly twice the single-tranche loss.
  */
-function botStructure(_name: string): { otmAbs: number; width: number } {
+/**
+ * 🚨 TWO EBB VARIANTS, ONE PER CLOCK (2026-08-27). This function took the bot
+ * name and THREW IT AWAY — `_name` was unused and both bots got FLAME's cell.
+ *
+ * FLAME's cell (spot−$1 / $2 wing) is what registry #49r's walk-forward selected
+ * FOR THE PM CLOCK. The 8/16 cutover applied that PM selection to the AM clock
+ * too, which was never tested and is the WORST of the nine AM cells:
+ *
+ *   AM 10:05, 1 lot, net $0.70/lot, 2022-11-02 → 2026-08-26 (n=941)
+ *     spot−$1 / $2 wing  (what SPARK ran)  $5.78/tr  $1,427/yr  ret/DD 1.18  4/5 yrs
+ *     spot−$2 / $5 wing  (EBB as registered) $11.14/tr $2,750/yr ret/DD 1.87  5/5 yrs
+ *
+ *   And the difference is not historical — it is 2026: the wrong cell made
+ *   +$74 on the year and −$155 over its last 126 trades; the registered cell
+ *   made +$1,603 and +$967. SPARK was not decaying. SPARK was misconfigured.
+ *
+ * PM keeps spot−$1 / $2: that cell IS the walk-forward winner at 13:05 and it is
+ * what the live account trades. Do not "unify" these again — the offsets ARE the
+ * specification, and the two clocks do not share one.
+ */
+function botStructure(name: string): { otmAbs: number; width: number } {
+  // AM 10:05 — EBB as pre-registered (#23b). NOT a grid pick: this is the
+  // structure the original registration measured, and it ties for the best
+  // ret/DD in the AM block.
+  if (name === 'spark') return { otmAbs: 2.0, width: 5 }
+  // PM 13:05 — registry #49r walk-forward, selected in all four blind years.
   return { otmAbs: 1.0, width: 2 }
 }
 
@@ -3373,11 +4104,15 @@ function flameParams(_equity: number): { k: number; width: number } {
  * Cost: $8,000-$9,999 now earns ~$10,090/yr instead of ~$20,179. That is the same
  * income-for-risk trade already taken at the $5,000 product boundary.
  */
-function flameContracts(_equity: number): number {
-  // 1, flat. The contract ladder was tuned on the void backtest, and the honest
-  // walk-forward only ever validated a single contract. Scaling it is
-  // ratio-neutral anyway -- twice the size is twice the drawdown.
-  return 1
+function flameContracts(botName: string, ladderCapital: number | null): number {
+  // COUNT LADDER (2026-09-04, Leron: "the ladder is count of contracts, not
+  // width"). Keyed on the ledger's HIGH-WATER capital — max(starting_capital,
+  // high_water_balance), see ebbLadderCapital() — floor()ed, static cap 100
+  // (ADR 0013: the cap is a liquidity guard, the rung bounds drawdown). The
+  // 8/27 survivor rungs: FLAME 1 lot / $1,500, SPARK 1 lot / $5,000. Pinned by
+  // ebb-sizing.test.ts. Any bot outside the EBB pair keeps the old flat 1 lot.
+  if (!isEbbLadderBot(botName)) return 1
+  return ebbLadderContracts(botName, ladderCapital)
 }
 
 /**
@@ -3421,7 +4156,7 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   const rows = await query(
     `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
             call_short_strike, call_long_strike, contracts, total_credit,
-            collateral_required, spread_width
+            collateral_required, spread_width, account_type, person
        FROM ${botTable(bot.name, 'positions')}
       WHERE status = 'open' AND dte_mode = $1 AND expiration <= $2`,
     [bot.dte, todayStr],
@@ -3430,9 +4165,22 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
 
   const out: string[] = []
   for (const p of rows) {
-    const exp = String(p.expiration).slice(0, 10)
-    // Same-day: wait for the actual close. Past expiry: settle immediately.
-    if (exp === todayStr && ctHHMM(ct) < 1500) continue
+    // 🚨 node-postgres returns a DATE column as a JS Date, and String(Date) is
+    // the LOCALE rendering — String(new Date('2026-08-17')) sliced to 10 chars
+    // is "Sun Aug 16", not "2026-08-17". It never equals a daily bar's `date`,
+    // so `hist.find(...)` missed every time and every position fell through to
+    // no_settle_price and stayed open. This function has therefore NEVER settled
+    // anything since it shipped on 8/16: FLAME only ever closed because the
+    // dashboard's 14:45 EOD poll flattened it, and SPARK's 8/17 and 8/18
+    // positions — days nobody had that page open — were still `open` on 8/19.
+    // Eight other sites in this file already use this exact defensive idiom;
+    // this was the one that did not.
+    const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+    // Same-day: wait for the actual close (marketCloseMinuteCT — 1500 normally,
+    // 1200 on a half day; NOT a hardcoded 1500, or a same-day position on an
+    // early-close day would sit open for 3 extra hours past the real close
+    // waiting for a boundary that already passed). Past expiry: settle immediately.
+    if (exp === todayStr && ctHHMM(ct) < marketCloseMinuteCT(ct)) continue
 
     const ticker = String(p.ticker)
     let settlePx = 0
@@ -3445,6 +4193,31 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
       settlePx = q?.last ?? 0
     }
     if (!(settlePx > 0)) {
+      // Loud, because the scan `reason` this returns into is overwritten further
+      // down the cycle — which is why a settlement that failed every minute for
+      // three days left no trace anywhere in the bot logs.
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} SETTLE BLOCKED ${p.position_id}: ` +
+        `no close for ${ticker} ${exp} — position stays OPEN and will retry.`,
+      )
+      // ...and write it where a human will actually see it. A console.warn goes
+      // to Render only, and the `reason` this returns into is overwritten later
+      // in the cycle — which is how SPARK sat unsettled from Friday afternoon to
+      // Monday morning with nothing in its own log but "monitoring". An unsettled
+      // position blocks every future entry (max 1 concurrent), so silence here
+      // costs whole trading days.
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            'SETTLE_BLOCKED',
+            `SETTLE BLOCKED: ${p.position_id} — no ${ticker} close for ${exp}; position stays OPEN and blocks new entries`,
+            JSON.stringify({ position_id: p.position_id, ticker, expiration: exp, reason: 'no_settle_price' }),
+            bot.dte,
+          ],
+        )
+      } catch { /* logging must never take the settle loop down */ }
       out.push(`${p.position_id}=no_settle_price`)
       continue
     }
@@ -3452,17 +4225,79 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
     const ks = num(p.put_short_strike)
     const kl = num(p.put_long_strike)
     const width = ks - kl
-    const value = Math.min(Math.max(ks - settlePx, 0), width)
+    let value = Math.min(Math.max(ks - settlePx, 0), width)
     const credit = num(p.total_credit)
     const contracts = int(p.contracts)
 
-    await closePosition(
+    // 🚨 BROKER FIRST (2026-10-02). A production row can be open in the ledger while
+    // the broker already bought the spread back (FLAME-SPY-20261002-Y7RZKZ-prod-flame
+    // booked +$88 at expiry; the broker had closed it for -$32). Book the broker's own
+    // closing debit when one exists for the expiry date.
+    if (p.account_type === 'production') {
+      try {
+        const { productionSpreadCloseFill } = await import('./tradier')
+        const fill = await productionSpreadCloseFill(bot.name, String(p.person ?? ''), ticker, exp, ks, kl)
+        if (fill) {
+          console.warn(
+            `[scanner] ${bot.name.toUpperCase()} ${p.position_id}: broker already closed before expiry ` +
+            `(order ${fill.orderId}, net $${fill.net.toFixed(4)}) — booking the broker fill, not the expiry value $${value.toFixed(2)}`,
+          )
+          value = fill.net
+        }
+      } catch (e) {
+        console.warn(`[scanner] broker close-fill check failed for ${p.position_id} (booking expiry value):`, e)
+      }
+    }
+
+    // 🚨 closePosition CAN DECLINE TO CLOSE. It defers on a missing broker fill and
+    // returns without flipping `status`, so logging SETTLED unconditionally printed a
+    // settlement that had not happened — every 60s, for three days, at full confidence.
+    // The log is now downstream of the write, not parallel to it: SETTLED means the row
+    // moved. Never announce an outcome you have not read back.
+    const settleOutcome = await closePosition(
       bot, String(p.position_id), ticker, exp,
       ks, kl, num(p.call_short_strike), num(p.call_long_strike),
       contracts, credit, num(p.collateral_required),
       'settled_at_expiry', value,
     )
+    // Only 'closed' means the row moved. 'deferred' cannot happen here — an expired
+    // contract skips the broker entirely — but it is still not a settlement, so it
+    // takes the same honest path rather than being read as success by omission.
+    const settled = settleOutcome === 'closed'
     const pnl = (credit - value) * 100 * contracts
+    if (!settled) {
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} SETTLE DID NOT CLOSE ${p.position_id} ` +
+        `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} — ` +
+        `position stays OPEN and blocks new entries.`,
+      )
+      try {
+        await query(
+          `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+           VALUES ($1, $2, $3, $4)`,
+          [
+            'SETTLE_BLOCKED',
+            `SETTLE DID NOT CLOSE: ${p.position_id} — closePosition declined; position stays OPEN and blocks new entries`,
+            JSON.stringify({ position_id: p.position_id, ticker, expiration: exp, settle_price: settlePx, value, reason: 'close_declined' }),
+            bot.dte,
+          ],
+        )
+      } catch { /* logging must never take the settle loop down */ }
+      out.push(`${p.position_id}=settle_declined`)
+      continue
+    }
+    // EDGE-DECAY (EBB, notify-only, never pauses): flame_positions production
+    // + sandbox rows only, per the RESULT file's data table — this is the
+    // strategy's primary close path (holds to expiry). No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    if (bot.name === 'flame' && (p.account_type === 'production' || p.account_type === 'sandbox')) {
+      try {
+        const { recordEdgeDecayClose } = await import('./edge-decay')
+        await recordEdgeDecayClose('ebb', pnl / Math.max(1, contracts))
+      } catch (e) {
+        console.warn(`[edge-decay] EBB settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
     console.log(
       `[scanner] ${bot.name.toUpperCase()} SETTLED ${p.position_id} ` +
       `close=${settlePx.toFixed(2)} ${kl}/${ks}P value=$${value.toFixed(2)} ` +
@@ -3473,55 +4308,1689 @@ async function settleExpiredPositions(bot: BotDef, ct: Date): Promise<string> {
   return out.length ? ` settle[${out.join(' ')}]` : ''
 }
 
-async function tryOpenFlamePutSpread(bot: BotDef): Promise<string> {
+/* ------------------------------------------------------------------ */
+/*  ASSIGNMENT GUARD — the one exit that does not kill the edge        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 🚨 CLOSE AT 14:59 CT, BUT ONLY WHEN THE SHORT IS ACTUALLY AT RISK.
+ *
+ * EBB holds to expiry ON PURPOSE and that is not up for renegotiation: registry
+ * #43 measured buyback exits at 13:00 / 14:00 / 14:30 ET and every one collapses
+ * $12.19/trade to about zero, because every one hands back real remaining time
+ * value. This exit is a DIFFERENT TRADE and was never in that test. At 14:59 CT
+ * (15:59 ET) a 0DTE spread has essentially no time value left, so its price IS
+ * the settlement intrinsic the strategy would have booked sixty seconds later.
+ * That is the whole reason this is allowed to exist where the others are not.
+ *
+ * WHAT IT BUYS. SPY settlement is PHYSICAL. A short put that finishes even $0.01
+ * in the money is auto-exercised by OCC under exercise-by-exception and delivers
+ * ~$76k of stock per contract into a $5,000 account overnight, which Tradier then
+ * sells out: Assignment/Exercise $5 + Margin/Position Sell-Out $10, plus whatever
+ * the gap costs on shares nobody chose to hold. The doc block above puts the short
+ * ITM-alone in ~17% of sessions. Nothing had ever fired on that path — the settle
+ * loop books intrinsic on our own ledger and, in its own words, "an expired
+ * contract skips the broker entirely." The broker leg was simply unmanaged.
+ *
+ * 🚨 CONDITIONAL, NOT UNCONDITIONAL — THIS IS THE LOAD-BEARING PART. On the ~83%
+ * of days the short is clear of the money this does NOTHING: no order, no spread
+ * paid, the settlement books exactly as it does today. Closing every day would
+ * reintroduce the exact cost registry #43 measured, just one minute later, and
+ * would quietly turn EBB back into a strategy with no edge.
+ *
+ * 🚨 THE BUFFER EXISTS BECAUSE THE LAST MINUTE STILL MOVES. Closing only on an
+ * already-ITM short would miss the position sitting $0.05 above its strike at
+ * 14:59 that prints through it at the bell — and being late here is not "a worse
+ * fill", it is assignment. $0.50 on SPY at ~766 is 0.065%. Widen it and you pay a
+ * spread on days that would have expired worthless; narrow it and assignments leak
+ * through. Tune with IRONFORGE_ASSIGNMENT_GUARD_BUFFER, never by editing this.
+ *
+ * 🚨 FAILS TO THE STATUS QUO, NOT TO A FLATTENED BOOK. No quote means no verdict,
+ * and the position holds to settlement exactly as it would have without this
+ * function. A guard that closes positions on missing data is worse than no guard,
+ * because feeds die in precisely the conditions the guard exists for.
+ *
+ * Runs BEFORE settleExpiredPositions in the same cycle and cannot collide with it:
+ * this one only touches `expiration = today` in the 14:59-15:00 CT window, and
+ * settleExpiredPositions skips same-day rows until ctHHMM >= 1500 exactly.
+ *
+ * The close reason is deliberately NOT in isBookOnlyCloseReason — this is a live
+ * contract with a real market, so it must route to the broker like any other close.
+ */
+/**
+ * 🚨 THE WINDOW OPENS AT 14:57, NOT 14:59, AND THAT IS NOT A COMPROMISE.
+ *
+ * The scan is a ~60s Databricks-style cycle, not a cron tick: a slow cycle that
+ * lands at 14:58:50 and again at 15:00:05 would step straight over a one-minute
+ * 14:59 window and the guard would never fire on the one day it mattered. Three
+ * cycles is the margin. The cost of firing at 14:57 instead of 14:59 on a 0DTE
+ * contract is a rounding error of time value; the cost of missing the window is
+ * an assignment. Those are not symmetric, so the window is not symmetric either.
+ */
+const ASSIGNMENT_GUARD_HHMM = 1457        // 2:57 PM CT = 3:57 PM ET — NORMAL DAY ONLY, see assignmentGuardWindow()
+const ASSIGNMENT_GUARD_END_HHMM = 1500    // hand off to settleExpiredPositions — NORMAL DAY ONLY, see assignmentGuardWindow()
+const ASSIGNMENT_GUARD_REASON = 'assignment_guard'
+const ASSIGNMENT_GUARD_DEFAULT_BUFFER = 0.50
+
+/**
+ * The guard's end boundary is the REAL market close for the day
+ * (marketCloseMinuteCT: 1500 normally, 1200 on a half day per market-calendar.ts)
+ * — not the hardcoded 1500/ASSIGNMENT_GUARD_END_HHMM above. Before this fix, a
+ * half day (day-after-Thanksgiving, Christmas Eve) still ran the guard window
+ * and the settle handoff at the hardcoded 14:57-15:00 CT slot, three hours
+ * AFTER the market actually closed at 12:00 CT: a same-day contract has no
+ * market by then, so the guard's own "no quote -> holds unguarded" fail-safe
+ * fired for the wrong reason, and settleExpiredPositions withheld settling a
+ * same-day position until the fictitious 15:00 boundary instead of the real
+ * noon close.
+ *
+ * Start is always exactly 3 minutes before that close (see the docblock two
+ * screens up for why 3, not 1), computed in real minutes-since-midnight — NOT
+ * by subtracting from the HHMM integer directly (1500 - 3 = 1497 is not a
+ * valid HHMM; 14:57 is, because HHMM is base-60-in-the-last-two-digits, not a
+ * continuous integer).
+ */
+function assignmentGuardWindow(ct: Date): { startHHMM: number; endHHMM: number } {
+  const endHHMM = marketCloseMinuteCT(ct)
+  const totalMin = Math.floor(endHHMM / 100) * 60 + (endHHMM % 100) - 3
+  const startHHMM = Math.floor(totalMin / 60) * 100 + (totalMin % 60)
+  return { startHHMM, endHHMM }
+}
+
+function assignmentGuardBuffer(): number {
+  const raw = Number(process.env.IRONFORGE_ASSIGNMENT_GUARD_BUFFER)
+  return Number.isFinite(raw) && raw >= 0 ? raw : ASSIGNMENT_GUARD_DEFAULT_BUFFER
+}
+
+/** Write where a human will actually see it. A console line goes to Render only, and
+ *  the `reason` this returns into is overwritten later in the cycle. */
+async function logGuard(bot: BotDef, level: string, message: string, details: object): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [level, message, JSON.stringify(details), bot.dte],
+    )
+  } catch { /* logging must never take the guard down */ }
+}
+
+async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
+  if (!isSettleAtExpiryBot(bot.name)) return ''
+  const hhmm = ctHHMM(ct)
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
+            call_short_strike, call_long_strike, contracts, total_credit,
+            collateral_required, sandbox_close_order_id
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE status = 'open' AND dte_mode = $1 AND expiration = $2`,
+    [bot.dte, todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const buffer = assignmentGuardBuffer()
+  const out: string[] = []
+  /** Positions that end the window still exposed. Alerted once, after the loop. */
+  const exposed: string[] = []
+
+  for (const p of rows) {
+    // 🚨 The same Date-vs-string trap settleExpiredPositions documents: node-postgres
+    // returns a DATE as a JS Date and String(Date) is the LOCALE rendering, which never
+    // equals a YYYY-MM-DD literal. The SQL already filtered, but a row that slipped
+    // through a type coercion must not be closed on a day that is not its expiry.
+    const exp = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+    if (exp !== todayStr) continue
+
+    const positionId = String(p.position_id)
+    const ticker = String(p.ticker || 'SPY')
+
+    // XSP_SWAP (R4): XSP is cash-settled, European-style, no early assignment —
+    // it must NEVER be guard-closed. By construction an XSP leg is never
+    // inserted into this table (see xsp-swap-db.ts's header — it lives in its
+    // own `xsp_swap_legs` table instead), so this is defense in depth, not the
+    // only thing stopping it: a row that somehow carries ticker='XSP' skips the
+    // guard outright and holds to settlement, same as the design intends.
+    if (isXspTicker(ticker)) {
+      out.push(`${positionId}=xsp_guard_exempt`)
+      continue
+    }
+
+    const q = await getQuote(ticker)
+    const spot = q?.last ?? 0
+    if (!(spot > 0)) {
+      console.warn(
+        `[scanner] ${bot.name.toUpperCase()} ASSIGNMENT GUARD NO QUOTE ${positionId}: ` +
+        `no ${ticker} price at ${hhmm} CT — position holds to settlement, unguarded.`,
+      )
+      await logGuard(bot, 'ASSIGNMENT_GUARD',
+        `ASSIGNMENT GUARD NO QUOTE: ${positionId} — no ${ticker} price; holds to settlement unguarded`,
+        { position_id: positionId, ticker, expiration: exp, reason: 'no_quote' })
+      // Unguarded is exposed. A guard that cannot see the price has not cleared the
+      // position, it has merely failed silently — say so on the same channel.
+      exposed.push(`${positionId} — no ${ticker} quote at ${hhmm} CT; holds to settlement unguarded`)
+      out.push(`${positionId}=no_quote`)
+      continue
+    }
+
+    // Put side is the live one under EBB (callShort === 0 on a two-leg spread), but
+    // an IC can be assigned from either end, so both are tested. A strike of 0 means
+    // that side does not exist and must never register as "at risk".
+    const putShort = num(p.put_short_strike)
+    const callShort = num(p.call_short_strike)
+    const putAtRisk = putShort > 0 && spot <= putShort + buffer
+    const callAtRisk = callShort > 0 && spot >= callShort - buffer
+
+    if (!putAtRisk && !callAtRisk) {
+      out.push(`${positionId}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const side = putAtRisk ? `put ${putShort}` : `call ${callShort}`
+
+    // 🚨 NEVER STACK A SECOND CLOSE ORDER ON A LIVE ONE.
+    // The guard re-selects on `status = 'open'`, and a deferred close leaves the row
+    // open with its pending order recorded in `sandbox_close_order_id`. Without this
+    // check every guard cycle in the window fires ANOTHER closing order at the broker.
+    // On 2026-08-28 that ran twice on one sandbox lot; on a live multi-lot position
+    // duplicate closing orders can sell through the position and open a short.
+    // The order is already working — re-placing cannot make it fill faster.
+    let pendingClose: Record<string, any> | null = null
+    if (p.sandbox_close_order_id) {
+      try { pendingClose = JSON.parse(p.sandbox_close_order_id) } catch { /* treat as none */ }
+    }
+    if (pendingClose) {
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} ASSIGNMENT GUARD ALREADY PENDING ${positionId} *** ` +
+        `spot=${spot.toFixed(2)} short ${side} — a close order is already live and unfilled. ` +
+        `NOT placing another. POSITION IS GOING INTO SETTLEMENT AT RISK OF ASSIGNMENT.`,
+      )
+      await logGuard(bot, 'CRITICAL',
+        `ASSIGNMENT GUARD CLOSE STILL PENDING: ${positionId} — short ${side} at risk ` +
+        `(spot ${spot.toFixed(2)}); close order already live and unfilled, not re-placed`,
+        { position_id: positionId, ticker, expiration: exp, spot, side, buffer,
+          pending_close: pendingClose })
+      exposed.push(`${positionId} (short ${side}, spot ${spot.toFixed(2)}) — close order live but unfilled`)
+      out.push(`${positionId}=guard_pending`)
+      continue
+    }
+
+    const outcome = await closePosition(
+      bot, positionId, ticker, exp,
+      putShort, num(p.put_long_strike), callShort, num(p.call_long_strike),
+      int(p.contracts), num(p.total_credit), num(p.collateral_required),
+      ASSIGNMENT_GUARD_REASON, undefined, 'market', undefined,
+      true, // mustCloseNow — there is no cycle after the bell
+    )
+
+    // 🚨 Only 'closed' means the row moved. closePosition CAN decline, and announcing
+    // a close that did not happen is how a settle loop printed SETTLED for three days
+    // while nothing settled. Never announce an outcome you have not read back.
+    if (outcome !== 'closed') {
+      console.warn(
+        `[scanner] *** ${bot.name.toUpperCase()} ASSIGNMENT GUARD DID NOT CLOSE ${positionId} *** ` +
+        `spot=${spot.toFixed(2)} short ${side} buffer=$${buffer.toFixed(2)} outcome=${outcome} — ` +
+        `POSITION IS GOING INTO SETTLEMENT AT RISK OF ASSIGNMENT.`,
+      )
+      await logGuard(bot, 'CRITICAL',
+        `ASSIGNMENT GUARD DID NOT CLOSE: ${positionId} — short ${side} at risk (spot ${spot.toFixed(2)}), ` +
+        `closePosition returned '${outcome}'; position settles with assignment exposure`,
+        { position_id: positionId, ticker, expiration: exp, spot, side, buffer, outcome })
+      exposed.push(
+        `${positionId} (short ${side}, spot ${spot.toFixed(2)}) — closePosition returned '${outcome}'`)
+      out.push(`${positionId}=guard_${outcome}`)
+      continue
+    }
+
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} ASSIGNMENT GUARD CLOSED ${positionId} ` +
+      `spot=${spot.toFixed(2)} short ${side} buffer=$${buffer.toFixed(2)}`,
+    )
+    await logGuard(bot, 'ASSIGNMENT_GUARD',
+      `ASSIGNMENT GUARD CLOSED: ${positionId} — short ${side} at risk (spot ${spot.toFixed(2)}, ` +
+      `buffer $${buffer.toFixed(2)}); closed at 14:59 CT to avoid physical assignment`,
+      { position_id: positionId, ticker, expiration: exp, spot, side, buffer })
+    out.push(`${positionId}=guarded@${spot.toFixed(2)}`)
+  }
+
+  // 🚨 A CRITICAL ROW IN A LOGS TABLE IS NOT AN ALERT.
+  // Every failure above already wrote CRITICAL to `${bot}_logs` — and on 2026-08-28
+  // that is exactly where it stopped. Nobody was told, the position was assigned, and
+  // the first anyone knew of it was a manual query the next session. The expired-
+  // position watchdog already solved this: ntfy is what actually reaches a phone,
+  // Discord carries the readable record. Reuse it rather than inventing a channel.
+  if (exposed.length) {
+    const text =
+      `${bot.name.toUpperCase()} could not close ${exposed.length} position` +
+      `${exposed.length === 1 ? '' : 's'} before the bell. ` +
+      `Assignment is physical — these settle exposed:\n` +
+      exposed.map((e) => `• ${e}`).join('\n')
+    void sendOpsPush({
+      title: `${bot.name.toUpperCase()} assignment guard FAILED to close`,
+      body: text,
+      severity: 'critical',
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
+    void postOpsAlert({
+      botName: bot.name,
+      title: 'Assignment guard could NOT close at-risk positions',
+      body: text,
+      severity: 'critical',
+    }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
+  }
+
+  return out.length ? ` guard[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  FLINT — SPY 0DTE call credit spread, EVERY trading day, on FLAME's */
+/*  own paper ledger and production account(s). Own table, own arm     */
+/*  switch, own production path. Never reads or writes flame_positions */
+/*  / flame_paper_account, EXCEPT to read (never write) FLAME's own    */
+/*  per-account funded/high-water ledger and same-day put collateral   */
+/*  for FLINT's own profit gate (rule R1) and buying-power check.      */
+/* ------------------------------------------------------------------ */
+
+const FLINT_TABLE = 'flint_positions'
+let _flintTableReady = false
+
+async function ensureFlintTable(): Promise<void> {
+  if (_flintTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLINT_TABLE} (
+       id SERIAL PRIMARY KEY,
+       position_id TEXT UNIQUE NOT NULL,
+       ticker TEXT NOT NULL DEFAULT 'SPY',
+       expiration DATE NOT NULL,
+       call_short_strike NUMERIC NOT NULL,
+       call_long_strike NUMERIC NOT NULL,
+       contracts INTEGER NOT NULL,
+       entry_credit NUMERIC NOT NULL,
+       collateral_required NUMERIC NOT NULL,
+       underlying_at_entry NUMERIC,
+       close_price NUMERIC,
+       realized_pnl NUMERIC,
+       status TEXT NOT NULL DEFAULT 'open',
+       close_reason TEXT,
+       account_type TEXT NOT NULL DEFAULT 'paper',
+       person TEXT,
+       mode TEXT NOT NULL,
+       sandbox_order_id TEXT,
+       bot TEXT NOT NULL DEFAULT 'flame',
+       open_time TIMESTAMP NOT NULL DEFAULT NOW(),
+       close_time TIMESTAMP,
+       open_date DATE NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  // Defensive migration (2026-09-27, SPARK_FLINT): a table created before
+  // this column existed has no `bot` column — add it so FLINT-on-SPARK's
+  // own daily-dedup and rows never collide with FLAME's on the same
+  // customer sandbox account. Every pre-existing row backfills to 'flame',
+  // which is correct (FLINT was FLAME-exclusive until this change).
+  await dbExecute(`ALTER TABLE ${FLINT_TABLE} ADD COLUMN IF NOT EXISTS bot TEXT NOT NULL DEFAULT 'flame'`)
+  _flintTableReady = true
+}
+
+/* ------------------------------------------------------------------ */
+/*  FLINT forward-logging — daily dealer-gamma context.                 */
+/*                                                                      */
+/*  Not statistically confirmed: a sizing study found this sleeve      */
+/*  loses on days call-side dealer gamma (igex_call in the backtest    */
+/*  warehouse) is low at the 13:05 CT entry, and wins big when it is   */
+/*  high. Recorded here, RAW, so the hypothesis can be re-tested later */
+/*  once enough live days accumulate — tiers vs. the trailing 20       */
+/*  sessions are computed OFFLINE, never in this file. One row per     */
+/*  evaluated day; NEVER gates, sizes, or otherwise touches a trade —  */
+/*  every write is wrapped so a logging failure cannot reach the       */
+/*  trading path (see logFlintDailyContext below).                     */
+/* ------------------------------------------------------------------ */
+
+const FLINT_CONTEXT_TABLE = 'flint_daily_context'
+let _flintContextTableReady = false
+
+async function ensureFlintContextTable(): Promise<void> {
+  if (_flintContextTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${FLINT_CONTEXT_TABLE} (
+       id SERIAL PRIMARY KEY,
+       trade_date DATE UNIQUE NOT NULL,
+       evaluated_at TIMESTAMP NOT NULL,
+       spot NUMERIC,
+       vix_ratio NUMERIC,
+       call_short_strike_considered NUMERIC,
+       call_long_strike_considered NUMERIC,
+       entry_credit_seen NUMERIC,
+       decision TEXT NOT NULL,
+       call_gamma NUMERIC,
+       put_gamma NUMERIC,
+       net_gamma NUMERIC,
+       gamma_flip NUMERIC,
+       put_wall NUMERIC,
+       call_wall NUMERIC,
+       gamma_source TEXT NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  _flintContextTableReady = true
+}
+
+/**
+ * Dealer-gamma read for the day, cached once per CT day — mirrors
+ * getNetGexCached()/getTvMarketStructureCached() above: OI updates once
+ * daily, so re-reading the chain every scan cycle inside the 5-minute
+ * entry window buys nothing and just burns Tradier/TV calls. Never
+ * throws: any failure anywhere in this function resolves to
+ * UNAVAILABLE_FLINT_GAMMA_CONTEXT rather than propagating.
+ *
+ * put_wall/call_wall are always null — no LIVE source in this codebase
+ * currently reports dealer wall price levels (the old alphagex-api
+ * /api/gex/{symbol} route that used to is gone — confirmed 404 as of
+ * 2026-09-26 — and the Trading Volatility market-structure client used
+ * here only exposes the flip price, not wall strikes). Storing a
+ * fabricated wall would violate "never fabricate," so these stay null
+ * until a real source exists.
+ */
+let _flintGammaContextCache: { day: string; value: FlintGammaContext } | null = null
+async function getFlintGammaContextCached(ct: Date, spot: number | null): Promise<FlintGammaContext> {
+  const day = ct.toISOString().slice(0, 10)
+  if (_flintGammaContextCache && _flintGammaContextCache.day === day) {
+    return _flintGammaContextCache.value
+  }
+  let value: FlintGammaContext = UNAVAILABLE_FLINT_GAMMA_CONTEXT
+  try {
+    if (spot && spot > 0) {
+      const comps = await getGammaExposureComponents('SPY', spot, 60)
+      if (comps) {
+        let gammaFlip: number | null = null
+        try {
+          const tv = await getTvMarketStructure('SPY')
+          gammaFlip = tv && tv.gammaFlipPrice > 0 ? tv.gammaFlipPrice : null
+        } catch { gammaFlip = null }
+        value = {
+          callGamma: comps.callGex,
+          putGamma: comps.putGex,
+          netGamma: comps.netGex,
+          gammaFlip,
+          putWall: null,
+          callWall: null,
+          gammaSource: 'tradier_chain_dollar_gex_dte0-60',
+        }
+      }
+    }
+  } catch {
+    value = UNAVAILABLE_FLINT_GAMMA_CONTEXT
+  }
+  _flintGammaContextCache = { day, value }
+  return value
+}
+
+/**
+ * Writes one row of forward-logging context per evaluated day. Called from
+ * every terminal branch of tryOpenFlint EXCEPT the "already traded today"
+ * short-circuit (that branch re-checks existing state, it doesn't make a
+ * fresh evaluation, and re-logging it would clobber the good row already
+ * written when the trade actually happened).
+ *
+ * 🚨 Must NEVER throw into the trading path — this is pure observability.
+ * Every failure (gamma read, DB write, anything) is caught here and only
+ * ever produces a console.warn.
+ */
+async function logFlintDailyContext(params: {
+  ct: Date
+  decision: string
+  vixRatio: number | null
+  spot: number | null
+  shortStrike: number | null
+  longStrike: number | null
+  entryCredit: number | null
+}): Promise<void> {
+  try {
+    await ensureFlintContextTable()
+
+    let spot = params.spot
+    if (!(spot && spot > 0)) {
+      try {
+        const q = await getQuote('SPY')
+        spot = q?.last ?? null
+      } catch { spot = null }
+    }
+
+    const gamma = await getFlintGammaContextCached(params.ct, spot)
+    const row = buildFlintDailyContextRow({
+      tradeDate: params.ct.toISOString().slice(0, 10),
+      evaluatedAt: params.ct,
+      spot,
+      vixRatio: params.vixRatio,
+      shortStrike: params.shortStrike,
+      longStrike: params.longStrike,
+      entryCredit: params.entryCredit,
+      decision: params.decision,
+      gamma,
+    })
+
+    await query(
+      `INSERT INTO ${FLINT_CONTEXT_TABLE} (
+         trade_date, evaluated_at, spot, vix_ratio,
+         call_short_strike_considered, call_long_strike_considered, entry_credit_seen,
+         decision, call_gamma, put_gamma, net_gamma, gamma_flip, put_wall, call_wall, gamma_source
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       ON CONFLICT (trade_date) DO UPDATE SET
+         evaluated_at = EXCLUDED.evaluated_at,
+         spot = EXCLUDED.spot,
+         vix_ratio = EXCLUDED.vix_ratio,
+         call_short_strike_considered = EXCLUDED.call_short_strike_considered,
+         call_long_strike_considered = EXCLUDED.call_long_strike_considered,
+         entry_credit_seen = EXCLUDED.entry_credit_seen,
+         decision = EXCLUDED.decision,
+         call_gamma = EXCLUDED.call_gamma,
+         put_gamma = EXCLUDED.put_gamma,
+         net_gamma = EXCLUDED.net_gamma,
+         gamma_flip = EXCLUDED.gamma_flip,
+         put_wall = EXCLUDED.put_wall,
+         call_wall = EXCLUDED.call_wall,
+         gamma_source = EXCLUDED.gamma_source`,
+      [
+        row.trade_date, row.evaluated_at, row.spot, row.vix_ratio,
+        row.call_short_strike_considered, row.call_long_strike_considered, row.entry_credit_seen,
+        row.decision, row.call_gamma, row.put_gamma, row.net_gamma, row.gamma_flip, row.put_wall,
+        row.call_wall, row.gamma_source,
+      ],
+    )
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT context logging failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+  }
+}
+
+/**
+ * FLINT's own paper ledger read — FLAME's paper (sandbox) account, the same
+ * row the EBB put-side ladder reads for `bot.dte`. floor = starting_capital
+ * (the funded seed); equity = current_balance (starting + realized P&L). Not
+ * FLINT's own table — FLINT never gets its own ledger, per spec, it trades
+ * "(FLAME account)" and is gated on FLAME's account state. null on any read
+ * failure or missing row — the caller must skip, never guess.
+ */
+export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
+  try {
+    const rows = await query(
+      `SELECT starting_capital, current_balance FROM ${botTable(bot.name, 'paper_account')}
+       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
+       ORDER BY id DESC LIMIT 1`,
+      [bot.dte],
+    )
+    if (rows.length === 0) return { floor: null, equity: null }
+    const floor = num(rows[0].starting_capital)
+    const equity = num(rows[0].current_balance)
+    return {
+      floor: Number.isFinite(floor) && floor > 0 ? floor : null,
+      equity: Number.isFinite(equity) ? equity : null,
+    }
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return { floor: null, equity: null }
+  }
+}
+
+/**
+ * Trailing LOGGED call_gamma for FLINT_FAVORABLE_UPSIZE's day-20 self-
+ * activation — every flint_daily_context row strictly BEFORE `beforeDate`
+ * with a non-null call_gamma and the SAME gamma_source as today's live
+ * read (mixing sources would compare numbers from different vendors), most
+ * recent first, capped at `limit` sessions. Empty on any read failure or a
+ * pre-migration deploy — the caller's evaluateFlintGammaUpsize then reports
+ * n=0/20 (inactive), never a guess.
+ */
+async function getFlintTrailingCallGamma(gammaSource: string, beforeDate: string, limit: number): Promise<number[]> {
+  try {
+    await ensureFlintContextTable()
+    const rows = await query(
+      `SELECT call_gamma FROM ${FLINT_CONTEXT_TABLE}
+       WHERE call_gamma IS NOT NULL AND gamma_source = $1 AND trade_date < $2
+       ORDER BY trade_date DESC LIMIT $3`,
+      [gammaSource, beforeDate, limit],
+    )
+    return rows.map((r) => num(r.call_gamma)).filter((v) => Number.isFinite(v))
+  } catch (e: unknown) {
+    console.warn(`[scanner] FLINT: trailing call_gamma read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return []
+  }
+}
+
+/**
+ * Entry. Called every scan cycle for FLAME only (see scanBot); internally a
+ * no-op unless mode != off and inside FLAME's own 13:05-13:10 CT entry
+ * window (isInEntryWindow reused byte-for-byte, not re-derived). Unlike the
+ * old FLAME-CALL sleeve, FLINT trades EVERY day — FLAME's own VIX decay gate
+ * ratio is recorded (for flint_daily_context research only) but no longer
+ * gates entry (isFlintDayEligible is a documented no-op; see flint.ts).
+ *
+ * The paper book and each production account are gated INDEPENDENTLY by
+ * rule R1 (evaluateFlintProfitGate) — one account's outcome never affects
+ * another's. The paper book's decision is evaluated here directly; each
+ * production account's R1 gate + buying-power check run inside
+ * placeCallSpreadOrderAllAccounts (tradier.ts), so an account already
+ * traded today, or gated out on cushion or BP, simply never appears in that
+ * call's result and gets no row here. One trade per account per day, fixed
+ * size — no ladder, no stand-down, no liquidity cap; this is a 1-lot sleeve.
+ */
+async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
+  const mode = getFlintMode()
+  if (mode === 'off') return ''
+  if (!isConfigured()) return ''
+  if (!isInEntryWindow(ct, bot)) return ''
+
+  await ensureFlintTable()
+
+  // Ratio is recorded for research (flint_daily_context) — it never gates
+  // entry any more. isFlintDayEligible is called (and its result ignored)
+  // purely so a future accidental re-introduction of a ratio gate shows up
+  // as a diff to that function, not a silent behavior change here.
+  const asofDate = ct.toISOString().slice(0, 10)
+  // botCeiling generalizes this from FLAME-only to SPARK too (2026-09-27,
+  // SPARK_FLINT) — the ratio itself is a market-wide VIX signal; only the
+  // "gated" boolean this function ALSO returns differs by ceiling, and that
+  // field is unused here (isFlintDayEligible below is a no-op by design).
+  const botCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+  const flameVix = await vixDecayCheck(asofDate, botCeiling)
+  void isFlintDayEligible(flameVix.ratio)
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.log('[scanner] FLINT: no_trade | skip:no_quote')
+    await logFlintDailyContext({
+      ct, decision: 'skip:no_quote', vixRatio: flameVix.ratio,
+      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:no_quote'
+  }
+
+  const expiration = getTargetExpiration(0) // 0DTE, same-day — independent of FLAME's own 2DTE
+  const { short: callShort, long: callLong } = computeFlintStrikes(spot, getFlintOtmOffset())
+
+  const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
+  if (!credit) {
+    console.log('[scanner] FLINT: no_trade | skip:no_quotes')
+    await logFlintDailyContext({
+      ct, decision: 'skip:no_quotes', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:no_quotes'
+  }
+  const minCredit = getFlintMinCredit()
+  if (!meetsFlintCreditFloor(credit.callCredit, minCredit)) {
+    console.log(`[scanner] FLINT: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    await logFlintDailyContext({
+      ct, decision: 'skip:call_credit_too_low', vixRatio: flameVix.ratio,
+      spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return 'FLINT: no_trade | skip:call_credit_too_low'
+  }
+
+  const baseContracts = getFlintMaxContracts()
+  const width = callLong - callShort
+
+  // FLINT_FAVORABLE_UPSIZE (Leron, 2026-09-26, "Yes" to "FLINT's size-up
+  // switching itself on at day 20"): +1 contract when today's call-side
+  // dealer gamma is in the top third (67th percentile) of the trailing 20
+  // LOGGED sessions with the same gamma_source. A MARKET-WIDE decision made
+  // ONCE here and shared by the paper book and every production/sandbox
+  // account below — each of THOSE still applies its own R1/BP step-down
+  // independently (see evaluateFlintGammaUpsize, flint.ts). Self-activates
+  // at day 20; before that, `inactive`, never a cushion skip.
+  let desiredContracts = baseContracts
+  if (getFlintFavorableUpsizeMode()) {
+    const gammaCtx = await getFlintGammaContextCached(ct, spot)
+    const trailing = await getFlintTrailingCallGamma(gammaCtx.gammaSource, asofDate, FLINT_GAMMA_UPSIZE_MIN_SESSIONS)
+    const gammaEval = evaluateFlintGammaUpsize(gammaCtx.callGamma, trailing)
+    if (gammaEval.sessionsUsed < FLINT_GAMMA_UPSIZE_MIN_SESSIONS) {
+      console.log(`[scanner] FLINT upsize inactive: ${gammaEval.reason}`)
+    } else if (gammaEval.eligible) {
+      desiredContracts = baseContracts + 1
+      console.log(
+        `[scanner] FLINT upsize +1 (call_gamma=${gammaCtx.callGamma}, p67=${gammaEval.threshold?.toFixed(4) ?? 'n/a'}, n=${gammaEval.sessionsUsed})`,
+      )
+    } else {
+      console.log(`[scanner] FLINT upsize skip: ${gammaEval.reason}`)
+    }
+  }
+
+  const botName = bot.name.toLowerCase()
+  const positionId =
+    `FLINT-${botName !== 'flame' ? botName.toUpperCase() + '-' : ''}SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  // ---- PAPER BOOK — rule R1 against this bot's OWN paper ledger, tried at
+  // desiredContracts first and stepped down to baseContracts if only the
+  // extra lot breaks the cushion ("if cushion covers 1 but not 2, trade 1").
+  // When the upsize is off/inactive, desiredContracts === baseContracts, so
+  // this is exactly ONE evaluation — byte-for-byte the old single-size gate.
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now") is a FLAME-only
+  // operator decision, gated on botName === 'flame' now that FLINT also
+  // runs for SPARK — unset env (or botName !== 'flame') = this branch never
+  // fires = byte-for-byte prior behavior for FLAME, and SPARK's own paper
+  // book is never affected by a flag scoped to FLAME's calendar.
+  let paperDecision: string
+  const weekdaySkipSet = getFlameSkipWeekdays()
+  const todayAbbrev = weekdayAbbrevFromDow(ct.getDay())
+  if (botName === 'flame' && isWeekdayInSkipSet(todayAbbrev, weekdaySkipSet)) {
+    paperDecision = weekdaySkipLogTag(todayAbbrev)
+    console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
+  } else {
+    const paperToday = await query(
+      `SELECT COUNT(*) AS cnt FROM ${FLINT_TABLE}
+       WHERE open_date = ${CT_TODAY} AND account_type = 'paper' AND bot = $1`,
+      [botName],
+    )
+    if (int(paperToday[0]?.cnt) >= 1) {
+      paperDecision = 'skip:already_traded_today'
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper skip:already_traded_today`)
+    } else {
+      const paperLedger = await getFlintPaperLedger(bot)
+      const decision = decideFlintContractsForCushion(
+        desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
+      )
+      const gate = decision.gate
+      if (decision.contracts < 1) {
+        paperDecision = gate.reason ?? 'skip:flint_profit_cushion(unreadable)'
+        console.log(`[scanner] FLINT/${botName.toUpperCase()}: no_trade | paper ${paperDecision}`)
+      } else {
+        const contracts = decision.contracts
+        const collateral = Math.max(0, (width - credit.callCredit) * 100) * contracts
+        await query(
+          `INSERT INTO ${FLINT_TABLE} (
+             position_id, ticker, expiration, call_short_strike, call_long_strike,
+             contracts, entry_credit, collateral_required, underlying_at_entry,
+             status, account_type, person, mode, bot, open_time, open_date
+           ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9,$10, NOW(), ${CT_TODAY})`,
+          [positionId, expiration, callShort, callLong, contracts, credit.callCredit, collateral, spot, mode, botName],
+        )
+        console.log(
+          `[scanner] FLINT/${botName.toUpperCase()} SPY: ${contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+          `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
+        )
+        paperDecision = 'traded'
+
+        // CUSTOMER_FLINT (2026-09-28): mirror to activated customers. Fire-and-forget,
+        // never throws into the trading path — mirrorFlintOpenToCustomers catches
+        // everything internally. No-ops with zero DB/broker calls unless BOTH
+        // CUSTOMER_EXECUTOR_ENABLED and CUSTOMER_FLINT are set. width/positionId reuse
+        // the exact values just written to the paper ledger above (same trade, same day).
+        void mirrorFlintOpenToCustomers({
+          botName, positionId, ticker: 'SPY', expiration,
+          callShort, callLong, spreadWidth: width, credit: credit.callCredit,
+          tradeDate: asofDate,
+        })
+      }
+    }
+  }
+
+  await logFlintDailyContext({
+    ct, decision: paperDecision, vixRatio: flameVix.ratio,
+    spot, shortStrike: callShort, longStrike: callLong, entryCredit: credit.callCredit,
+  }).catch(() => { /* forward-logging must never touch the trading path */ })
+
+  if (mode !== 'live') return `FLINT: paper=${paperDecision}`
+
+  // EDGE-DECAY PAUSE (real accounts only). Blocks SANDBOX + PRODUCTION entries
+  // while FLINT is paused on a CUSUM alarm (EDGE_DECAY_MODE=enforce); the paper
+  // book above is deliberately NOT gated — it already runs unconditionally,
+  // independent of the live arm switch, and its continued zero-capital-risk
+  // closes ARE the 10-trade shadow block the resume rule scores (see
+  // lib/edge-decay.ts's header). No-ops false with zero DB access unless mode
+  // is exactly 'enforce'.
+  try {
+    const { isEdgeDecayPaused } = await import('./edge-decay')
+    if (await isEdgeDecayPaused('flint')) {
+      console.log('[scanner] FLINT: live entries paused by edge-decay alarm — paper book continues as the shadow block')
+      return `FLINT: paper=${paperDecision} live:paused(edge_decay)`
+    }
+  } catch (e) {
+    console.warn(`[edge-decay] FLINT pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account this bot's own put
+  // spread places on (resolveEligibleAccounts(botName)), each gated
+  // INDEPENDENTLY of the paper book and of every other account.
+  // canPlaceLiveOrders(botName) / describeLiveGate are no longer checked
+  // here as a blanket early-return: a disarmed bot must still let its
+  // SANDBOX mirrors trade — placeCallSpreadOrderAllAccounts applies the arm
+  // gate to PRODUCTION only, internally (canPlaceLiveOrders('spark') is
+  // hard-coded false, so SPARK's FLINT sleeve only ever reaches sandbox).
+  // Rule R1 + the buying-power check both run per-account inside that call
+  // (with its own upsize step-down from desiredContracts to baseContracts);
+  // an account that already traded today, or is gated out on cushion or
+  // BP, is simply absent from `live`.
+  try {
+    const live = await placeCallSpreadOrderAllAccounts(
+      'SPY', expiration, callShort, callLong, desiredContracts, credit.callCredit, positionId,
+      { baseContracts, botName },
+    )
+    const fills = Object.entries(live)
+    if (fills.length === 0) {
+      const armNote = canPlaceLiveOrders(botName) ? '' : ` (production:disarmed(${describeLiveGate(botName)}))`
+      console.log(`[scanner] FLINT/${botName.toUpperCase()}: live:no_fill${armNote}`)
+      return `FLINT: paper=${paperDecision} live:no_fill${armNote}`
+    }
+    for (const [key, info] of fills) {
+      const hasFill = info.fill_price != null && info.fill_price > 0
+      const pCredit = hasFill ? info.fill_price! : credit.callCredit
+      const pContracts = info.contracts
+      const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
+      const pPerson = key.split(':')[0] || 'PRODUCTION'
+      const pAccountType = info.account_type === 'production' ? 'production' : 'sandbox'
+      const pId = `${positionId}-${pAccountType}-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      await query(
+        `INSERT INTO ${FLINT_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, person, mode, bot, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, botName, String(info.order_id)],
+      )
+      console.log(
+        `[scanner] FLINT/${botName.toUpperCase()} ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
+      )
+    }
+  } catch (e: unknown) {
+    console.error(`[scanner] FLINT live placement failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  return `FLINT: paper=${paperDecision}`
+}
+
+/**
+ * Assignment guard for FLINT — mirrors closeAtRiskBeforeBell's 14:57-15:00 CT
+ * window and buffer semantics (spot within, or above, the buffer of the
+ * short strike), but against flint_positions only, with its OWN buffer
+ * (FLINT_GUARD_BUFFER, default $0.25 — narrower than FLAME's put-side
+ * $0.50, per spec). A buffer of 0 (env set to '' or '0') disables the
+ * guard: the position then holds to expiry unguarded, deliberately, same
+ * fail-safe direction as the rest of this file — no quote closes nothing.
+ *
+ * The DB row is always closed here (status/close_price/realized_pnl), for
+ * EVERY account_type, the moment the buffer trips — that bookkeeping never
+ * depended on the broker call below. The broker-side buy-back runs for
+ * BOTH 'production' and 'sandbox' rows with mode='live' (real Tradier
+ * orders on both, per Leron 2026-09-26 — a sandbox mirror's guard used to
+ * close only in the DB and hold open on the broker), and is routed by
+ * `flint_positions.person` to that ONE account — see
+ * placeCallSpreadOrderAllAccounts's targetPerson doc. Never "close every
+ * eligible account of this type": with more than one account of the same
+ * type, that would buy back a DIFFERENT customer's position.
+ */
+async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
+
+  const buffer = getFlintGuardBuffer()
+  if (!(buffer > 0)) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
+            entry_credit, account_type, mode, person, bot
+       FROM ${FLINT_TABLE}
+      WHERE status = 'open' AND expiration = $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.warn(`[scanner] FLINT ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    return 'FLINT guard:no_quote'
+  }
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    if (!isFlintGuardTriggered(spot, shortStrike, buffer)) {
+      out.push(`${p.position_id}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+    const expiration = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+
+    // Cost to close, worst-realistic-fill NBBO: buy back the short at its ASK,
+    // sell the long at its BID. No quote fails safe to the theoretical max
+    // (the full wing) rather than guessing a cheaper close.
+    let costToClose = width
+    try {
+      const [csQ, clQ] = await Promise.all([
+        getOptionQuote(buildOccSymbol('SPY', expiration, shortStrike, 'C')),
+        getOptionQuote(buildOccSymbol('SPY', expiration, longStrike, 'C')),
+      ])
+      if (csQ && clQ) costToClose = Math.min(Math.max(0, csQ.ask - clQ.bid), width)
+    } catch { /* keep the fail-safe worst case */ }
+
+    const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+
+    // Idempotency claim (Fix 5's pattern, ported here): flint_positions is
+    // bot-agnostic and closeFlintAtRiskBeforeBell is invoked once per bot from
+    // scanBot() for BOTH 'flame' and 'spark', which run concurrently via
+    // Promise.allSettled — so two overlapping calls can both select the SAME
+    // open row in the 14:57-15:00 CT window (this is also the second caller a
+    // stuck-cycle watchdog reset can create). Whichever UPDATE actually flips
+    // status='open'->'closed' wins the row; a loser that doesn't check its own
+    // rowcount would still fall through and fire a SECOND real broker buy-back
+    // for a position that's already closed. dbExecute + rowCount, not query().
+    const claimed = await dbExecute(
+      `UPDATE ${FLINT_TABLE}
+         SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [costToClose, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_closed`)
+      continue
+    }
+    // EDGE-DECAY: feed this closed trade's per-contract pnl into FLINT's own
+    // CUSUM. No-ops with zero DB access when EDGE_DECAY_MODE is unset — see
+    // lib/edge-decay.ts. Never allowed to affect the trading path.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT guard-close hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
+    console.log(
+      `[scanner] FLINT GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
+      `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). Keyed by source_position_id — a never-mirrored position_id simply
+    // matches zero customer_positions rows.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'assignment_guard')
+
+    if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
+      if (!p.person) {
+        console.error(
+          `[scanner] FLINT LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
+          `refusing to guess which account to close.`,
+        )
+      } else {
+        try {
+          await placeCallSpreadOrderAllAccounts(
+            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+            { close: true, targetPerson: p.person, botName: (p.bot as string | undefined) ?? 'flame' },
+          )
+        } catch (e: unknown) {
+          console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+    }
+    out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
+  }
+  return out.length ? `FLINT guard[${out.join(' ')}]` : ''
+}
+
+/**
+ * Settlement at expiry — hold to close, no stop, no take-profit (spec). Books
+ * intrinsic value of the call spread against SPY's close, clamped to the
+ * wing width, the same convention FLAME's own put side settles with. Only
+ * ever touches rows whose expiration has been reached; a missing close price
+ * fails safe to the full wing (worst case) rather than guessing.
+ */
+async function settleFlintExpired(ct: Date): Promise<string> {
+  if (getFlintMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < assignmentGuardWindow(ct).endHHMM) return '' // same close-of-day boundary as the put side, early-close aware
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit, bot
+       FROM ${FLINT_TABLE}
+      WHERE status = 'open' AND expiration <= $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const closePx = q?.last ?? null
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+
+    const intrinsic = closePx != null && closePx > 0
+      ? Math.min(Math.max(0, closePx - shortStrike), width)
+      : width // no close price: fail safe to worst case, same convention as the guard above
+
+    const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
+
+    // Same idempotency claim as closeFlintAtRiskBeforeBell above: settleFlintExpired
+    // is also called for both 'flame' and 'spark' every cycle against this SAME
+    // bot-agnostic table, so two overlapping cycles can both select this row.
+    // rowCount === 0 means another cycle already settled it — skip the
+    // edge-decay double-count and the misleading duplicate "SETTLED" log line.
+    const claimed = await dbExecute(
+      `UPDATE ${FLINT_TABLE}
+         SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [intrinsic, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_settled`)
+      continue
+    }
+    // EDGE-DECAY: this is FLINT's primary close path (holds to expiry) — see
+    // the assignment-guard hook above for the other one. No-ops with zero DB
+    // access when EDGE_DECAY_MODE is unset.
+    try {
+      const { recordEdgeDecayClose } = await import('./edge-decay')
+      await recordEdgeDecayClose('flint', realizedPnl / Math.max(1, contracts))
+    } catch (e) {
+      console.warn(`[edge-decay] FLINT settle hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    }
+    console.log(
+      `[scanner] FLINT SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
+      `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    // CUSTOMER_FLINT: close every customer mirror of this FLINT position (fire-and-forget,
+    // never throws). This is FLINT's primary close path (holds to expiry) — see the
+    // assignment-guard hook above for the other one.
+    void mirrorCloseToCustomers((p.bot as string | undefined) ?? 'flame', String(p.position_id), 'settled_at_expiry')
+
+    out.push(`${p.position_id}=settled`)
+  }
+  return out.length ? `FLINT settle[${out.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  THE EXPIRED-POSITION WATCHDOG — a backstop that FIXES, not an alarm */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Per-bot consecutive-cycle and attempt state. Process memory is the fast path; the
+ * durable attempt count that actually arms the circuit breaker is read back out of
+ * the bot's own log table, so a redeploy cannot silently re-arm an infinite retry.
+ */
+const _watchdogLedgers: Record<string, WatchdogLedger> = {}
+function watchdogLedger(botName: string): WatchdogLedger {
+  const existing = _watchdogLedgers[botName]
+  if (existing) return existing
+  const fresh = new WatchdogLedger()
+  _watchdogLedgers[botName] = fresh
+  return fresh
+}
+
+/** Prefix of the durable attempt marker. The circuit breaker counts these rows. */
+const WATCHDOG_ATTEMPT_PREFIX = 'WATCHDOG FORCE-SETTLE ATTEMPT'
+
+/** Write to the bot's own log table. Logging must never take the watchdog down. */
+async function watchdogLog(
+  bot: BotDef,
+  level: string,
+  message: string,
+  details: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode)
+       VALUES ($1, $2, $3, $4)`,
+      [level, message, JSON.stringify(details), bot.dte],
+    )
+  } catch { /* console already has it */ }
+}
+
+/**
+ * BACKSTOP PASS — runs immediately after the normal settle pass, every scan cycle.
+ *
+ * An expired contract that is still `status = 'open'` is always wrong, whatever the
+ * cause, and with max 1 concurrent position it blocks every entry until someone
+ * notices. SPARK lost three trading days to exactly that while its log printed
+ * confident SETTLED lines. An ALARM would not have helped — it converts a silent
+ * failure into a notification somebody still has to act on. So this one repairs the
+ * book at the deterministic value and reports what it did.
+ *
+ * Auto-remediation is safe HERE and rarely elsewhere: the value of an expired option
+ * is not a judgment call. It is intrinsic at the official close, clamped to the wing.
+ * No market read, no fill, no timing.
+ *
+ * 🚨 Both guards live in ./settle-watchdog and are load-bearing:
+ *   1. Settle off the daily bar's close for the expiration date or DO NOTHING and
+ *      escalate. Never a $0 mark, never a live quote on a dead contract.
+ *   2. One force-settle per position, ever. A second means the fixer is broken.
+ *
+ * Never allowed to throw — the caller wraps it, and a watchdog that can take the scan
+ * cycle down is worse than the bug it watches for.
+ */
+async function watchdogForceSettleExpired(bot: BotDef, ct: Date): Promise<string> {
+  const todayStr = ct.toISOString().slice(0, 10)
+  const ledger = watchdogLedger(bot.name)
+
+  // STRICTLY past expiry (`<`, not `<=`). Expiry day itself belongs to the normal
+  // settle path, which waits for the 15:00 close; a swing hold expiring later is
+  // excluded by the same comparison.
+  const rows = await query(
+    `SELECT position_id, ticker, expiration, put_short_strike, put_long_strike,
+            call_short_strike, call_long_strike, contracts, total_credit,
+            collateral_required
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE status = 'open' AND dte_mode = $1 AND expiration < $2::date`,
+    [bot.dte, todayStr],
+  )
+
+  // Observe the FULL offender set every cycle, including the empty set. A position the
+  // normal path settled must not carry a stale count into a future incident — a
+  // counter that only ever grows is not a CONSECUTIVE counter.
+  const offenders = rows.map((r) => String(r.position_id))
+  ledger.observe(offenders)
+  if (rows.length === 0) return ''
+
+  const repaired: WatchdogRepair[] = []
+  const failed: WatchdogFailure[] = []
+  const closeCache = new Map<string, number | null>()
+
+  for (const p of rows) {
+    const positionId = String(p.position_id)
+    const ticker = String(p.ticker || 'SPY')
+    const exp = normalizeExpiration(p.expiration)
+    const legs = {
+      putShort: num(p.put_short_strike),
+      putLong: num(p.put_long_strike),
+      callShort: num(p.call_short_strike),
+      callLong: num(p.call_long_strike),
+    }
+
+    // 🚨 GUARD 2, durable half. Memory resets on every deploy; the log table does not.
+    // Counting the ATTEMPT rows means a redeploy in the middle of a broken repair
+    // cannot re-arm the loop that cost three days the first time.
+    let attempts = ledger.attemptsFor(positionId)
+    try {
+      const priorRows = await query(
+        `SELECT COUNT(*)::int AS n FROM ${botTable(bot.name, 'logs')}
+          WHERE level = $1 AND dte_mode = $2 AND message LIKE $3`,
+        [WATCHDOG_LOG_LEVEL, bot.dte, `${WATCHDOG_ATTEMPT_PREFIX}: ${positionId}%`],
+      )
+      attempts = Math.max(attempts, int(priorRows[0]?.n))
+    } catch {
+      // A log-table read failure must not be read as "no prior attempts" — that is
+      // the permissive direction, and the permissive direction is the loop. Assume
+      // the breaker is armed and let the escalation path say so.
+      attempts = Math.max(attempts, WATCHDOG_MAX_ATTEMPTS)
+    }
+
+    // 🚨 GUARD 1. The ONLY price source is the daily bar for the expiration date. The
+    // lookback is sized from how long the position has been stuck — the normal path's
+    // fixed 10-day window would silently miss anything stranded for two weeks.
+    const cacheKey = `${ticker}:${exp}`
+    let settleClose: number | null
+    if (closeCache.has(cacheKey)) {
+      settleClose = closeCache.get(cacheKey) ?? null
+    } else {
+      const staleDays = Math.ceil(
+        (Date.parse(`${todayStr}T00:00:00Z`) - Date.parse(`${exp}T00:00:00Z`)) / 86_400_000,
+      )
+      const lookback = Math.min(400, Math.max(10, (Number.isFinite(staleDays) ? staleDays : 10) + 7))
+      try {
+        const hist = await getDailyHistory(ticker, lookback)
+        const c = hist.find((h) => h.date === exp)?.close
+        settleClose = typeof c === 'number' && c > 0 ? c : null
+      } catch {
+        settleClose = null // no close means no settle. It never means zero.
+      }
+      closeCache.set(cacheKey, settleClose)
+    }
+
+    const decision = decideWatchdog({
+      cyclesSeen: ledger.cyclesSeen(positionId),
+      attempts,
+      tripped: ledger.isTripped(positionId),
+      settleClose,
+      legs,
+    })
+
+    if (decision.action === 'silent') continue
+
+    if (decision.action === 'wait') {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG: ${positionId} expired ${exp} and still ` +
+        `open (cycle ${decision.cyclesSeen}) — leaving it to the normal settle path this cycle.`,
+      )
+      continue
+    }
+
+    if (decision.action === 'escalate') {
+      ledger.trip(positionId)
+      failed.push({ positionId, cause: decision.cause, detail: decision.detail })
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} WATCHDOG CANNOT SETTLE ${positionId} *** ` +
+        `${decision.cause}: ${decision.detail}`,
+      )
+      await watchdogLog(
+        bot, WATCHDOG_ESCALATION_LEVEL,
+        `WATCHDOG CANNOT SETTLE: ${positionId} — ${decision.cause}: ${decision.detail}`,
+        { position_id: positionId, ticker, expiration: exp, cause: decision.cause, settle_close: settleClose },
+      )
+      continue
+    }
+
+    // ---- decision.action === 'settle' -------------------------------------------
+    const credit = num(p.total_credit)
+    const contracts = int(p.contracts)
+    const pnl = settlementPnl(credit, decision.value, contracts)
+
+    // Record the ATTEMPT before making it. If the process dies mid-close the attempt
+    // still counts, which is the conservative direction for a circuit breaker.
+    ledger.recordAttempt(positionId)
+    await watchdogLog(
+      bot, WATCHDOG_LOG_LEVEL,
+      `${WATCHDOG_ATTEMPT_PREFIX}: ${positionId} — expired ${exp}, still open after ` +
+      `${ledger.cyclesSeen(positionId)} cycles; settling at close=${decision.settleClose.toFixed(2)}`,
+      { position_id: positionId, ticker, expiration: exp, settle_close: decision.settleClose, value: decision.value },
+    )
+
+    let outcome: CloseOutcome = 'failed'
+    try {
+      outcome = await closePosition(
+        bot, positionId, ticker, exp,
+        legs.putShort, legs.putLong, legs.callShort, legs.callLong,
+        contracts, credit, num(p.collateral_required),
+        WATCHDOG_SETTLE_REASON, decision.value,
+      )
+    } catch (e: unknown) {
+      outcome = 'failed'
+      console.error(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG close threw for ${positionId}:`,
+        e instanceof Error ? e.message : e,
+      )
+    }
+
+    // 🚨 A DEFERRAL MUST NOT TRIP THE BREAKER. Deferred means the order is live and
+    // the fill is coming, which is a healthy in-flight close, not a broken fixer.
+    // Tripping on it would burn the position's single force-settle attempt on a
+    // close that was about to succeed. (It cannot actually happen here — a
+    // book-only settle never touches the broker — but the breaker must be right by
+    // construction, not by luck.)
+    if (outcome === 'deferred') {
+      console.log(
+        `[scanner] ${bot.name.toUpperCase()} WATCHDOG: ${positionId} force-settle is PENDING ` +
+        `a broker fill — leaving the breaker armed but untripped; re-checked next cycle.`,
+      )
+      continue
+    }
+
+    if (outcome === 'failed') {
+      // The fixer ran and the row did not move. Escalate now; the breaker stops any
+      // repeat on the next cycle without a second write.
+      ledger.trip(positionId)
+      failed.push({
+        positionId,
+        cause: 'close_declined',
+        detail:
+          `force-settle at $${decision.value.toFixed(2)} did not move the row ` +
+          `(close=${decision.settleClose.toFixed(2)}). Not retrying.`,
+      })
+      console.error(
+        `[scanner] *** ${bot.name.toUpperCase()} WATCHDOG FORCE-SETTLE DID NOT CLOSE ${positionId} *** ` +
+        `value=$${decision.value.toFixed(2)} — position stays OPEN and blocks new entries.`,
+      )
+      await watchdogLog(
+        bot, WATCHDOG_ESCALATION_LEVEL,
+        `WATCHDOG FORCE-SETTLE DID NOT CLOSE: ${positionId} — closePosition declined; ` +
+        `position stays OPEN and blocks new entries`,
+        { position_id: positionId, ticker, expiration: exp, value: decision.value, settle_close: decision.settleClose },
+      )
+      continue
+    }
+
+    repaired.push({ positionId, value: decision.value, pnl })
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} WATCHDOG FORCE-SETTLED ${positionId} ` +
+      `close=${decision.settleClose.toFixed(2)} value=$${decision.value.toFixed(2)} ` +
+      `pnl=$${pnl.toFixed(2)} — entries unblocked.`,
+    )
+    await watchdogLog(
+      bot, WATCHDOG_LOG_LEVEL,
+      `WATCHDOG FORCE-SETTLED: ${positionId} @ $${decision.value.toFixed(2)} ` +
+      `P&L=$${pnl.toFixed(2)} [${WATCHDOG_SETTLE_REASON}]`,
+      { position_id: positionId, ticker, expiration: exp, value: decision.value, settle_close: decision.settleClose, realized_pnl: pnl },
+    )
+  }
+
+  const summary = summarizeWatchdogRun(bot.name, repaired, failed)
+  if (summary) {
+    // Discord carries the readable record; ntfy is what actually reaches a phone.
+    // `@here` never did — see the note on sendOpsPush.
+    void sendOpsPush({
+      title: summary.severity === 'critical'
+        ? `${bot.name.toUpperCase()} could not settle an expired position`
+        : `${bot.name.toUpperCase()} force-settled expired positions`,
+      body: summary.text,
+      severity: summary.severity,
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
+    void postOpsAlert({
+      botName: bot.name,
+      title: summary.severity === 'critical'
+        ? 'Expired positions could NOT be settled'
+        : 'Expired positions force-settled',
+      body: summary.text,
+      severity: summary.severity,
+    }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
+  }
+
+  const parts = [
+    ...repaired.map((r) => `${r.positionId}=watchdog@${r.value.toFixed(2)}`),
+    ...failed.map((f) => `${f.positionId}=watchdog_${f.cause}`),
+  ]
+  return parts.length ? ` watchdog[${parts.join(' ')}]` : ''
+}
+
+/* ------------------------------------------------------------------ */
+/*  "THIS BOT HAS NOT TRADED" — the symptom net                        */
+/* ------------------------------------------------------------------ */
+
+/** Per-bot guard so the heartbeat runs at most once per CT trading day. */
+const _lastHeartbeatDate: Record<string, string | null> = {}
+
+/**
+ * Fires when a bot that expects ~1 entry per trading day has gone N trading days with
+ * zero opens AND no strategy reason for it.
+ *
+ * The watchdog above fixes ONE cause. This catches the symptom — blocked entries —
+ * independent of cause, and would have fired on 8/22, four days before a human
+ * noticed the page looked stuck.
+ *
+ * Runs once per CT date, after every entry window has closed so "today produced no
+ * entry" is a settled fact rather than a guess.
+ */
+async function tradeHeartbeatCheck(bot: BotDef, ct: Date): Promise<void> {
+  // FLAME and SPARK are the ~1-entry-per-day bots. INFERNO/FORGE have their own
+  // cadences (and FORGE ships disarmed), so a quiet day there means nothing.
+  if (!isSettleAtExpiryBot(bot.name)) return
+  const todayStr = ct.toISOString().slice(0, 10)
+  if (_lastHeartbeatDate[bot.name] === todayStr) return
+  if (!isMarketOpen(ct)) return
+  if (ctHHMM(ct) < HEARTBEAT_CHECK_HHMM) return
+  // Claim the day BEFORE the work, so a thrown query cannot turn this into a
+  // once-a-minute check for the rest of the session.
+  _lastHeartbeatDate[bot.name] = todayStr
+
+  const openRows = await query(
+    `SELECT (open_time AT TIME ZONE 'America/Chicago')::date AS d, COUNT(*)::int AS n
+       FROM ${botTable(bot.name, 'positions')}
+      WHERE dte_mode = $1 AND open_time >= NOW() - ($2 || ' days')::interval
+      GROUP BY 1`,
+    [bot.dte, String(HEARTBEAT_LOOKBACK_DAYS)],
+  )
+  const opensByDate = new Map<string, number>()
+  for (const r of openRows) opensByDate.set(normalizeExpiration(r.d), int(r.n))
+
+  // DISTINCT collapses ~390 SCAN rows a day to a handful. The scan message is
+  // `SCAN: <action> ... | <reason>`, so split_part on ' | ' recovers the reason.
+  const reasonRows = await query(
+    `SELECT DISTINCT (log_time AT TIME ZONE 'America/Chicago')::date AS d,
+            split_part(message, ' | ', 2) AS reason
+       FROM ${botTable(bot.name, 'logs')}
+      WHERE dte_mode = $1 AND level = 'SCAN'
+        AND log_time >= NOW() - ($2 || ' days')::interval`,
+    [bot.dte, String(HEARTBEAT_LOOKBACK_DAYS)],
+  )
+  const reasonsByDate = new Map<string, string[]>()
+  for (const r of reasonRows) {
+    const d = normalizeExpiration(r.d)
+    const list = reasonsByDate.get(d) ?? []
+    if (r.reason) list.push(String(r.reason))
+    reasonsByDate.set(d, list)
+  }
+
+  // Never invent history: a bot whose tables are days old must not read as N silent
+  // days. Start the window at the first date we actually have a scan log for.
+  const knownDates = Array.from(reasonsByDate.keys()).sort()
+  if (knownDates.length === 0) return
+  const firstKnown = knownDates[0]
+
+  const days: HeartbeatDay[] = []
+  for (let back = HEARTBEAT_LOOKBACK_DAYS; back >= 0; back--) {
+    const ms = Date.parse(`${todayStr}T00:00:00Z`) - back * 86_400_000
+    const iso = new Date(ms).toISOString().slice(0, 10)
+    if (iso < firstKnown) continue
+    // Local-field constructor, so getDay() and isMarketHoliday() (which reads local
+    // fields) both see this exact calendar date in any server timezone.
+    const [y, m, d] = iso.split('-').map(Number)
+    const probe = new Date(y, m - 1, d)
+    const dow = probe.getDay()
+    if (dow === 0 || dow === 6) continue
+    if (isMarketHoliday(probe)) continue
+    days.push({ date: iso, opens: opensByDate.get(iso) ?? 0, reasons: reasonsByDate.get(iso) ?? [] })
+  }
+
+  // Daily "why no trade" note — one routine (non-paging) message per bot per
+  // trading day, independent of the multi-day silent-heartbeat escalation below.
+  // Before this, a legitimate skip (VIX gate, thin credit, already stood down)
+  // was completely invisible outside the raw scan logs; the 2026-09-11 FLAME/SPARK
+  // VIX-gate skip surfaced that gap. This always posts on a 0-trade day, whether
+  // the reason is a healthy protective gate or not.
+  //
+  // Ops-channel-only wording (never shown to customers — that's activityFeed.ts's
+  // PROTECTIVE_GATE_LABELS, a separate map by design). Warm framing for the
+  // healthy gates; the last two stay plainly alert-toned on purpose — an
+  // encouraging tone must never soften an actual problem.
+  const todayOpens = opensByDate.get(todayStr) ?? 0
+  if (todayOpens === 0) {
+    const todayReasons = reasonsByDate.get(todayStr) ?? []
+    // Prefer an actual evaluated decision ("skip:...", "no_trade | ...") over a
+    // window/cutoff reason — the latter just means the clock hadn't hit the
+    // window yet at some point today, not the day's real explanation.
+    const evaluated = todayReasons.find((r) => r.startsWith('skip:') || r.startsWith('no_trade'))
+    const reason = evaluated ?? todayReasons[0] ?? null
+    const prefix = reason ? PROTECTIVE_REASON_PREFIXES.find((p) => reason.startsWith(p)) : undefined
+    const label = reason == null
+      ? 'No scan activity recorded today — this one is worth a look, not a shrug.'
+      : prefix
+        ? OPS_NO_TRADE_LABELS[prefix]
+        : `Held off today — reason: ${reason}. Flag it if this repeats.`
+    void postOpsAlert({
+      botName: bot.name,
+      title: `${bot.name.toUpperCase()} sat today out`,
+      body: label,
+      severity: 'info',
+    }).catch(() => { /* never take a scan cycle down */ })
+  }
+
+  const verdict = evaluateTradeHeartbeat(bot.name, days, HEARTBEAT_SILENT_DAYS)
+  if (!verdict.silent || !verdict.message) {
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} HEARTBEAT: ok — ${verdict.silentDays} ` +
+      `unexplained quiet day(s), threshold ${HEARTBEAT_SILENT_DAYS}.`,
+    )
+    return
+  }
+
+  console.error(`[scanner] *** ${bot.name.toUpperCase()} HAS NOT TRADED *** ${verdict.message}`)
+  await watchdogLog(bot, 'CRITICAL', `HAS NOT TRADED: ${verdict.message}`, {
+    silent_days: verdict.silentDays,
+    dates: verdict.dates,
+    threshold: HEARTBEAT_SILENT_DAYS,
+  })
+  void sendOpsPush({
+    title: `${bot.name.toUpperCase()} has not traded in ${verdict.silentDays} trading days`,
+    body: verdict.message,
+    severity: 'critical',
+  }).catch(() => { /* never take a scan cycle down */ })
+  void postOpsAlert({
+    botName: bot.name,
+    title: `No entries in ${verdict.silentDays} trading days`,
+    body: verdict.message,
+    severity: 'critical',
+    fields: [{ name: 'Quiet days', value: verdict.dates.join(', ') || '—' }],
+  }).catch(() => { /* never take a scan cycle down */ })
+}
+
+/**
+ * PLACE THIS BOT'S REAL STRUCTURE, ON DEMAND.
+ *
+ * 🚨 /api/[bot]/force-trade built its own strikes — a 4-leg IRON CONDOR at
+ * SD 1.2 with $5 wings, hardcoded in the route and ignoring bot config. That
+ * route predates the 2026-08-11 pivot. FLAME/SPARK/FORGE have been a 2-leg PUT
+ * CREDIT SPREAD (SD 2.10, $2 wing, 1ct) ever since, and every position they have
+ * opened carries call_short_strike = call_long_strike = 0.
+ *
+ * Forcing through that path would have put a structure on a LIVE account that
+ * the bot has never traded, short strikes almost a full SD closer to spot. So
+ * the route delegates here instead: one definition of the strategy, the same one
+ * the 13:05 CT tick uses. Copying it into the route is what let it drift.
+ */
+export async function forceOpenPutSpread(botName: string): Promise<string> {
+  const bot = BOTS.find((b) => b.name === botName)
+  if (!bot) return `skip:unknown_bot(${botName})`
+  // Same config load a scan cycle does, so a forced entry sizes off exactly the
+  // knobs the scheduled one would have used.
+  await loadConfigOverrides()
+  return tryOpenFlamePutSpread(bot, { force: true })
+}
+
+async function tryOpenFlamePutSpread(bot: BotDef, opts: { force?: boolean } = {}): Promise<string> {
   const botCfg = cfg(bot)
   if (!isConfigured()) return 'skip:tradier_not_configured'
 
   // Regime gate before any quote work — a blocked day costs one indexed query.
-  const vixBlock = await vixDecayBlock(getCentralTime().toISOString().slice(0, 10))
-  if (vixBlock) return `skip:${vixBlock}`
+  // 🚨 SPARK at 0.90 (2026-09-02, Leron). On the AM spot-2/$5 stream the gate
+  // halves the worst drawdown ($1,468 -> $767) for -$123/yr.
+  // (risk_advisor_growth.py, 2022-11 -> 2026-08, 1 lot, NBBO, $0.70.)
+  // 🚨 FLAME at 0.80 (2026-09-08, Leron). Honest-engine: $2,101/yr per lot vs
+  // $656 ungated, worst trade -$181, $5k ladder 9.8%/mo full / 5.6%/mo 2026,
+  // max drawdown 19% vs 69%. 0.85 and 0.90 both fail for FLAME — see the
+  // VIX_DECAY_CEILING doc comment above.
+  // Hoisted to function scope (not just the flame branch below) so the EBB
+  // favorable-day upsize (EBB_FAVORABLE_UPSIZE) can reuse the SAME ratio
+  // FLAME's own VIX decay gate just computed, rather than re-querying it.
+  let flameVixRatioForUpsize: number | null = null
+  let flameHeadlineAddedDay = false
+  if (bot.name === 'spark') {
+    const sparkAsof = getCentralTime().toISOString().slice(0, 10)
+    // SPARK_V2_TRAILING_BAND_MODE=live widens the gate's own ceiling to the
+    // D1 relaxed band's top (0.975) so a ratio in (0.90, 0.975] reaches this
+    // function instead of being blocked outright — 'off'/'shadow' (default)
+    // leave the ceiling at SPARK's existing 0.90, so vixDecayCheck/vixBlock
+    // below is byte-for-byte identical to today in both of those modes.
+    const bandMode = sparkTrailingBandMode()
+    const sparkCeiling = isLive(bandMode) ? SPARK_V2_RELAXED_VIX_CEILING : VIX_DECAY_CEILING.spark
+    const sparkVix = await vixDecayCheck(sparkAsof, sparkCeiling)
+    if (sparkVix.reason) return `skip:${sparkVix.reason}`
+
+    // Only reachable at all when bandMode==='live' widened sparkCeiling above
+    // — in 'off'/'shadow' a ratio this high already returned skip above.
+    const inRelaxedBand = sparkVix.ratio !== null && sparkVix.ratio > VIX_DECAY_CEILING.spark
+
+    // SPARK v2 D1 (relaxed-band trailing winner) + S1 (CALM-or-LONGG filter).
+    // Both default SHADOW (compute + log only; see flame-v2/flags.ts) and, in
+    // that mode, change nothing below — D1's own `admits` is hard-false
+    // unless its mode is 'live' (see sparkTrailingBandDecision), and S1 is
+    // only consulted for the skip decision when SPARK_V2_SIGNAL_FILTER_MODE
+    // is 'live'.
+    let d1: Awaited<ReturnType<typeof sparkTrailingBandDecision>> | null = null
+    let s1: Awaited<ReturnType<typeof sparkS1Decision>> | null = null
+    try {
+      ;[d1, s1] = await Promise.all([sparkTrailingBandDecision(sparkAsof), sparkS1Decision(sparkAsof)])
+      if (d1.available || s1.available || inRelaxedBand) {
+        console.log(`[flame-v2] SPARK checks ${sparkAsof}: D1=${JSON.stringify(d1)} S1=${JSON.stringify(s1)} in_relaxed_band=${inRelaxedBand}`)
+      }
+    } catch (e) {
+      console.warn('[flame-v2] SPARK v2 checks failed (non-fatal, no behavior change):', e)
+    }
+
+    if (inRelaxedBand) {
+      if (!(d1 && d1.available && d1.admits)) {
+        return `skip:spark_relaxed_band_not_admitted(ratio=${sparkVix.ratio!.toFixed(3)})`
+      }
+      console.log(`[flame-v2] SPARK D1 LIVE admits relaxed-band day ratio=${sparkVix.ratio!.toFixed(3)} rule=R${d1.rule}`)
+    }
+
+    if (isLive(sparkSignalFilterMode()) && s1 && s1.available && s1.wouldSkip) {
+      return 'skip:spark_s1_no_signal'
+    }
+  } else if (bot.name === 'flame') {
+    const asofDate = getCentralTime().toISOString().slice(0, 10)
+    const headlineMode = isFlameHeadline0925Mode()
+    const flameCeiling = headlineMode ? FLAME_HEADLINE_VIX_CEILING : VIX_DECAY_CEILING.flame
+    const flameVix = await vixDecayCheck(asofDate, flameCeiling)
+    flameVixRatioForUpsize = flameVix.ratio
+    if (flameVix.reason) {
+      if (flameVix.ratio !== null && flameVix.prior !== null && flameVix.windowMax !== null) {
+        console.log(
+          `[scanner] FLAME VIX GATE skip: ratio=${flameVix.ratio.toFixed(3)} threshold=${flameCeiling.toFixed(3)} ` +
+          `(prior VIX close ${flameVix.prior.toFixed(2)} / 20-session max ${flameVix.windowMax.toFixed(2)})`,
+        )
+      } else {
+        console.log(`[scanner] FLAME VIX GATE skip: ${flameVix.reason}`)
+      }
+      return `skip:${flameVix.reason}`
+    }
+    // The original <= .80 regime remains byte-for-byte unchanged.  Only the
+    // added (.80, .925] range requires a prior completed SPY up-session.
+    flameHeadlineAddedDay = headlineMode && flameVix.ratio !== null && flameVix.ratio > VIX_DECAY_CEILING.flame
+    if (flameHeadlineAddedDay) {
+      const priorSpyUp = await priorSpySessionWasUp(asofDate)
+      const priorUpAdmits = priorSpyUp === true
+      // FLAME v2 D2 regime brain. SHADOW (default): logs what the monthly-
+      // refit depth-2 tree would decide for this relaxed-band day alongside
+      // today's actual prior-SPY-up admission, without changing it — `brain`
+      // falls back to `admits=priorUpAdmits` byte-for-byte whenever the mode
+      // isn't 'live', the features aren't computable, or training data is
+      // thin (see flameRegimeBrainDecision's own fallback contract). LIVE:
+      // `brain.admits` IS the admission decision below, replacing the static
+      // prior-SPY-up rule for this relaxed band.
+      let effectiveFlameAdmits = priorUpAdmits
+      try {
+        const d2Features: D2Features | null = await buildFlameD2Features(asofDate)
+        const brain = await flameRegimeBrainDecision(asofDate, d2Features, priorUpAdmits)
+        if (brain.available || brain.reason !== 'off') {
+          console.log(`[flame-v2] FLAME regime_brain check ${asofDate}: ${JSON.stringify(brain)} (today's prior_spy_up=${priorUpAdmits})`)
+        }
+        // brain.admits is null ONLY when the mode is explicitly 'off' — every
+        // other path (unavailable, insufficient data, shadow, live) already
+        // resolves to a usable boolean per flameRegimeBrainDecision's contract.
+        if (brain.admits !== null) effectiveFlameAdmits = brain.admits
+      } catch (e) {
+        console.warn('[flame-v2] FLAME regime_brain check failed (non-fatal, falls back to prior-SPY-up rule):', e)
+      }
+      if (effectiveFlameAdmits !== true) {
+        const reason = effectiveFlameAdmits === false
+          ? (isLive(flameRegimeBrainMode()) ? 'd2_regime_brain_not_admitted' : 'prior_spy_not_up')
+          : 'prior_spy_history_unavailable'
+        console.log(`[scanner] FLAME headline admission skip: ${reason}`)
+        return `skip:${reason}`
+      }
+    }
+    console.log(
+      `[scanner] FLAME VIX GATE ok ratio=${flameVix.ratio !== null ? flameVix.ratio.toFixed(3) : 'n/a'}` +
+      (flameHeadlineAddedDay ? ' headline_added_day=full_size_credit_floor_0.20' : ''),
+    )
+  }
 
   const acctRows = await query(
-    `SELECT id, current_balance FROM ${botTable(bot.name, 'paper_account')}
+    `SELECT id, current_balance, starting_capital, high_water_balance FROM ${botTable(bot.name, 'paper_account')}
      WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
      ORDER BY id DESC LIMIT 1`,
     [bot.dte],
   )
   let balance: number
+  let funded: number
+  let highWater: number | null
   if (acctRows.length === 0) {
     const seed = botCfg.starting_capital
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] FLAME: seeded ${bot.dte} paper ledger at $${seed}`)
     balance = seed
+    funded = seed
+    highWater = seed
   } else {
     balance = num(acctRows[0].current_balance)
+    funded = num(acctRows[0].starting_capital)
+    const hw = Number(acctRows[0].high_water_balance)
+    highWater = Number.isFinite(hw) && hw > 0 ? hw : null
   }
   if (!(balance > 0)) return `skip:no_paper_balance($${balance.toFixed(0)})`
 
   const { otmAbs, width } = botStructure(bot.name)
-  const perTrade = flameContracts(balance)
+  // COUNT LADDER (2026-09-04, ADR 0013): lots come from the ledger's HIGH-WATER
+  // capital — max(starting_capital, high_water_balance), the ratchet that only
+  // moves up — never from the floating balance — see lib/ebb-sizing.ts.
+  // 0 lots means the ledger is below one rung: skip, never fall back to 1.
+  // `equity` and `vixRatio` ride along on `ledger` ONLY for the EBB
+  // favorable-day upsize gate (evaluateEbbUpsizeCushion) — the ladder sizing
+  // itself still keys on funded/highWater alone, unchanged.
+  const ledger = { funded, highWater, equity: balance, vixRatio: flameVixRatioForUpsize }
+  const perTrade = flameContracts(bot.name, ebbLadderCapital(funded, highWater))
+  if (perTrade < 1) {
+    return `skip:below_ladder_rung(funded=$${funded.toFixed(0)} high_water=${highWater === null ? 'NONE' : '$' + highWater.toFixed(0)})`
+  }
   // Each book gets an equal, NON-TRANSFERABLE third. Letting one borrow from the
   // others concentrates the account in whichever market happens to be trading,
   // which is the opposite of why three books exist.
-  const perBook = (balance * botCfg.bp_pct) / FLAME_BOOKS.length
+  //
+  // 🚨 2026-10-06 fix: this room check used to size off the PAPER ledger's
+  // `balance` alone. PR #3152 (2026-10-02) correctly rebased that paper
+  // balance down to its $2,000 seed (it had drifted to ~$5,100 and was
+  // overstating paper returns) -- but the live order below (line ~6161) only
+  // runs if THIS SAME gate passes, and nothing here ever consulted the real
+  // broker account. Every live attempt since 10/2 died as `no_room` against a
+  // $2,000-tier number while the real account sat at ~$4,200 with room to
+  // spare. For an armed production bot, size the room check off real broker
+  // equity instead; the paper ledger itself is untouched and still records
+  // off its own seed.
+  let roomBalance = balance
+  if (bot.name === 'flame' && canPlaceLiveOrders(bot.name)) {
+    try {
+      const prodCap = await getAllocatedCapitalForAccount('Flame', 'production')
+      if (prodCap) roomBalance = Math.max(balance, prodCap.equity)
+    } catch (e) {
+      console.warn('[scanner] FLAME production equity lookup for room check failed (falling back to paper balance):', e)
+    }
+  }
+  const perBook = (roomBalance * botCfg.bp_pct) / FLAME_BOOKS.length
 
   const out: string[] = []
   for (const ticker of FLAME_BOOKS) {
-    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade)}`)
+    out.push(`${ticker}=${await tryOpenFlameBook(bot, botCfg, ticker, otmAbs, width, perBook, perTrade, ledger, opts, flameHeadlineAddedDay)}`)
+  }
+  // FLAME v2 14:05 ET SPY 0DTE CALL credit spread. SHADOW (default): computes
+  // tier/strikes/contracts and logs them, places no order. LIVE
+  // (FLAME_V2_CALL_SPREAD_MODE=live): runFlameV2CallSpreadEntryTick places the
+  // paper/sandbox ledger row always, and a real order IF canPlaceLiveOrders
+  // ('flame') is also true — see flame-v2/call-spread-live.ts. Runs only for
+  // the SPY book, after the put side has already been fully decided above, so
+  // it can never affect the put spread's own result. Never throws into this
+  // function — see that module's own safety-invariant header comment.
+  // 🚨 2026-10-02 audit: the call spread is a MIRROR of the put trade, never an
+  // independent bet. Only run it when the SPY put book opened this tick
+  // ('traded@') or already holds today's trade ('traded_today'). Any skip —
+  // credit floor, no room, stand-down, ladder, weekday skip — skips the call too.
+  const spyPutResult = out.find((s) => s.startsWith('SPY=')) ?? ''
+  const putOpenedToday = spyPutResult.startsWith('SPY=traded@') || spyPutResult === 'SPY=traded_today'
+  if (bot.name === 'flame' && !putOpenedToday) {
+    console.log(`[flame-v2] call_spread skipped: put side did not open (${spyPutResult || 'no_spy_result'})`)
+  }
+  if (bot.name === 'flame' && putOpenedToday) {
+    try {
+      const spyQuote = await getQuote('SPY')
+      const spySpot = spyQuote?.last ?? 0
+      if (spySpot > 0) {
+        const callTick = await runFlameV2CallSpreadEntryTick(asofDateForFlame(), spySpot, perTrade)
+        if (callTick) console.log(`[flame-v2] ${callTick}`)
+      }
+    } catch (e) {
+      console.warn('[flame-v2] FLAME call_spread entry tick failed (non-fatal, no order placed):', e)
+    }
   }
   return `otm$${otmAbs} w${width} x${perTrade} ` + out.join(' ')
+}
+
+function asofDateForFlame(): string {
+  return getCentralTime().toISOString().slice(0, 10)
 }
 
 async function tryOpenFlameBook(
   bot: BotDef, botCfg: BotConfig, ticker: string,
   otmAbs: number, width: number, perBook: number, perTrade: number,
+  ledger: { funded: number | null; highWater: number | null; equity?: number | null; vixRatio?: number | null },
+  opts: { force?: boolean } = {},
+  flameHeadlineAddedDay = false,
 ): Promise<string> {
   const todayRows = await query(
     `SELECT COUNT(*) AS cnt FROM ${botTable(bot.name, 'positions')}
@@ -3529,7 +5998,11 @@ async function tryOpenFlameBook(
        AND dte_mode = $1 AND ticker = $2`,
     [bot.dte, ticker],
   )
-  if (int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
+  // `force` lifts the once-a-day cap and NOTHING else — an operator asking for a
+  // deliberate extra entry. Every other gate still runs exactly as it does on a
+  // scheduled tick: stand-down, collateral, credit floor, VIX, event blackout,
+  // the arm switch, and both pause layers.
+  if (!opts.force && int(todayRows[0]?.cnt) >= botCfg.max_trades) return 'traded_today'
 
   // per-book: a loss on IWM must not silence SPY
   if (await isStandDownActive(bot, botCfg.standdown_days, ticker)) return 'standdown'
@@ -3590,8 +6063,9 @@ async function tryOpenFlameBook(
   const callCreditVal = 0
   const entryCredit = c.putCredit
 
-  if (entryCredit < botCfg.min_credit) {
-    return `credit_low($${entryCredit.toFixed(2)})`
+  const minCredit = flameHeadlineAddedDay ? Math.max(botCfg.min_credit, FLAME_HEADLINE_MIN_CREDIT) : botCfg.min_credit
+  if (entryCredit < minCredit) {
+    return `credit_low(${entryCredit.toFixed(2)})`
   }
 
   // An iron condor can only lose on ONE side, so the capital at risk is one
@@ -3600,39 +6074,137 @@ async function tryOpenFlameBook(
   if (maxLossPer <= 0) return 'invalid_max_loss'
   // FIXED size per trade -- never "fill the remaining budget". The margin check
   // then decides whether THIS trade fits alongside the ones already running.
-  const contracts = perTrade
-  if ((perBook - committed) < maxLossPer * contracts) {
+  //
+  // LIQUIDITY CHECK (ADR 0013, 2026-09-04) on the paper book too: at most 25%
+  // of the displayed bid size of the put being sold, from the same quote this
+  // entry priced off (c.shortBidSize). No size -> ladder lots, liquidity=UNKNOWN.
+  const liq = isEbbLadderBot(bot.name) ? liquidityCappedLots(perTrade, c.shortBidSize) : null
+  const contracts = liq ? liq.lots : perTrade
+  const sizingLine = liq && isEbbLadderBot(bot.name)
+    ? formatEbbSizingLine({
+        funded: ledger.funded, highWater: ledger.highWater, rung: ebbRungUsd(bot.name),
+        ladderLots: perTrade, liq, finalLots: contracts,
+      })
+    : `flat=${contracts}`
+  if (contracts < 1) {
+    console.warn(`[scanner] ${bot.name.toUpperCase()} ${ticker}: LIQUIDITY check = 0 lots, skipping (${sizingLine})`)
+    return `skip:liquidity(displayed_size=${liq?.displayedSize ?? 'UNKNOWN'} max=${liq?.maxLots ?? 'n/a'} ladder=${perTrade})`
+  }
+
+  // EBB_FAVORABLE_UPSIZE (Leron, 2026-09-26): +1 contract on top of the
+  // ladder's `contracts` on a favorable-VIX day, gated by the SAME
+  // per-account house-money rule as FLINT's R1 — the extra lot's max loss
+  // must fit inside this account's cushion (equity above its funded
+  // floor). Off by default (isEbbFavorableUpsizeMode() reads unset -> off),
+  // so with the flag unset `finalContracts` is always `contracts` and every
+  // downstream number below is byte-for-byte the pre-upsize value. FLAME
+  // only — SPARK's own VIX gate ratio is a different ceiling and this spec
+  // is scoped to "FLAME's VIX gate" ratio specifically.
+  let finalContracts = contracts
+  if (bot.name === 'flame' && !flameHeadlineAddedDay && isEbbFavorableUpsizeMode()) {
+    const upsizeCap = Math.min(EBB_LADDER_CAP, liq?.maxLots ?? contracts + 1)
+    if (contracts + 1 <= upsizeCap) {
+      if (isEbbFavorableVixDay(ledger.vixRatio ?? null)) {
+        const extraMaxLoss = ebbUpsizeExtraContractMaxLoss(width, entryCredit)
+        const gate = evaluateEbbUpsizeCushion(ledger.equity ?? null, ledger.funded, extraMaxLoss)
+        if (gate.eligible) {
+          finalContracts = contracts + 1
+          console.log(
+            `[scanner] EBB upsize +1 (vix_ratio=${ledger.vixRatio?.toFixed(3) ?? 'n/a'}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'})`,
+          )
+        } else {
+          console.log(`[scanner] EBB upsize skipped: ${gate.reason}`)
+        }
+      }
+    }
+  }
+
+  if ((perBook - committed) < maxLossPer * finalContracts) {
     return `no_room($${(perBook - committed).toFixed(0)})`
   }
 
-  const collateral = maxLossPer * contracts
+  const collateral = maxLossPer * finalContracts
   // SPARK shares this code path, so the prefix must come from the BOT, not be
   // hardcoded -- SPARK's live positions were being written as 'FLAME-SPY-...'.
   const positionId = `${bot.name.toUpperCase()}-${ticker}-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
 
-  await query(
-    `INSERT INTO ${botTable(bot.name, 'positions')} (
-       position_id, ticker, expiration,
-       put_short_strike, put_long_strike, put_credit,
-       call_short_strike, call_long_strike, call_credit,
-       contracts, spread_width, total_credit, max_loss, max_profit,
-       collateral_required, underlying_at_entry, expected_move,
-       status, open_time, open_date, dte_mode, account_type
-     ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
-               'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
-    [positionId, ticker, expiration, putShort, putLong, putCreditVal,
-     contracts, width, collateral,
-     Math.round(entryCredit * 100 * contracts * 100) / 100,
-     collateral, spot, em, bot.dte,
-     callShort, callLong,
-     callCreditVal,
-     entryCredit],
-  )
-  console.log(
-    `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${contracts}x ${putLong}/${putShort}P ` +
-    `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
-    `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)})`,
-  )
+  // FLAME_SKIP_WEEKDAYS (Leron, 2026-09-27, "Add it now"): this "sandbox"
+  // row IS FLAME's customer/paper side of EBB (SPARK writes the same
+  // account_type='sandbox' tag through this shared function, so the FLAME
+  // check is explicit — SPARK is out of scope for this env var). Skipped
+  // whenever today's weekday matches, independent of FLAME_SKIP_SCOPE —
+  // scope only decides whether the PRODUCTION leg below is ALSO skipped
+  // (placeIcOrderAllAccounts in tradier.ts). Unset env = the skip set is
+  // always empty = skipCustomerSide is always false = byte-for-byte prior
+  // behavior below.
+  const todayAbbrev = weekdayAbbrevFromDow(getCentralTime().getDay())
+  const skipCustomerSide = bot.name === 'flame' && isWeekdayInSkipSet(todayAbbrev, getFlameSkipWeekdays())
+
+  if (skipCustomerSide) {
+    console.log(`[scanner] FLAME ${ticker}: ${weekdaySkipLogTag(todayAbbrev)} (customer/paper side)`)
+  } else {
+    await query(
+      `INSERT INTO ${botTable(bot.name, 'positions')} (
+         position_id, ticker, expiration,
+         put_short_strike, put_long_strike, put_credit,
+         call_short_strike, call_long_strike, call_credit,
+         contracts, spread_width, total_credit, max_loss, max_profit,
+         collateral_required, underlying_at_entry, expected_move,
+         status, open_time, open_date, dte_mode, account_type
+       ) VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$18,$9,$10,$11,$12,$13,
+                 'open', NOW(), ${CT_TODAY}, $14, 'sandbox')`,
+      [positionId, ticker, expiration, putShort, putLong, putCreditVal,
+       finalContracts, width, collateral,
+       Math.round(entryCredit * 100 * finalContracts * 100) / 100,
+       collateral, spot, em, bot.dte,
+       callShort, callLong,
+       callCreditVal,
+       entryCredit],
+    )
+    console.log(
+      `[scanner] ${bot.name.toUpperCase()} ${ticker}: ${finalContracts}x ${putLong}/${putShort}P ` +
+      `exp ${expiration} @ $${entryCredit.toFixed(2)} ` +
+      `(spot ${spot.toFixed(2)}, otm $${otmAbs}, wing $${width}, EM ${em.toFixed(2)}) ` +
+      `sizing: ${sizingLine}`,
+    )
+
+    // XSP_SWAP (R4) — the SAME go/no-go signal the internal production/sandbox
+    // order path (tradier.ts placeIcOrderAllAccounts -> attemptXspHostSwap)
+    // computes for itself independently, at its own quote pull. Customers
+    // mirror THIS eligibility rather than pricing their own XSP quote (the
+    // customer-executor path has no direct Tradier market-data access) — see
+    // customer-executor/executor.ts mirrorOneOpen. Only meaningful for the
+    // put-spread host leg on SPY; off (default) or not the SPY host leg =
+    // zero extra network calls, xspSwapForCustomers stays undefined, and
+    // MasterOpen is byte-for-byte the prior shape.
+    let xspSwapForCustomers: { eligible: boolean; xspCreditPerContract: number | null } | undefined
+    if (ticker === 'SPY' && callShort === 0 && isXspSwapMode()) {
+      try {
+        const xspQuote = await getPutSpreadEntryCredit(XSP_TICKER, expiration, putShort, putLong)
+        const decision = decideXspSwap({
+          nHost: finalContracts,
+          spyCreditPerContract: entryCredit,
+          xspCreditPerContract: xspQuote?.putCredit ?? null,
+          xspShortBidSize: xspQuote?.shortBidSize ?? null,
+        })
+        xspSwapForCustomers = { eligible: decision.usedXsp, xspCreditPerContract: decision.xspCreditPerContract }
+      } catch (e) {
+        console.warn(`[scanner] ${bot.name.toUpperCase()} XSP_SWAP customer-eligibility quote failed:`, e)
+      }
+    }
+
+    // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+    // notifyTradeOpened catches everything internally.
+    void mirrorOpenToCustomers({
+      botName: bot.name, positionId, ticker, expiration,
+      putShort, putLong, callShort, callLong,
+      spreadWidth: width, credit: entryCredit,
+      vixRatio: ledger.vixRatio ?? null,
+      xspSwap: xspSwapForCustomers,
+    })
+
+    void notifyTradeOpened(bot.name, positionId)
+  }
 
   // ────────────────────────────────────────────────────────────────────────
   // LIVE ORDER — everything above this line is paper and always runs.
@@ -3645,8 +6217,18 @@ async function tryOpenFlameBook(
   //
   // Nothing below runs unless the bot is armed. Deploying this changes nothing.
   // ────────────────────────────────────────────────────────────────────────
+  //
+  // 🚨 SILENCE IS NOT AN ANSWER. This branch used to leave `liveNote` empty when
+  // the bot was disarmed, so a paper-only fill logged exactly like a live one
+  // that filled on both. On 2026-08-19 FLAME's arm env was set on
+  // ironforge-legacy — which logs "[scanner] not started" — while the process
+  // that actually trades is ironforge-customer, which had no FLAME creds. The
+  // console read `live_orders_allowed: true` and the scanner traded paper only,
+  // and nothing anywhere said so. Every path now leaves a note.
   let liveNote = ''
-  if (canPlaceLiveOrders(bot.name)) {
+  if (!canPlaceLiveOrders(bot.name)) {
+    liveNote = ` live:disarmed(${describeLiveGate(bot.name)})`
+  } else {
     // Race guard: one production placement per bot per 5 minutes. Claimed
     // BEFORE the await so two ticks cannot both pass, released if nothing filled.
     const nowMs = Date.now()
@@ -3662,7 +6244,7 @@ async function tryOpenFlameBook(
         const live = await placeIcOrderAllAccounts(
           ticker, expiration,
           putShort, putLong, callShort, callLong,
-          contracts, entryCredit, positionId, bot.name,
+          finalContracts, entryCredit, positionId, bot.name,
           { productionOnly: true },
         )
         const prodFills = Object.entries(live).filter(([, i]) => i.account_type === 'production')
@@ -3717,6 +6299,9 @@ async function tryOpenFlameBook(
     }
   }
 
+  if (skipCustomerSide) {
+    return `${weekdaySkipLogTag(todayAbbrev)}${liveNote}`
+  }
   return `traded@${entryCredit.toFixed(2)}${liveNote}`
 }
 
@@ -3753,9 +6338,9 @@ async function tryOpenForgeCondor(bot: BotDef): Promise<string> {
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] FORGE: seeded ${bot.dte} paper ledger at $${seed}`)
@@ -3988,8 +6573,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     const todayTradesParams: any[] = person && person !== 'all' ? [bot.dte, person] : [bot.dte]
     const todayTrades = await query(todayTradesSql, todayTradesParams)
     if (int(todayTrades[0]?.cnt) >= maxTradesPerDay) {
-      // FLAME: check if production still needs to trade before returning
-      if (isProductionBot(bot.name)) {
+      // FLAME: check if production still needs to trade before returning.
+      //
+      // canPlaceLiveOrders is the second predicate on purpose (2026-08-31). The
+      // local isProductionBot() is SPARK + KINDLE only, so FLAME never reached
+      // production-only mode despite the comment above claiming it did — the paper
+      // fill consumed the day's slot and the live account got exactly one attempt.
+      // On 2026-08-31 that single attempt died on an unreadable broker balance and
+      // FLAME sat flat all day while the paper book booked a win.
+      //
+      // canPlaceLiveOrders('spark') is false (paper-only since 2026-08-16), so
+      // SPARK's routing is unchanged; for FLAME it is isFlameLiveArmed(). This
+      // widens the catch-up path to exactly the bot that places live orders today.
+      if (isProductionBot(bot.name) || canPlaceLiveOrders(bot.name)) {
         let prodNeedsToTrade = false
         try {
           const prodDayCheck = await query(
@@ -4052,9 +6648,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     await query(
       `INSERT INTO ${botTable(bot.name, 'paper_account')}
          (starting_capital, current_balance, cumulative_pnl, collateral_in_use,
-          buying_power, total_trades, high_water_mark, max_drawdown,
+          buying_power, total_trades, high_water_mark, high_water_balance, max_drawdown,
           is_active, dte_mode, account_type, created_at, updated_at)
-       VALUES ($1, $1, 0, 0, $1, 0, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
+       VALUES ($1, $1, 0, 0, $1, 0, $1, $1, 0, TRUE, $2, 'sandbox', NOW(), NOW())`,
       [seed, bot.dte],
     )
     console.log(`[scanner] ${bot.name.toUpperCase()}: seeded ${bot.dte} paper ledger at $${seed}`)
@@ -4080,12 +6676,11 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   const liveCollateral = num(liveCollRows[0]?.total_collateral)
   const buyingPower = balance - liveCollateral
 
-  // PRODUCTION-ONLY mode. spark2 was here until 2026-07-21, when it became a
-  // genuine paper bot (see isProductionBot). The paper-BP exemption existed
-  // because its paper shadow was seeded at $500 and could never cover a $5-wing
-  // IC; that seed is now $10,000, so the normal paper-BP gates apply and are
-  // correct. No bot currently needs the exemption -- kept as an explicit
-  // constant rather than deleted so re-enabling it is a one-line change.
+  // PRODUCTION-ONLY mode. The paper-BP exemption existed for a retired bot whose
+  // paper shadow was seeded at $500 and could never cover a $5-wing IC; seeds are
+  // $10,000 now, so the normal paper-BP gates apply and are correct. No bot
+  // currently needs the exemption -- kept as an explicit constant rather than
+  // deleted so re-enabling it is a one-line change.
   const productionOnlyBot = false
 
   // Paper BP check — skip in production-only mode (production uses Tradier account equity, not paper BP)
@@ -4098,7 +6693,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   // 1.25x a ONE-day move sits ~2.24x too close to the money — it would have looked
   // like the configured strategy and behaved like a near-ATM condor.
   //
-  // Byte-identical for every other bot: FLAME/SPARK2/KINDLE are minDte 1 (sqrt(1)=1)
+  // Byte-identical for every other bot: FLAME/KINDLE are minDte 1 (sqrt(1)=1)
   // and INFERNO is minDte 0, floored to 1 so its 0DTE placement is unchanged.
   const emDays = Math.max(bot.minDte, 1)
   const oneDayMove = (vix / 100 / Math.sqrt(252)) * spot
@@ -4208,7 +6803,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
   //   INFERNO/paper bots — keep legacy walk-in to 0.5 SD.
   const sdFloor = isSparkV2Sizing(bot.name) ? 0.7 : SD_FLOOR
   // (KINDLE — the one bot that skipped the walk-in — is retired from the
-  // roster, so every scanned bot walks in now. SPARK2 uses the 0.7-SD floor.)
+  // roster, so every scanned bot walks in now.)
   //   SPARK v3 — NO walk-in (fixed_strike_placement). Walking strikes toward the money
   //            to manufacture credit is the opposite of what its walk-forward
   //            selected; a thin day SKIPS instead. At 5 DTE on $10 wings the $0.25
@@ -4440,11 +7035,9 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     }
 
     // ── Production-only mode: sandbox already traded, just need production ──
-    // SPARK2 used to force this branch unconditionally (inherited from retired
-    // KINDLE), placing only on its real ex-KINDLE account. That was removed on
-    // 2026-07-21 when spark2 became a genuine paper bot -- see isProductionBot.
-    // Only SPARK reaches this branch now, and only when its sandbox mirror has
-    // already filled for the day.
+    // Only SPARK reaches this branch, and only when its sandbox mirror has
+    // already filled for the day. A now-retired bot used to force it
+    // unconditionally, placing on a real account with no sandbox mirror at all.
     if (sandboxAlreadyTraded) {
       if (prodAlreadyTradedToday) {
         return 'skip:already_traded_today'
@@ -4552,7 +7145,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
             ],
           )
 
-          await query(
+          const deductedProdOnly = await dbExecute(
             `UPDATE ${botTable(bot.name, 'paper_account')}
              SET collateral_in_use = collateral_in_use + $1,
                  buying_power = buying_power - $1,
@@ -4560,6 +7153,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
              WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
             [prodCollateral, prodPerson, bot.dte],
           )
+          warnIfNoProductionLedger(bot.name, 'entry', deductedProdOnly, prodPerson, bot.dte, prodCollateral)
 
           await query(
             `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
@@ -4877,7 +7471,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
 
         // Deduct collateral from the PRODUCTION paper_account
-        await query(
+        const deducted = await dbExecute(
           `UPDATE ${botTable(bot.name, 'paper_account')}
            SET collateral_in_use = collateral_in_use + $1,
                buying_power = buying_power - $1,
@@ -4885,6 +7479,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
            WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
           [prodCollateral, prodPerson, bot.dte],
         )
+        warnIfNoProductionLedger(bot.name, 'entry', deducted, prodPerson, bot.dte, prodCollateral)
 
         // Log the production order
         await query(
@@ -5219,7 +7814,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
         )
 
         // Deduct collateral from the PRODUCTION paper_account
-        await query(
+        const deducted = await dbExecute(
           `UPDATE ${botTable(bot.name, 'paper_account')}
            SET collateral_in_use = collateral_in_use + $1,
                buying_power = buying_power - $1,
@@ -5227,6 +7822,7 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
            WHERE account_type = 'production' AND person = $2 AND is_active = TRUE AND dte_mode = $3`,
           [prodCollateral, prodPerson, bot.dte],
         )
+        warnIfNoProductionLedger(bot.name, 'entry', deducted, prodPerson, bot.dte, prodCollateral)
 
         await query(
           `INSERT INTO ${botTable(bot.name, 'logs')} (level, message, details, dte_mode, person)
@@ -5314,6 +7910,19 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
 
   console.log(`[scanner] ${botName} OPENED ${positionId} ${strikes.putLong}/${strikes.putShort}P-${strikes.callShort}/${strikes.callLong}C x${effectiveContracts} @ $${effectiveCredit.toFixed(4)} [sandbox:${JSON.stringify(sandboxOrderIds)}]${isProductionFillOnly ? ' [Tradier-fill-only]' : ''}`)
 
+  // CUSTOMER_CALM_UPSIZE (2026-09-28): the mirror needs today's VIX-decay ratio — the
+  // SAME signal FLINT's own day-eligibility already reads (vixDecayCheck), computed
+  // fresh here since this path (unlike tryOpenFlameBook's `ledger.vixRatio`) doesn't
+  // already carry one. vixDecayCheck never throws (fails to ratio:null internally);
+  // the extra try/catch only guards ensureVixHistory. Never allowed to affect the
+  // trade already placed above — a failure here just means calm-upsize skips today.
+  let calmVixRatio: number | null = null
+  try {
+    const asofDateForCalm = getCentralTime().toISOString().slice(0, 10)
+    const calmCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
+    calmVixRatio = (await vixDecayCheck(asofDateForCalm, calmCeiling)).ratio
+  } catch { /* calmVixRatio stays null -> calm-day upsize simply skips today */ }
+
   // Phase B: mirror to activated customers (fire-and-forget, never throws, gated
   // inside on CUSTOMER_EXECUTOR_ENABLED + kill switch + per-customer state).
   void mirrorOpenToCustomers({
@@ -5321,7 +7930,12 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     putShort: strikes.putShort, putLong: strikes.putLong,
     callShort: strikes.callShort, callLong: strikes.callLong,
     spreadWidth, credit: effectiveCredit,
+    vixRatio: calmVixRatio,
   })
+
+  // Customer push (UAT #7): fire-and-forget, never throws into the trade path —
+  // notifyTradeOpened catches everything internally.
+  void notifyTradeOpened(bot.name, positionId)
 
   return `traded:${positionId}`
 }
@@ -5829,9 +8443,10 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
           // Reconcile paper_account — add recovered P&L to balance +
           // cumulative_pnl (previously this block credited 0, which is
           // why the ledger drifted from Tradier).
-          await query(
+          const creditedRecovery = await dbExecute(
             `UPDATE ${acctTable}
              SET current_balance = current_balance + $1,
+                 high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                  cumulative_pnl = cumulative_pnl + $1,
                  total_trades = total_trades + 1,
                  collateral_in_use = GREATEST(0, collateral_in_use - $2),
@@ -5840,6 +8455,7 @@ async function reconcileProductionBrokerPositions(bot: BotDef): Promise<void> {
              WHERE account_type = 'production' AND person = $3 AND is_active = TRUE AND dte_mode = $4`,
             [realizedPnl, collateral, person, bot.dte],
           )
+          warnIfNoProductionLedger(bot.name, 'close', creditedRecovery, person, bot.dte, realizedPnl)
 
           // Daily perf — production reconcile path. Composite key with
           // account_type='production' prevents this from merging into the
@@ -6601,7 +9217,7 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
       for (const pos of openRows) {
         const expiration = pos.expiration?.toISOString?.()?.slice(0, 10) || String(pos.expiration).slice(0, 10)
         try {
-          await closePosition(
+          const netOutcome = await closePosition(
             bot,
             pos.position_id,
             pos.ticker || 'SPY',
@@ -6613,7 +9229,21 @@ async function eodSafetyNetSweep(ct: Date): Promise<void> {
             num(pos.collateral_required),
             'eod_safety_net',
           )
-          console.log(`[scanner] EOD SAFETY NET: Closed ${pos.position_id} [${bot.name}]`)
+          // This used to log "Closed" no matter what came back. A safety NET that
+          // reports a catch it did not make is worse than no net at all.
+          if (netOutcome === 'closed') {
+            console.log(`[scanner] EOD SAFETY NET: Closed ${pos.position_id} [${bot.name}]`)
+          } else if (netOutcome === 'deferred') {
+            console.log(
+              `[scanner] EOD SAFETY NET: ${pos.position_id} [${bot.name}] close order placed, ` +
+              `fill pending — still open, re-polled next cycle.`,
+            )
+          } else {
+            console.error(
+              `[scanner] *** EOD SAFETY NET DID NOT CLOSE ${pos.position_id} [${bot.name}] *** ` +
+              `position stays OPEN overnight.`,
+            )
+          }
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
           console.error(`[scanner] EOD SAFETY NET: Failed to close ${pos.position_id}: ${msg}`)
@@ -6641,6 +9271,20 @@ async function scanBot(bot: BotDef): Promise<void> {
   let unrealizedPnl = 0
 
   try {
+    // ASSIGNMENT GUARD, BEFORE THE SETTLE PASS. Ordering is the whole point: at
+    // 14:59 CT a same-day contract still has a market, and sixty seconds later it
+    // does not. Held-to-expiry bots only, and only when the short is inside the
+    // buffer — a no-op on every other bot, every other minute, and on the ~83% of
+    // expiry days the short finishes clear. Wrapped like the settle below, and for
+    // the same reason inverted: a guard that throws must NOT take the cycle down,
+    // because failing to close is exactly today's behaviour rather than a new risk.
+    try {
+      const guarded = await closeAtRiskBeforeBell(bot, ct)
+      if (guarded) reason += guarded
+    } catch (e) {
+      console.error(`[scanner] ${botName} assignment guard failed:`, e)
+    }
+
     // Settle anything that reached expiry BEFORE reconciling collateral, so the
     // reconcile in the same cycle sees the freed margin. Held-to-expiry bots
     // only; a no-op for everyone else. Never allowed to take the cycle down —
@@ -6651,6 +9295,291 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // XSP_SWAP (R4) settlement: any XSP host-leg contracts opened via the
+    // XSP_SWAP flag live in their own `xsp_swap_legs` table (never in
+    // `{bot}_positions` — see xsp-swap-db.ts's header), so they need their
+    // own settle pass. A no-op query when the flag has never been on (no
+    // rows exist). Settles from the OFFICIAL SPX close ÷ 10 — the same
+    // "daily bar for the expiration date" source settleExpiredPositions uses
+    // for SPY, just pointed at the index ticker — never inventing a price.
+    try {
+      const xspSettled = await settleXspSwapLegsForBot(bot.name, ct.toISOString().slice(0, 10), async (exp) => {
+        const hist = await getDailyHistory('SPX', 30)
+        const c = hist.find((h) => h.date === exp)?.close
+        return typeof c === 'number' && c > 0 ? c : null
+      })
+      if (xspSettled.settled > 0 || xspSettled.unsettled > 0) {
+        reason += ` xsp_settle:${xspSettled.settled}ok/${xspSettled.unsettled}pending`
+      }
+    } catch (e) {
+      console.error(`[scanner] ${botName} XSP_SWAP settlement failed:`, e)
+    }
+
+    // FLINT — SPY 0DTE call credit spread, EVERY trading day (FLINT_MODE,
+    // default off). Entirely separate table and arm switch from FLAME's put
+    // side; scoped to bot.name === 'flame' only so SPARK/INFERNO/FORGE/KINDLE
+    // never reach this code. Guard and settle run every cycle (they no-op
+    // most minutes); entry only fires inside its own window check. Wrapped
+    // like every other guard/settle above: a failure here must never take
+    // FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleFlintExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLINT settlement failed:', e)
+      }
+      try {
+        const callTraded = await tryOpenFlint(bot, ct)
+        if (callTraded) console.log(`[scanner] ${callTraded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT entry failed:', e)
+      }
+
+      // FLAME v2 SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE).
+      // Own table (flame_v2_call_positions), own guard/settle — see
+      // flame-v2/call-spread-live.ts. Entry itself fires from inside
+      // tryOpenFlameBook's caller (tryOpenFlamePutSpread), AFTER the put
+      // side; guard/settle run here every cycle like FLINT's own above, and
+      // no-op most minutes. A failure here must never take FLAME's put-side
+      // cycle down.
+      try {
+        const callV2Guarded = await runFlameV2CallSpreadGuardTick(ct)
+        if (callV2Guarded) console.log(`[scanner] ${callV2Guarded}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread guard failed:', e)
+      }
+      try {
+        const callV2Settled = await runFlameV2CallSpreadSettleTick(ct)
+        if (callV2Settled) console.log(`[scanner] ${callV2Settled}`)
+      } catch (e) {
+        console.error('[scanner] FLAME v2 call-spread settlement failed:', e)
+      }
+    }
+
+    // SPARK_FLINT (2026-09-27) — FLINT on SPARK customer accounts, its own
+    // separate profits-only budget (spark-flint-separate.ts / SPARK_FLINT).
+    // Guard + settle run every cycle here (they no-op most minutes, and are
+    // bot-agnostic — they act on ANY open flint_positions row regardless of
+    // which bot opened it), same as FLAME's block above. ENTRY is
+    // deliberately NOT here — it fires further down, AFTER this SAME
+    // scanBot() call's own SPARK put-spread entry (tryOpenTrade, below) has
+    // already run and persisted this account's contracts for today, so
+    // FLINT's account-level safety net (decideSparkFlintContracts,
+    // tradier.ts) can read back the REAL sized SPARK cost instead of
+    // guessing at it out of order.
+    if (bot.name === 'spark') {
+      try {
+        const callGuarded = await closeFlintAtRiskBeforeBell(ct)
+        if (callGuarded) console.log(`[scanner] ${callGuarded}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK assignment guard failed:', e)
+      }
+      try {
+        const callSettled = await settleFlintExpired(ct)
+        if (callSettled) console.log(`[scanner] ${callSettled}`)
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK settlement failed:', e)
+      }
+    }
+
+    // FLAME_FAST_START EOD hook (2026-09-29 correction: phase, peak_profit
+    // and the CPPI floor update ONCE PER DAY, here, from that day's CLOSING
+    // equity — never intraday from a live unrealized mark. See
+    // fast-start-db.ts's updateFastStartEodState header for the full
+    // rationale). Runs on every remaining tick once time >= FLAME's own
+    // eod_cutoff_hhmm_ct; updateFastStartEodState's own `last_eod_date`
+    // guard makes every tick AFTER the first one that day a no-op, so this
+    // is safe to leave unconditional here rather than adding a second,
+    // separate "have I run today" flag.
+    if (bot.name === 'flame' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode()) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const flintToday = await fastStartDb.readFlintTodayCandidacy(tradeDateCt)
+
+          const eligible = await tradier.resolveEligibleAccounts('flame')
+          for (const acct of eligible) {
+            const accountType: 'sandbox' | 'production' = acct.type === 'production' ? 'production' : 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              let deposit: number | null = null
+              if (accountType === 'production') {
+                const cap = await tradier.getProductionLadderCapital('flame', acct.name)
+                deposit = cap?.starting ?? null
+              } else {
+                deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              }
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity)
+              if (state == null) continue
+              const normalLadder = accountType === 'production'
+                ? ebbSizing.ebbLadderContracts('flame', ebbSizing.ebbLadderCapital(deposit, deposit + state.peakProfit))
+                : ebbSizing.ebbProfitLadderContracts('flame', deposit, state.peakProfit)
+
+              const ebbToday = await fastStartDb.readEbbTodayOutcome('flame', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                ebbToday.contracts >= 1, ebbToday.maxLossPerLot,
+                flintToday.candidateDay, flintToday.maxLossPerContract,
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] FLAME_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] FLAME_FAST_START EOD hook failed:', e)
+      }
+    }
+
+    // SPARK_FAST_START EOD hook — mirrors FLAME's own EOD hook above
+    // exactly (same rationale: phase/peak_profit/floor update ONCE PER DAY,
+    // from that day's CLOSING equity, never intraday), scoped to bot='spark'
+    // via fast-start-db's `bot` parameter so this NEVER collides with
+    // FLAME's own fast_start_state row on a shared customer account.
+    // readEbbTodayOutcome('spark', ...) reads SPARK's own {bot}_positions
+    // (spark_positions) — generic, already bot-parameterized.
+    // flintCandidateToday/flintMaxLossToday pass false/null here (never
+    // true) because SPARK_FLINT is a SEPARATE, independent budget
+    // (spark-flint-separate.ts) that is NEVER folded into SPARK's own
+    // Phase-1->2 trigger or CPPI floor — passing FLINT's real candidacy here
+    // would re-introduce exactly the shared-budget trigger-crowding effect
+    // RESULT_spark_addons.md proved kills SPARK's own performance.
+    if (bot.name === 'spark' && isAfterEodCutoff(ct, bot)) {
+      try {
+        const fastStart = await import('./fast-start-sizing')
+        if (fastStart.isFastStartMode('SPARK_FAST_START')) {
+          const fastStartDb = await import('./fast-start-db')
+          const ebbSizing = await import('./ebb-sizing')
+          const tradier = await import('./tradier')
+          const tradeDateCt = ct.toISOString().slice(0, 10)
+
+          const eligible = await tradier.resolveEligibleAccounts('spark')
+          for (const acct of eligible) {
+            if (acct.type === 'production') continue // SPARK's production pot never runs fast-start (canPlaceLiveOrders('spark') is hard-coded false) — sandbox customer accounts only
+            const accountType: 'sandbox' | 'production' = 'sandbox'
+            try {
+              const allocated = await tradier.getAllocatedCapitalForAccount(acct.name, accountType)
+              const closingEquity = allocated?.equity ?? null
+              const deposit = await tradier.getOrSeedFlintAccountFloor(acct.name, 'sandbox', null, closingEquity)
+              if (deposit == null || closingEquity == null) {
+                console.warn(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: skip:deposit_or_equity_unreadable`)
+                continue
+              }
+              const state = await fastStartDb.getOrSeedFastStartState(acct.name, accountType, deposit, closingEquity, 'spark')
+              if (state == null) continue
+              const normalLadder = ebbSizing.ebbProfitLadderContracts('spark', deposit, state.peakProfit)
+
+              const sparkToday = await fastStartDb.readEbbTodayOutcome('spark', acct.name, accountType, tradeDateCt, true)
+              const result = await fastStartDb.updateFastStartEodState(
+                acct.name, accountType, tradeDateCt, closingEquity, normalLadder,
+                sparkToday.contracts >= 1, sparkToday.maxLossPerLot,
+                false, null, 'spark',
+              )
+              if (result.updated) {
+                console.log(
+                  `[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}]: phase=${result.phase} ` +
+                  `peak_profit=$${result.peakProfit?.toFixed(2)} triggered_today=${result.triggeredToday}`,
+                )
+              }
+            } catch (e) {
+              console.error(`[scanner] SPARK_FAST_START EOD [${acct.name}:${accountType}] failed:`, e)
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[scanner] SPARK_FAST_START EOD hook failed:', e)
+      }
+    }
+
+    // AFTERNOON-SPREAD PAPER TRACKER (Leron, 2026-09-26: "Put on paper to
+    // track it") — the "dynamic hedge V2" research lead. PAPER-ONLY: reads
+    // quotes and writes to its own table, never places an order (see
+    // lib/afternoon-spread-tracker.ts's header). Disarmed unless
+    // AFTERNOON_SPREAD_PAPER=on; both calls no-op immediately when it isn't.
+    // Scoped to bot.name === 'flame' because it needs FLAME's own EBB put
+    // strike and VIX gate ratio, evaluated once per cycle, not once per bot.
+    if (bot.name === 'flame') {
+      try {
+        const { runAfternoonSpreadTick, settleAfternoonSpreadExpired } = await import('./afternoon-spread-tracker')
+        const spreadSettled = await settleAfternoonSpreadExpired(ct)
+        if (spreadSettled) console.log(`[scanner] ${spreadSettled}`)
+        const spreadTick = await runAfternoonSpreadTick(ct)
+        if (spreadTick) console.log(`[scanner] ${spreadTick}`)
+      } catch (e) {
+        console.error('[scanner] afternoon-spread paper tracker failed:', e)
+      }
+    }
+
+    // CALLDIAG — IWM 10d/20d call diagonal, PAPER sleeve unlocked per-account
+    // at CALLDIAG_MIN_EQUITY (default $7,500, env CALLDIAG_MODE=off by
+    // default). Entry at 09:35 ET, exit at 15:59 ET of the last session
+    // before front expiry; both no-op every other minute. See
+    // lib/calldiag-tracker.ts's header — never places a real order in this
+    // PR under any mode. Scoped to bot.name === 'flame' since this sleeve
+    // rides FLAME's own account list (resolveEligibleAccounts('flame')) and
+    // FLINT's floor infrastructure; wrapped so a failure here never takes
+    // FLAME's own put-side cycle down.
+    if (bot.name === 'flame') {
+      try {
+        const { runCallDiagEntryTick, runCallDiagExitTick } = await import('./calldiag-tracker')
+        const cdExit = await runCallDiagExitTick(ct)
+        if (cdExit) console.log(`[scanner] ${cdExit}`)
+        const cdEntry = await runCallDiagEntryTick(ct)
+        if (cdEntry) console.log(`[scanner] ${cdEntry}`)
+      } catch (e) {
+        console.error('[scanner] CALLDIAG paper tracker failed:', e)
+      }
+    }
+
+    // BACKSTOP. The pass above owns the normal case; this one owns everything else.
+    // An expired contract that is still `status = 'open'` is ALWAYS wrong, whatever
+    // the cause, and it blocks every entry until a human notices — SPARK lost three
+    // trading days to exactly that. This repairs the book at the deterministic value
+    // (intrinsic at the official close, clamped to the wing) and reports what it did,
+    // rather than raising an alarm somebody still has to act on.
+    //
+    // Runs AFTER the normal pass and only on the SECOND consecutive sighting, so it
+    // never races the thing it is backstopping. Wrapped, like the settle above: a
+    // watchdog that can take the scan cycle down is worse than the bug it watches for.
+    try {
+      const repaired = await watchdogForceSettleExpired(bot, ct)
+      if (repaired) reason += repaired
+    } catch (e) {
+      console.error(`[scanner] ${botName} expired-position watchdog failed:`, e)
+    }
+
+    // Symptom net, once per trading day: this bot expects ~1 entry a day, so a run of
+    // days with zero opens and no STRATEGY reason for it means something is broken —
+    // cause unknown, which is the point. Would have fired on 8/22.
+    try {
+      await tradeHeartbeatCheck(bot, ct)
+    } catch (e) {
+      console.error(`[scanner] ${botName} trade heartbeat failed:`, e)
     }
 
     // Collateral reconciliation every cycle (Fix 4)
@@ -6831,9 +9760,46 @@ async function scanBot(bot: BotDef): Promise<void> {
           tradedTodayCount = int(todayPosRows[0]?.cnt)
         } catch { /* non-fatal — tryOpenTrade has its own guard */ }
       }
+      // A PAPER FILL MUST NOT CONSUME THE LIVE ACCOUNT'S ENTRY ATTEMPT (2026-08-31).
+      //
+      // Both `tradedTodayCount` and `hasBlockingOpenPosition` count SANDBOX rows
+      // only (see their definitions above), yet they gate the entry for a bot whose
+      // live order rides along in the same call. So the moment the paper book filled
+      // at 13:05, canOpenMore went false and FLAME's live account was locked out for
+      // the rest of its 13:05-13:10 CT window — four scan cycles it should have had.
+      //
+      // That is what turned an unreadable broker balance into a lost day rather than
+      // a retried one: Tradier's /balances was failing roughly two calls in three
+      // that afternoon, so a single attempt is a coin flip, not a plan.
+      //
+      // Only opens the gate when the LIVE side genuinely has nothing today —
+      // liveStillNeedsEntry is false the moment production holds or has held a
+      // position, and defaults false if the check itself fails, so this can never
+      // add a second live order. tryOpenTrade's production-only mode then places
+      // with { productionOnly: true }, so paper is not re-opened either.
+      let liveStillNeedsEntry = false
+      if (canPlaceLiveOrders(bot.name) && prodOpenRows.length === 0) {
+        try {
+          const prodTodayRows = await query(
+            `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'positions')}
+             WHERE account_type = 'production' AND dte_mode = $1
+               AND (open_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}`,
+            [bot.dte],
+          )
+          liveStillNeedsEntry = int(prodTodayRows[0]?.cnt) === 0
+        } catch { /* fail closed — no retry rather than an unguarded live order */ }
+      }
+      if (liveStillNeedsEntry && (hasBlockingOpenPosition || tradedTodayCount >= maxTrades)) {
+        console.log(
+          `[scanner] ${bot.name.toUpperCase()}: LIVE CATCH-UP — paper has traded today but the ` +
+          `production account has no position; re-attempting the live order inside the entry window.`,
+        )
+      }
+
       // hasBlockingOpenPosition (not hasOpenPosition) — an overnight swing hold is
       // excluded so it cannot eat today's entry slot. See its definition above.
       const canOpenMore = (maxTrades === 0) ||
+        liveStillNeedsEntry ||
         (isProductionBot(bot.name) && maxTrades === 1 && !hasBlockingOpenPosition) ||
         (maxTrades > 0 && tradedTodayCount < maxTrades && !hasBlockingOpenPosition)
 
@@ -6897,7 +9863,45 @@ async function scanBot(bot: BotDef): Promise<void> {
       // else: has position + monitoring already happened above
     } else if (!hasOpenPosition) {
       action = 'outside_entry_window'
-      reason = `Past entry cutoff (${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT, cutoff ${botCfg.entry_end})`
+      // Branch the message on WHY isInEntryWindow(ct, bot) returned false — "past
+      // cutoff" was previously logged even before the window opened, which is
+      // misleading nearly all day (entry_start is a fixed code constant, not the
+      // scanner's problem) and caused a real misdiagnosis on 2026-09-11.
+      const hhmmNow = ct.getHours() * 100 + ct.getMinutes()
+      const entryStart = botCfg.entry_start ?? 830
+      const clock = `${ct.getHours()}:${String(ct.getMinutes()).padStart(2, '0')} CT`
+      reason = hhmmNow < entryStart
+        ? `Before entry open (${clock}, opens ${entryStart})`
+        : `Past entry cutoff (${clock}, cutoff ${botCfg.entry_end})`
+    }
+
+    // SPARK_FLINT entry (2026-09-27) — deliberately placed AFTER the block
+    // above, not alongside FLAME's FLINT block near the top of scanBot: by
+    // this point SPARK's own put-spread attempt for THIS tick (tryOpenTrade,
+    // just above) has already run, so spark_positions reflects today's real
+    // contract count (or its absence) BEFORE FLINT's account-level safety
+    // net (decideSparkFlintContracts, tradier.ts) reads it back via
+    // readEbbTodayOutcome('spark', ...). isInEntryWindow(ct, bot) inside
+    // tryOpenFlint reuses SPARK's OWN window (10:05-10:20 CT via `bot`),
+    // independent of FLAME's 13:05 window. One low-probability, accepted
+    // race: if SPARK's own entry is delayed to a LATER tick within the
+    // window (a transient quote/BP miss) after FLINT has ALREADY traded
+    // THIS tick assuming sparkCost=0, the safety net cannot retroactively
+    // re-check — the same per-tick-snapshot limitation every other gate in
+    // this scanner already has (BP, liquidity). Never fires unless BOTH
+    // FLINT_MODE != off AND SPARK_FLINT=on (isSparkFlintMode,
+    // spark-flint-separate.ts) — off/unset means this whole block is
+    // skipped, zero extra DB reads.
+    if (bot.name === 'spark') {
+      try {
+        const { isSparkFlintMode } = await import('./spark-flint-separate')
+        if (isSparkFlintMode()) {
+          const flintTraded = await tryOpenFlint(bot, ct)
+          if (flintTraded) console.log(`[scanner] ${flintTraded}`)
+        }
+      } catch (e) {
+        console.error('[scanner] FLINT/SPARK entry failed:', e)
+      }
     }
 
     // Take equity snapshot every cycle — save SEPARATE snapshots for sandbox and production.
@@ -7295,10 +10299,28 @@ const ATTIO_RETRY_INTERVAL_MS = 10 * 60 * 1000 // 10 minutes
  * the only delivery path. Most ticks are a single indexed query returning zero rows.
  */
 const CRM_OUTBOX_INTERVAL_MS = 30 * 1000
+// #218 held-post retry — re-scores every community_pending_messages row against the AI
+// moderator every few minutes so a scorer outage does not leave a post stuck forever.
+// Own interval, isolated from the trade loop, same shape as the Attio/CRM drains below.
+const PENDING_MODERATION_RETRY_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+let _pendingModerationRetryIntervalId: ReturnType<typeof setInterval> | null = null
+let _pendingModerationRetryRunning = false
 let _attioRetryIntervalId: ReturnType<typeof setInterval> | null = null
 let _attioRetryRunning = false
 let _crmOutboxRunning = false
 let _crmOutboxIntervalId: ReturnType<typeof setInterval> | null = null
+
+/**
+ * Waitlist email drip drain (lib/waitlist-drip). Same 30s cadence as the CRM outbox so a
+ * new signup's Email 1 is out within a tick; later stages are due at 09:00 CT on a business
+ * day and the tick is a single indexed query returning nothing until then.
+ */
+const WAITLIST_DRIP_INTERVAL_MS = 30 * 1000
+let _waitlistDripRunning = false
+let _waitlistDripIntervalId: ReturnType<typeof setInterval> | null = null
+/** The two Attio People attributes the drip mirrors into (crm/schema.ts). Provisioned once per boot. */
+const WAITLIST_DRIP_ATTIO_ATTRIBUTES = ['waitlist_email_stage', 'waitlist_last_email_at'] as const
+let _waitlistDripBootRan = false
 
 // Trial day-close ledger (Enrollment spec §7) — this IS the trial "cron".
 //
@@ -7307,11 +10329,18 @@ let _crmOutboxIntervalId: ReturnType<typeof setInterval> | null = null
 // schedule is a thing that can be forgotten at launch. The route stays for manual re-runs.
 const TRIAL_CLOSE_INTERVAL_MS = 15 * 60 * 1000 // 15 minutes
 let _trialCloseIntervalId: ReturnType<typeof setInterval> | null = null
+let _dailySummaryIntervalId: ReturnType<typeof setInterval> | null = null
 let _trialCloseRunning = false
 // CT market date already closed by this process. Belt to the DB's braces: the ledger is
 // idempotent per market date anyway, this just avoids the query 90× a day.
 let _trialCloseLastDate: string | null = null
 let _volAlertsRunning = false
+let _dailySummaryRunning = false
+// CT calendar date the daily_summary push already ran for. Same belt-and-braces
+// reasoning as _trialCloseLastDate — buildDailySummaryEvent's own eventKey is
+// already idempotent per (customer, date), this just avoids re-querying every
+// bot's daily_perf once a minute for the rest of the EOD window.
+let _dailySummaryLastDate: string | null = null
 // Per-signal active/inactive streaks for alert debounce (in-memory; resets on
 // restart, which at worst costs one debounce window). Kills the 5-min flap.
 let _volSignalStreaks: Record<string, SignalStreak> = {}
@@ -7319,7 +10348,12 @@ let _volSignalStreaks: Record<string, SignalStreak> = {}
 const ALPHAGEX_API_BASE = (
   process.env.ALPHAGEX_API_BASE || 'https://alphagex-api.onrender.com'
 ).replace(/\/$/, '')
-const VOL_ADVISOR_FETCH_TIMEOUT_MS = 5_000
+// 5s was too tight for a cross-service call to alphagex-api (a separate, often-busy
+// Render service running 20+ bots + ML) — measured ~8% of 5-min polls aborting on
+// 2026-09-11 even though the advisor always eventually answered. Non-blocking
+// (own setInterval, independent of the trade loop), so a longer timeout costs
+// nothing but a slightly later vol-alert update on a slow poll.
+const VOL_ADVISOR_FETCH_TIMEOUT_MS = 12_000
 
 /**
  * Poll the AlphaGEX vol-regime advisor and reconcile the `vol_alerts` table:
@@ -7469,12 +10503,19 @@ async function checkVolAlerts(): Promise<void> {
         // Cooldown so a tripped↔watch flap can't re-send the same state inside 60m.
         if (!(await markNotifiedIfDue(t.signalKey, t.to, VOL_NOTIFY_COOLDOWN_MIN))) continue
         const sig = signals[t.signalKey] || {}
+        // The alert must carry THIS signal's advice, not the report-wide headline.
+        // On 2026-09-03 the report's top action was backwardation's old "Fade the
+        // spike — go long", and it was stapled onto the bearish ts_flattening
+        // early warning. Prefer the advisor's per-signal action; fall back to the
+        // report action only when the advisor predates it.
+        const sigHeadline: string | null = sig.action?.headline ?? headline
+        const sigMessage: string | null = sig.action?.plain ?? message
         const res = await sendVolAlertEmail({
           signalKey: t.signalKey,
           direction: t.direction,
           reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
-          headline,
-          message,
+          headline: sigHeadline,
+          message: sigMessage,
           regimeLabel,
           vix,
           vix3m,
@@ -7487,10 +10528,10 @@ async function checkVolAlerts(): Promise<void> {
           signalKey: t.signalKey,
           direction: t.direction,
           reason: verdict.reason === 'early-warning' ? 'early-warning' : 'confirmed',
-          headline,
+          headline: sigHeadline,
           vix,
           vix3m,
-          message,
+          message: sigMessage,
           regimeLabel,
           vvix,
           proximity: typeof sig.proximity === 'number' ? sig.proximity : null,
@@ -7554,6 +10595,138 @@ function safeTrialDayClose(): void {
     .finally(() => { _trialCloseRunning = false })
 }
 
+/**
+ * Aggregate each customer's `today_pnl` across every live bot they own (SAME
+ * number getLiveSummary already computes for the Live page's "Today's Result"
+ * tile — no new P&L math) and dispatch one daily_summary push per customer.
+ *
+ * `ironforge_customer_bots` is the trading DB's customer→(bot, person) map
+ * (same table resolveLiveViewer/customerIdsForBot read); a customer with no
+ * `person` mapped yet is skipped, same fail-closed rule personFilter() uses
+ * everywhere else. A customer whose every owned bot returns a null today_pnl
+ * (nothing computable) gets no push that day — never a fabricated $0.00.
+ */
+async function dispatchDailySummaries(ct: Date, dateKey: string): Promise<{ customers: number; sent: number }> {
+  const rows = await query<{ customer_id: string; bot: string; person: string | null }>(
+    `SELECT customer_id, bot, person FROM ironforge_customer_bots WHERE customer_id IS NOT NULL`,
+  )
+  const byCustomer = new Map<string, Array<{ bot: string; person: string }>>()
+  for (const r of rows) {
+    if (!r.person || !PUSH_BOTS.has(r.bot)) continue
+    const list = byCustomer.get(r.customer_id) ?? []
+    list.push({ bot: r.bot, person: r.person })
+    byCustomer.set(r.customer_id, list)
+  }
+
+  const dateLabel = ct.toLocaleDateString('en-US', { timeZone: 'America/Chicago', weekday: 'long' })
+  let sent = 0
+  for (const [customerId, mappings] of Array.from(byCustomer.entries())) {
+    let totalPnl = 0
+    let any = false
+    for (const m of mappings) {
+      try {
+        const summary = await getLiveSummary(m.bot as LiveBot, { person: m.person })
+        if (summary.account.today_pnl != null) {
+          totalPnl += summary.account.today_pnl
+          any = true
+        }
+      } catch (e) {
+        console.warn(`[scanner] daily summary: getLiveSummary(${m.bot}) failed for a customer: ${e instanceof Error ? e.message : e}`)
+      }
+    }
+    if (!any) continue
+    const pnlRounded = Math.round(totalPnl * 100) / 100
+    const event = buildDailySummaryEvent({
+      pnl: pnlRounded,
+      dateLabel,
+      dateKey,
+      occurredAt: new Date().toISOString(),
+    })
+    const r = await dispatchToCustomers(event, [customerId])
+    sent += r.sent
+
+    // ALSO sent as email after the close (gap audit) — gated on the same
+    // notification_prefs.daily_summary opt-in the push respects, read directly
+    // here rather than through dispatchToCustomers' push-only pipeline (which
+    // requires a registered device; email does not).
+    if (isEmailConfigured() && isCustomersDbConfigured()) {
+      try {
+        const prefRows = await customerQuery<{ daily_summary: boolean; email: string; first_name: string }>(
+          `SELECT u.email, u.first_name, COALESCE(np.daily_summary, FALSE) AS daily_summary
+             FROM users u
+             LEFT JOIN notification_prefs np ON np.user_id = u.id
+            WHERE u.id = $1 LIMIT 1`,
+          [customerId],
+        )
+        const row = prefRows[0]
+        if (row?.daily_summary && row.email) {
+          await sendDailySummaryEmail({ to: row.email, firstName: row.first_name, dateLabel, pnl: pnlRounded })
+        }
+      } catch (e) {
+        console.warn(`[scanner] daily summary email failed for a customer: ${e instanceof Error ? e.message : e}`)
+      }
+    }
+  }
+  return { customers: byCustomer.size, sent }
+}
+
+/**
+ * Fire-and-forget daily-summary push (db-controls #202). Re-entrancy guarded,
+ * never throws, no-ops when the customers DB isn't configured. Independent of
+ * the trade loop — same shape as safeTrialDayClose just above.
+ *
+ * Fires once the session has actually closed (marketCloseMinuteCT handles
+ * early-close half-days the same way the rest of this file's EOD logic does),
+ * with a few minutes' buffer so the EOD safety sweep's closes have already
+ * landed in daily_perf before getLiveSummary reads today_pnl. At most once per
+ * CT date per process.
+ */
+function safeDailySummaryDispatch(): void {
+  if (_dailySummaryRunning) return
+  if (!isCustomersDbConfigured()) return
+
+  const ct = getCTNow()
+  if (ctHHMM(ct) < marketCloseMinuteCT(ct) + 6) return
+  const today = marketDateKey(ct)
+  if (_dailySummaryLastDate === today) return
+
+  _dailySummaryRunning = true
+  dispatchDailySummaries(ct, today)
+    .then((r) => {
+      _dailySummaryLastDate = today
+      console.log(`[scanner] daily summary ${today}: customers=${r.customers} sent=${r.sent}`)
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDailySummaryDispatch error: ${msg}`)
+    })
+    .finally(() => { _dailySummaryRunning = false })
+}
+
+/**
+ * Fire-and-forget held-post retry (#218). Re-entrancy guarded, never throws,
+ * no-ops when the customers DB isn't configured. Independent of the trade
+ * loop — community moderation has nothing to do with any bot's positions.
+ */
+function safePendingModerationRetry(): void {
+  if (_pendingModerationRetryRunning) return
+  if (!isCustomersDbConfigured()) return
+  _pendingModerationRetryRunning = true
+  retryPendingModeration()
+    .then((r) => {
+      if (r.checked > 0) {
+        console.log(
+          `[scanner] pending moderation retry: checked=${r.checked} published=${r.published} rejected=${r.rejected} stillPending=${r.stillPending}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safePendingModerationRetry error: ${msg}`)
+    })
+    .finally(() => { _pendingModerationRetryRunning = false })
+}
+
 /** Fire-and-forget Attio retry-queue drain. Re-entrancy guarded, never throws,
  *  no-ops when Attio isn't configured. Independent of the trade loop. */
 function safeDrainAttioQueue(): void {
@@ -7596,6 +10769,71 @@ function safeDrainCrmOutbox(): void {
     .finally(() => { _crmOutboxRunning = false })
 }
 
+/** Fire-and-forget waitlist drip drain. Re-entrancy guarded, never throws, no-ops when the
+ *  customers DB or Resend isn't configured. A missing send precondition (business address,
+ *  public origin) is reported by the drain itself and leaves every row untouched. */
+function safeDrainWaitlistDrip(): void {
+  if (_waitlistDripRunning) return
+  if (!isCustomersDbConfigured()) return
+  _waitlistDripRunning = true
+  // Autostart first (WAITLIST_DRIP_START_DATE): a no-op unless the env is set, and after the
+  // first pass an idempotent "0 enrolled" — so a signup that slipped past the form's own
+  // enrollment, or a founder added to the list, is on the schedule before this tick sends.
+  autoEnrollWaitlistDrip()
+    .catch(() => undefined)
+    .then(() => (isEmailConfigured() ? drainWaitlistDrip() : null))
+    .then((r) => {
+      if (!r) return
+      if (r.processed > 0) {
+        console.log(
+          `[scanner] waitlist drip: processed=${r.processed} sent=${r.sent} suppressed=${r.suppressed} ` +
+            `dup=${r.skippedDuplicate} failed=${r.failed} completed=${r.completed}`,
+        )
+      }
+    })
+    .catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.warn(`[scanner] safeDrainWaitlistDrip error: ${msg}`)
+    })
+    .finally(() => { _waitlistDripRunning = false })
+}
+
+/**
+ * Once-per-boot waitlist drip autostart. No-op unless WAITLIST_DRIP_START_DATE is a valid date.
+ * Both halves are best-effort and independent of the send path: a failure here is logged and
+ * never blocks a send. The Attio provisioning is scoped to the two mirror attributes and is
+ * idempotent (it only creates what is missing); the key must carry object_configuration scope
+ * or it reports the error and moves on — the drip itself does not depend on the attributes.
+ */
+function safeWaitlistDripBoot(): void {
+  if (_waitlistDripBootRan) return
+  _waitlistDripBootRan = true
+  const cfg = autostartConfig()
+  if (cfg.invalidReason) console.warn(`[scanner] waitlist drip autostart: ${cfg.invalidReason}`)
+  if (!cfg.enabled) return
+  console.log(
+    `[scanner] waitlist drip autostart: startDate=${cfg.startDate} founders=${cfg.founders.join(',')}`,
+  )
+  if (isCustomersDbConfigured()) {
+    autoEnrollWaitlistDrip().catch((err: unknown) => {
+      console.warn(`[scanner] waitlist drip autostart error: ${err instanceof Error ? err.message : String(err)}`)
+    })
+  }
+  if (isAttioCrmConfigured()) {
+    provisionObjectAttributes('people', WAITLIST_DRIP_ATTIO_ATTRIBUTES)
+      .then((r) => {
+        const errs = r.items.filter((i) => i.outcome === 'error').map((i) => `${i.target}: ${i.error ?? 'error'}`)
+        console.log(
+          `[scanner] attio waitlist attributes: created=${r.created} existing=${r.existing} errors=${r.errors}` +
+            (errs.length ? ` (${errs.join('; ')})` : ''),
+        )
+      })
+      .catch((err: unknown) => {
+        console.warn(`[scanner] attio waitlist attribute provisioning error: ${err instanceof Error ? err.message : String(err)}`)
+      })
+  }
+}
+
 /**
  * Register the scan loop and all satellite intervals.
  *
@@ -7630,6 +10868,12 @@ function startScannerLocked(): void {
   _attioRetryIntervalId = setInterval(safeDrainAttioQueue, ATTIO_RETRY_INTERVAL_MS)
   setTimeout(safeDrainAttioQueue, 30_000)
 
+  // #218 held-post moderation retry — own 5-min interval, isolated from the trade
+  // loop. Kick one run shortly after startup so a post held before a restart
+  // doesn't wait a full interval to be re-checked.
+  _pendingModerationRetryIntervalId = setInterval(safePendingModerationRetry, PENDING_MODERATION_RETRY_INTERVAL_MS)
+  setTimeout(safePendingModerationRetry, 20_000)
+
   // CRM outbox drain — own 30s interval (AC-CRM-001's 60-second budget), isolated from the
   // trade loop. Kicked at 5s so a deploy doesn't add half a minute to the first lead's latency.
   _crmOutboxIntervalId = setInterval(safeDrainCrmOutbox, CRM_OUTBOX_INTERVAL_MS)
@@ -7648,11 +10892,25 @@ function startScannerLocked(): void {
       .finally(safeDrainCrmOutbox)
   }, 5_000)
 
+  // Waitlist email drip — own 30s interval next to the CRM outbox it mirrors into. Kicked
+  // at 15s so a deploy landing at a send hour doesn't add a tick to the first batch.
+  _waitlistDripIntervalId = setInterval(safeDrainWaitlistDrip, WAITLIST_DRIP_INTERVAL_MS)
+  // Autostart boot pass (10s, ahead of the 15s drain kick): enroll the list + founders on the
+  // configured date, and make sure the two Attio mirror attributes exist. Once per boot.
+  setTimeout(safeWaitlistDripBoot, 10_000)
+  setTimeout(safeDrainWaitlistDrip, 15_000)
+
   // Trial day-close ledger — own 15-min interval, isolated from the trade loop. Self-
   // gates to after 15:05 CT, so ticks during the session are a cheap no-op. Kicked once
   // at startup so a deploy that lands right after the close still counts the day.
   _trialCloseIntervalId = setInterval(safeTrialDayClose, TRIAL_CLOSE_INTERVAL_MS)
   setTimeout(safeTrialDayClose, 45_000)
+
+  // Daily summary push (db-controls #202) — same 15-min cadence and self-gating
+  // shape as trial day-close just above; self-gates to after the session's own
+  // close (marketCloseMinuteCT + 6min), so ticks during the day are a no-op.
+  _dailySummaryIntervalId = setInterval(safeDailySummaryDispatch, TRIAL_CLOSE_INTERVAL_MS)
+  setTimeout(safeDailySummaryDispatch, 60_000)
 
   // Phase B customer-executor safety net: re-drive stuck customer closes
   // (close_failed / stale close_pending) during market hours. Self-gating,
@@ -7665,8 +10923,11 @@ function startScannerLocked(): void {
   console.log('[scanner] INFERNO fast monitor registered (20s), id:', _infernoFastMonitorIntervalId)
   console.log('[scanner] vol-alerts checker registered (5m), id:', _volAlertsIntervalId)
   console.log('[scanner] attio retry drain registered (10m), id:', _attioRetryIntervalId)
+  console.log('[scanner] pending moderation retry registered (5m), id:', _pendingModerationRetryIntervalId)
   console.log('[scanner] crm outbox drain registered (30s), id:', _crmOutboxIntervalId)
+  console.log('[scanner] waitlist drip drain registered (30s), id:', _waitlistDripIntervalId)
   console.log('[scanner] trial day-close registered (15m, gated to >=15:05 CT), id:', _trialCloseIntervalId)
+  console.log('[scanner] daily summary push registered (15m, gated to after close), id:', _dailySummaryIntervalId)
 }
 
 /**
@@ -8013,6 +11274,19 @@ export const _testing = {
   _mtmFailureCounts,
   trailingDbSeed,
   trailingDbUpdateMin,
+  vixDecayCheck,
+  vixDecayBlock,
+  VIX_DECAY_CEILING,
+  logFlintDailyContext,
+  getFlintGammaContextCached,
+  FLINT_CONTEXT_TABLE,
+  closeFlintAtRiskBeforeBell,
+  settleFlintExpired,
+  assignmentGuardWindow,
+  buildFlameD2Features,
+  SPARK_V2_RELAXED_VIX_CEILING,
+  tryOpenFlamePutSpread,
+  notifyBigMove,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

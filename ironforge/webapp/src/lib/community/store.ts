@@ -1,11 +1,19 @@
-import { customerQuery, customerExecute } from '@/lib/customers-db'
+import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/customers-db'
 import {
   generateForgeReply,
   generateScheduledPost,
   isForgeConfigured,
+  moderateMessage,
   shouldForgeReply,
   type ForgeSlot,
 } from './forge-ai'
+import type {
+  CommunityMessage,
+  CommunityFeed,
+  ThreadRepliesResponse,
+  BlockedMember,
+} from '@ironforge/shared/api-types'
+import type { SenderType } from './sender'
 
 /**
  * Forge Community data layer — all tables live in the customers DB
@@ -17,21 +25,17 @@ import {
 export const FORGE_NAME = 'Forge'
 export const DEFAULT_CHANNEL = 'all-chat'
 
-export interface CommunityMessage {
-  id: string
-  sender_name: string
-  sender_type: 'USER' | 'FORGE' | 'SYSTEM'
-  message: string
-  created_at: string
-  reactions: Array<{ emoji: string; count: number; mine: boolean }>
-}
+// Wire shapes now live in the shared types module (#225) — re-exported under
+// their original names so every existing `@/lib/community/store` import keeps
+// working unchanged.
+export type { CommunityMessage, CommunityFeed }
 
-export interface CommunityFeed {
-  channels: Array<{ slug: string; name: string }>
-  messages: CommunityMessage[]
-  online_count: number
-  members: Array<{ name: string; you: boolean }>
-}
+// isAiSender/isSparkySender/SenderType moved to ./sender.ts (#248) — that file
+// has zero other imports, unlike this one, so a client component can import a
+// real value from it without pulling the server-only data layer (and
+// next/headers, transitively) into the browser bundle. Re-exported here too
+// so existing server-side `@/lib/community/store` importers are unaffected.
+export { isAiSender, isSparkySender, type SenderType } from './sender'
 
 export async function getChannelId(slug: string): Promise<string | null> {
   const rows = await customerQuery<{ id: string }>(
@@ -40,15 +44,28 @@ export async function getChannelId(slug: string): Promise<string | null> {
   return rows[0]?.id ?? null
 }
 
+/**
+ * The channel whose tab shows EVERY channel's posts rather than its own.
+ *
+ * UX-005 shows "All" as an aggregate with a category chip on each post, not as a
+ * fifth room. Treating it as an ordinary channel made the chips meaningless (every
+ * post would read "All Chat") and quietly split the conversation: anything written
+ * from the default tab landed somewhere the other tabs never showed.
+ */
+export const AGGREGATE_CHANNEL = 'all-chat'
+
 export async function getFeed(channelSlug: string, viewerUserId: string | null): Promise<CommunityFeed> {
   const channels = await customerQuery<{ slug: string; name: string; id: string }>(
     `SELECT id, slug, name FROM community_channels ORDER BY sort_order ASC`,
   )
   const channel = channels.find((c) => c.slug === channelSlug) ?? channels[0]
+  // null = aggregate: every channel, each post tagged with its own.
+  const filterChannelId = channel && channel.slug !== AGGREGATE_CHANNEL ? channel.id : null
   const [messageRows, presenceRows] = await Promise.all([
     channel
       ? customerQuery<any>(
-          `SELECT m.id, m.sender_name, m.sender_type, m.message, m.created_at,
+          `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
+                  c.slug AS channel_slug, c.name AS channel_name,
                   COALESCE(
                     (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
                      FROM (
@@ -60,12 +77,26 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
                        ORDER BY cnt DESC
                      ) r),
                     '[]'::json
-                  ) AS reactions
+                  ) AS reactions,
+                  (SELECT COUNT(*)::int FROM community_messages r WHERE r.parent_id = m.id) AS reply_count
            FROM community_messages m
-           WHERE m.channel_id = $1
+           JOIN community_channels c ON c.id = m.channel_id
+           -- $1 NULL means "every channel" (the aggregate tab). Written as a guard
+           -- rather than two queries so the block filter below cannot drift apart.
+           WHERE ($1::uuid IS NULL OR m.channel_id = $1::uuid)
+             -- Replies render inside their thread, not the top-level feed — a thread
+             -- reply repeated in the main list would read as two unrelated posts.
+             AND m.parent_id IS NULL
+             -- Blocked authors disappear from THIS viewer's feed only. Written as
+             -- NOT EXISTS rather than a join so a NULL viewer (logged-out preview)
+             -- still sees everything instead of matching nothing.
+             AND NOT EXISTS (
+               SELECT 1 FROM community_blocks b
+               WHERE b.blocker_id = $2::uuid AND b.blocked_id = m.user_id
+             )
            ORDER BY m.created_at DESC
            LIMIT 100`,
-          [channel.id, viewerUserId],
+          [filterChannelId, viewerUserId],
         )
       : Promise.resolve([]),
     customerQuery<{ user_id: string; display_name: string }>(
@@ -77,14 +108,7 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
 
   return {
     channels: channels.map((c) => ({ slug: c.slug, name: c.name })),
-    messages: messageRows.reverse().map((m) => ({
-      id: String(m.id),
-      sender_name: String(m.sender_name),
-      sender_type: m.sender_type as CommunityMessage['sender_type'],
-      message: String(m.message),
-      created_at: new Date(m.created_at).toISOString(),
-      reactions: Array.isArray(m.reactions) ? m.reactions : [],
-    })),
+    messages: messageRows.reverse().map((m) => mapMessageRow(m, viewerUserId)),
     online_count: presenceRows.length,
     members: presenceRows.map((p) => ({
       name: p.display_name,
@@ -93,19 +117,257 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
   }
 }
 
+/** Shared row → CommunityMessage mapping for getFeed() and getReplies(). */
+function mapMessageRow(m: any, viewerUserId: string | null): CommunityMessage {
+  return {
+    id: String(m.id),
+    sender_name: String(m.sender_name),
+    sender_type: m.sender_type as CommunityMessage['sender_type'],
+    message: String(m.message),
+    created_at: new Date(m.created_at).toISOString(),
+    reactions: Array.isArray(m.reactions) ? m.reactions : [],
+    mine: viewerUserId != null && m.user_id != null && String(m.user_id) === viewerUserId,
+    blockable: m.user_id != null && String(m.user_id) !== viewerUserId,
+    channel_slug: String(m.channel_slug),
+    channel_name: String(m.channel_name),
+    reply_count: Number(m.reply_count ?? 0),
+    parent_id: m.parent_id != null ? String(m.parent_id) : null,
+  }
+}
+
+/**
+ * One thread's replies, oldest first (APP-055) — the natural reading order for a
+ * conversation, unlike the main feed's newest-first.
+ *
+ * Scoped through the same block guard as getFeed() so a blocked member's replies
+ * disappear from threads too, not just the top-level list.
+ */
+export async function getReplies(
+  parentId: string,
+  viewerUserId: string | null,
+  opts: { cursor?: string | null; limit?: number } = {},
+): Promise<ThreadRepliesResponse> {
+  const limit = Math.min(Math.max(Number(opts.limit) || 30, 1), 100)
+  const rows = await customerQuery<any>(
+    `SELECT m.id, m.user_id, m.sender_name, m.sender_type, m.message, m.created_at, m.parent_id,
+            c.slug AS channel_slug, c.name AS channel_name,
+            COALESCE(
+              (SELECT json_agg(json_build_object('emoji', r.emoji, 'count', r.cnt, 'mine', r.mine))
+               FROM (
+                 SELECT emoji, COUNT(*)::int AS cnt,
+                        BOOL_OR(user_id = $4::uuid) AS mine
+                 FROM community_reactions
+                 WHERE message_id = m.id
+                 GROUP BY emoji
+                 ORDER BY cnt DESC
+               ) r),
+              '[]'::json
+            ) AS reactions,
+            0 AS reply_count
+     FROM community_messages m
+     JOIN community_channels c ON c.id = m.channel_id
+     WHERE m.parent_id = $1::uuid
+       AND ($2::timestamptz IS NULL OR m.created_at > $2::timestamptz)
+       AND NOT EXISTS (
+         SELECT 1 FROM community_blocks b
+         WHERE b.blocker_id = $4::uuid AND b.blocked_id = m.user_id
+       )
+     ORDER BY m.created_at ASC
+     LIMIT $3`,
+    [parentId, opts.cursor ?? null, limit, viewerUserId],
+  )
+  const replies = rows.map((m) => mapMessageRow(m, viewerUserId))
+  const next_cursor = rows.length === limit ? new Date(rows[rows.length - 1].created_at).toISOString() : null
+  return { replies, next_cursor }
+}
+
+/**
+ * Whether `parentId` is a real, visible message in `channelId` — the guard behind
+ * "reply to a message that doesn't exist / was blocked / is in another channel is
+ * a 404, not a silently orphaned reply".
+ */
+export async function isReplyTargetVisible(
+  parentId: string,
+  channelId: string,
+  viewerUserId: string | null,
+): Promise<boolean> {
+  const rows = await customerQuery<{ id: string }>(
+    `SELECT m.id FROM community_messages m
+     WHERE m.id = $1::uuid AND m.channel_id = $2::uuid
+       AND NOT EXISTS (
+         SELECT 1 FROM community_blocks b
+         WHERE b.blocker_id = $3::uuid AND b.blocked_id = m.user_id
+       )`,
+    [parentId, channelId, viewerUserId],
+  )
+  return rows.length > 0
+}
+
 export async function insertMessage(opts: {
   channelId: string
   userId: string | null
   senderName: string
-  senderType: 'USER' | 'FORGE' | 'SYSTEM'
+  senderType: SenderType
   message: string
+  /** Reply target (APP-055). Undefined/null = top-level post. */
+  parentId?: string | null
 }): Promise<string | null> {
   const rows = await customerQuery<{ id: string }>(
-    `INSERT INTO community_messages (channel_id, user_id, sender_name, sender_type, message)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [opts.channelId, opts.userId, opts.senderName, opts.senderType, opts.message],
+    `INSERT INTO community_messages (channel_id, user_id, sender_name, sender_type, message, parent_id)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [opts.channelId, opts.userId, opts.senderName, opts.senderType, opts.message, opts.parentId ?? null],
   )
   return rows[0]?.id ?? null
+}
+
+/**
+ * Holds a post that moderation could not clear because the scorer itself
+ * failed (#218 — fails closed). Separate table from community_messages: a
+ * pending row must never appear in getFeed()/getReplies() until something
+ * actually clears it.
+ */
+export async function insertPendingMessage(opts: {
+  channelId: string
+  userId: string | null
+  senderName: string
+  message: string
+  parentId?: string | null
+  reason: string
+}): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_pending_messages (channel_id, user_id, sender_name, message, parent_id, reason)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [opts.channelId, opts.userId, opts.senderName, opts.message, opts.parentId ?? null, opts.reason],
+  )
+}
+
+export interface PendingMessage {
+  id: string
+  channel_id: string
+  channel_slug: string
+  channel_name: string
+  user_id: string | null
+  sender_name: string
+  message: string
+  parent_id: string | null
+  reason: string
+  created_at: string
+}
+
+function mapPendingRow(r: any): PendingMessage {
+  return {
+    id: String(r.id),
+    channel_id: String(r.channel_id),
+    channel_slug: String(r.channel_slug),
+    channel_name: String(r.channel_name),
+    user_id: r.user_id != null ? String(r.user_id) : null,
+    sender_name: String(r.sender_name),
+    message: String(r.message),
+    parent_id: r.parent_id != null ? String(r.parent_id) : null,
+    reason: String(r.reason),
+    created_at: new Date(r.created_at).toISOString(),
+  }
+}
+
+const PENDING_SELECT = `SELECT p.id, p.channel_id, c.slug AS channel_slug, c.name AS channel_name,
+         p.user_id, p.sender_name, p.message, p.parent_id, p.reason, p.created_at
+    FROM community_pending_messages p
+    JOIN community_channels c ON c.id = p.channel_id`
+
+/** Held posts (#218), oldest first — both the retry job and the operator
+ *  list/approve/reject endpoint read through this one function. */
+export async function listPendingMessages(limit = 50): Promise<PendingMessage[]> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} ORDER BY p.created_at ASC LIMIT $1`, [limit])
+  return rows.map(mapPendingRow)
+}
+
+export async function getPendingMessage(id: string): Promise<PendingMessage | null> {
+  const rows = await customerQuery<any>(`${PENDING_SELECT} WHERE p.id = $1::uuid`, [id])
+  return rows[0] ? mapPendingRow(rows[0]) : null
+}
+
+async function deletePendingMessage(id: string): Promise<void> {
+  await customerExecute(`DELETE FROM community_pending_messages WHERE id = $1::uuid`, [id])
+}
+
+/**
+ * Approve a held post — writes it into community_messages (same as any other
+ * member post) and removes it from the pending table. Used by both the retry
+ * job (once the scorer clears it) and the operator "Approve" action.
+ */
+export async function publishPendingMessage(p: PendingMessage): Promise<string | null> {
+  const messageId = await insertMessage({
+    channelId: p.channel_id,
+    userId: p.user_id,
+    senderName: p.sender_name,
+    senderType: 'member',
+    message: p.message,
+    parentId: p.parent_id,
+  })
+  await deletePendingMessage(p.id)
+  if (p.user_id) await touchPresence(p.user_id, p.sender_name).catch(() => undefined)
+  // Same async Forge reply a normal post triggers — a held post that finally
+  // clears moderation should not behave differently once it's live.
+  void maybeForgeReply({
+    channelId: p.channel_id,
+    senderName: p.sender_name,
+    message: p.message,
+    parentMessageId: messageId,
+  })
+  return messageId
+}
+
+/** Reject a held post — logs it the same way a same-session rejection does, then
+ *  removes it from the pending table. Used by the retry job (scorer finally
+ *  answered REJECTED) and the operator "Reject" action. */
+export async function rejectPendingMessage(
+  p: PendingMessage,
+  verdict: { category?: string; score?: number } = {},
+): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_moderation_events (user_id, message_excerpt, category, score, action)
+     VALUES ($1, $2, $3, $4, 'REJECTED')`,
+    [p.user_id, p.message.slice(0, 200), verdict.category ?? 'OPERATOR_REJECTED', verdict.score ?? null],
+  ).catch(() => undefined)
+  await deletePendingMessage(p.id)
+}
+
+/**
+ * Re-scores every held post against the AI moderator (#218's retry half — a
+ * held post must not be stuck forever). Fire-and-forget, called from
+ * scanner.ts's own side interval, same shape as the Attio/CRM retry drains —
+ * never on the trading path. Capped per run so a large backlog cannot turn
+ * one tick into a long-running batch; the next tick picks up where this one
+ * left off.
+ *
+ * A post whose scorer error persists is left in the table — not auto-
+ * published (would defeat "fails closed") and not auto-rejected (would
+ * discard content nobody has actually judged objectionable). The operator
+ * list/approve/reject endpoint is the backstop for a post that stays stuck
+ * because the scorer itself stays down.
+ */
+export async function retryPendingModeration(
+  limit = 20,
+): Promise<{ checked: number; published: number; rejected: number; stillPending: number }> {
+  const pending = await listPendingMessages(limit)
+  let published = 0
+  let rejected = 0
+  let stillPending = 0
+  for (const p of pending) {
+    const verdict = await moderateMessage(p.message)
+    if (verdict.ok) {
+      await publishPendingMessage(p)
+      published++
+    } else if (!verdict.pending) {
+      // The scorer gave a real answer this time, and it's REJECTED.
+      await rejectPendingMessage(p, { category: verdict.category, score: verdict.score })
+      rejected++
+    } else {
+      // Scorer is still erroring — leave it for the next tick.
+      stillPending++
+    }
+  }
+  return { checked: pending.length, published, rejected, stillPending }
 }
 
 export async function toggleReaction(messageId: string, userId: string, emoji: string): Promise<'added' | 'removed'> {
@@ -120,6 +382,44 @@ export async function toggleReaction(messageId: string, userId: string, emoji: s
     [messageId, userId, emoji],
   )
   return 'added'
+}
+
+/**
+ * Unread count for the tab badge (#229) — every top-level message NOT authored by
+ * this viewer, posted after their stored `last_read_at`, across every channel (the
+ * badge is one number for the whole tab, not per-channel). Capped display-side by
+ * the caller; this returns the real count so a customer who has been away for days
+ * does not see a misleadingly small number.
+ *
+ * Replies count too (parent_id IS NOT NULL is not excluded here) — a new reply in a
+ * thread you're part of is exactly the kind of thing the badge exists to surface,
+ * unlike the top-level-only feed list.
+ */
+export async function getUnreadCount(viewerId: string): Promise<number> {
+  const rows = await customerQuery<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+       FROM community_messages m
+      WHERE m.user_id IS DISTINCT FROM $1::uuid
+        AND m.created_at > COALESCE(
+          (SELECT last_read_at FROM community_reads WHERE user_id = $1::uuid),
+          'epoch'::timestamptz
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM community_blocks b
+           WHERE b.blocker_id = $1::uuid AND b.blocked_id = m.user_id
+        )`,
+    [viewerId],
+  )
+  return Number(rows[0]?.count ?? 0)
+}
+
+/** Marks the feed read as of now — called when the Community tab is opened/focused. */
+export async function markRead(viewerId: string): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_reads (user_id, last_read_at) VALUES ($1, now())
+     ON CONFLICT (user_id) DO UPDATE SET last_read_at = now()`,
+    [viewerId],
+  )
 }
 
 export async function touchPresence(userId: string, displayName: string): Promise<void> {
@@ -156,7 +456,7 @@ export async function seedWelcomeMessage(): Promise<void> {
     channelId,
     userId: null,
     senderName: FORGE_NAME,
-    senderType: 'FORGE',
+    senderType: 'flame_ai',
     message:
       "Welcome to the Forge Community! 🔥 I'm Forge — your AI guide here. I share market observations, answer questions, and keep the conversation disciplined. Say hi, introduce yourself, and let's have a great trading day. Protect the forge.",
   })
@@ -198,7 +498,7 @@ export async function maybePostScheduledUpdate(): Promise<void> {
     if (!channelId) return
     const text = await generateScheduledPost(due.slot)
     const messageId = await insertMessage({
-      channelId, userId: null, senderName: FORGE_NAME, senderType: 'FORGE', message: text,
+      channelId, userId: null, senderName: FORGE_NAME, senderType: 'flame_ai', message: text,
     })
     await customerExecute(
       `UPDATE community_forge_posts SET message_id = $2 WHERE slot_key = $1`,
@@ -219,6 +519,12 @@ export async function maybeForgeReply(opts: {
   channelId: string
   senderName: string
   message: string
+  /**
+   * The message Forge is answering (APP-057). Set as the reply's parent so it
+   * renders inside that message's thread rather than the top-level feed —
+   * Forge's AI replies are conversation, not a second announcement.
+   */
+  parentMessageId?: string | null
 }): Promise<void> {
   if (!isForgeConfigured() || !shouldForgeReply(opts.message)) return
   try {
@@ -236,10 +542,122 @@ export async function maybeForgeReply(opts: {
       channelId: opts.channelId,
       userId: null,
       senderName: FORGE_NAME,
-      senderType: 'FORGE',
+      senderType: 'flame_ai',
       message: reply,
+      parentId: opts.parentMessageId ?? null,
     })
   } catch (e) {
     console.error('[community] forge reply failed:', e)
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UGC safety controls (Google Play User Generated Content policy).
+//
+// Two obligations: a user must be able to REPORT objectionable content and to
+// BLOCK another user. Moderation-before-persistence already exists, but it is an
+// automated pre-filter — neither of these is a substitute for the other.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const REPORT_REASONS = ['SPAM', 'HARASSMENT', 'HATE', 'ADVICE', 'OTHER'] as const
+export type ReportReason = (typeof REPORT_REASONS)[number]
+
+export interface MessageAuthor {
+  messageId: string
+  userId: string | null
+  senderName: string
+  message: string
+}
+
+/** Author lookup used by both report and block; null when the message is gone. */
+export async function getMessageAuthor(messageId: string): Promise<MessageAuthor | null> {
+  const rows = await customerQuery<{
+    id: string
+    user_id: string | null
+    sender_name: string
+    message: string
+  }>(
+    `SELECT id, user_id, sender_name, message FROM community_messages WHERE id = $1::uuid`,
+    [messageId],
+  )
+  const r = rows[0]
+  if (!r) return null
+  return {
+    messageId: String(r.id),
+    userId: r.user_id ? String(r.user_id) : null,
+    senderName: String(r.sender_name),
+    message: String(r.message),
+  }
+}
+
+/**
+ * File a report. Idempotent per (message, reporter) so a double-tap cannot inflate
+ * the queue, and the excerpt is frozen at report time because the post it refers to
+ * may be deleted before anyone reviews it.
+ */
+export async function reportMessage(opts: {
+  messageId: string
+  reporterId: string
+  reason: ReportReason
+  author: MessageAuthor
+}): Promise<'filed' | 'already_reported'> {
+  const rows = await customerQuery<{ id: string }>(
+    `INSERT INTO community_message_reports
+       (message_id, reporter_id, reported_user_id, reason, message_excerpt)
+     VALUES ($1::uuid, $2::uuid, $3, $4, $5)
+     ON CONFLICT (message_id, reporter_id) DO NOTHING
+     RETURNING id`,
+    [
+      opts.messageId,
+      opts.reporterId,
+      opts.author.userId,
+      opts.reason,
+      opts.author.message.slice(0, 500),
+    ],
+  )
+  return rows.length > 0 ? 'filed' : 'already_reported'
+}
+
+/** Block a user for this viewer. Idempotent; self-blocks are rejected by the CHECK. */
+export async function blockUser(blockerId: string, blockedId: string): Promise<void> {
+  await customerExecute(
+    `INSERT INTO community_blocks (blocker_id, blocked_id)
+     VALUES ($1::uuid, $2::uuid) ON CONFLICT DO NOTHING`,
+    [blockerId, blockedId],
+  )
+}
+
+export async function unblockUser(blockerId: string, blockedId: string): Promise<void> {
+  await customerExecute(
+    `DELETE FROM community_blocks WHERE blocker_id = $1::uuid AND blocked_id = $2::uuid`,
+    [blockerId, blockedId],
+  )
+}
+
+/**
+ * Who this viewer has blocked, newest first.
+ *
+ * The name comes from the most recent message they posted rather than from `users`,
+ * because that is the only name the blocker ever saw — the feed never shows a legal
+ * name. Falls back to a placeholder if every message of theirs has since gone.
+ */
+export async function listBlocked(
+  blockerId: string,
+): Promise<BlockedMember[]> {
+  const rows = await customerQuery<{ blocked_id: string; display_name: string | null; created_at: string }>(
+    `SELECT b.blocked_id,
+            (SELECT m.sender_name FROM community_messages m
+              WHERE m.user_id = b.blocked_id
+              ORDER BY m.created_at DESC LIMIT 1) AS display_name,
+            b.created_at
+       FROM community_blocks b
+      WHERE b.blocker_id = $1::uuid
+      ORDER BY b.created_at DESC`,
+    [blockerId],
+  )
+  return rows.map((r) => ({
+    user_id: String(r.blocked_id),
+    display_name: r.display_name ?? 'Blocked member',
+    created_at: new Date(r.created_at).toISOString(),
+  }))
 }

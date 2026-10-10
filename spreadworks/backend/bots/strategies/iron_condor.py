@@ -22,6 +22,40 @@ from typing import Any
 
 # Match SPARK's hardcoded scanner defaults (ironforge/webapp/src/lib/scanner.ts).
 MIN_CREDIT = 0.25
+# 🚨 A CEILING, NOT JUST A FLOOR. RE-TIGHTENED 2026-08-21 from 0.40 to 0.25:
+# 0.40 was calibrated to the worst known case (56%) and a THIRD phantom walked
+# through it at 30.2% the very next session — 760 put quoted 1.46 with spot at
+# 765.98, six points OTM on a 1DTE and dearer than a 3.45-OTM put from a
+# comparable day. Two populations, cleanly separated:
+#     8 clean fills : 10.4% - 17.7%
+#     3 phantoms    : 28.8%, 30.2%, 56.2%
+# 0.22 sits 4.3 points above the worst real fill and 6.8 below the nearest
+# phantom. Erring TIGHT on purpose: a rejected real trade costs an
+# opportunity on a marginal paper bot, an accepted phantom corrupts the
+# ledger - which is the thing this exists to protect.
+# The only upper bound used to be
+# `credit < wing_width` (otherwise max loss goes negative), which on a $5 wing
+# admits anything up to $4.99. That is nowhere near tight enough to catch a bad
+# quote: on 2026-08-18 FLOW booked a 2.81 credit on a $5 wing - 56% of the width
+# - because the 763 put came back at 2.75 when the 764 put two minutes later was
+# 0.695. A lower-strike put cannot cost 4x a higher-strike one; the quote was
+# garbage, and the phantom credit made the position look instantly profitable,
+# so the profit-target logic closed it ONE MINUTE after entry and booked +$5,319
+# on a trade that was really about -$500.
+#
+# Real 1DTE condors at sd_mult 1.2 collect 13-18% of the width (measured across
+# every other FLOW fill). 40% is far above anything legitimate and far below the
+# 56% that got through, so it rejects the data error without touching a real
+# signal. A rejection is logged and surfaced, never silent.
+MAX_CREDIT_FRAC_OF_WIDTH = 0.22
+
+# 🚨 08:30:00 IS THE CAUSE, NOT A COINCIDENCE. All three phantom fills entered
+# at exactly 13:30:00 UTC — the first scan of the session, on the opening
+# auction print. Quotes there are wide, one-sided and frequently stale, and the
+# inflated credit then trips the profit target within minutes. No legitimate
+# FLOW fill has ever come from that scan. Skipping the first few minutes removes
+# the source instead of filtering its output.
+OPENING_BELL_SKIP_MIN = 5
 MAX_VIX = 32.0
 MIN_FLIP_DIST = 1.0
 SPREAD_WIDTH = 5  # $5 wings — symmetric IC
@@ -88,6 +122,7 @@ def build_iron_condor_signal(
     config: dict[str, Any],
     equity: float,
     diag: list[str] | None = None,
+    now_ct=None,
 ) -> IronCondorSignal | None:
     """Build a 1DTE Iron Condor signal or return None.
 
@@ -99,6 +134,19 @@ def build_iron_condor_signal(
         if diag is not None:
             diag.append(msg)
         return None
+
+    # ⛔ SKIP THE OPENING AUCTION. Passed in rather than read from a clock
+    # inside here, so the rule is testable and the caller stays honest about
+    # what time it thinks it is. Omitted (None) = no time gate, which keeps the
+    # preview/backtest callers working unchanged.
+    if now_ct is not None:
+        mins = now_ct.hour * 60 + now_ct.minute
+        if 8 * 60 + 30 <= mins < 8 * 60 + 30 + OPENING_BELL_SKIP_MIN:
+            return _reject(
+                f"opening_auction: {now_ct:%H:%M} CT is inside the first "
+                f"{OPENING_BELL_SKIP_MIN} min. Every phantom fill this bot has "
+                f"booked came from the 08:30 scan on opening-auction quotes."
+            )
 
     spot = float(chain["spot"])
     vix = float(chain.get("vix", 0))
@@ -158,6 +206,17 @@ def build_iron_condor_signal(
         return _reject(f"credit_too_low: credit={credit:.2f} min={MIN_CREDIT}")
 
     wing_width = spread_width
+    # ⛔ CHECKED BEFORE SIZING. An inflated credit does not just misprice the
+    # trade, it inflates max_profit and shrinks max_loss, which feeds straight
+    # into the contract count - so a bad quote buys MORE of the bad trade.
+    if credit > MAX_CREDIT_FRAC_OF_WIDTH * wing_width:
+        return _reject(
+            f"credit_implausible: credit={credit:.2f} is "
+            f"{100 * credit / wing_width:.0f}% of the {wing_width:.0f}-wide wing "
+            f"(max {100 * MAX_CREDIT_FRAC_OF_WIDTH:.0f}%). Legs: "
+            f"sp={sp_mid:.2f} sc={sc_mid:.2f} lp={lp_mid:.2f} lc={lc_mid:.2f} "
+            f"— almost certainly a bad quote, not an opportunity."
+        )
     max_profit_per = credit * 100.0
     max_loss_per = (wing_width - credit) * 100.0
     if max_loss_per <= 0:

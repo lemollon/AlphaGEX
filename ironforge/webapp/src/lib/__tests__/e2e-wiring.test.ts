@@ -177,10 +177,9 @@ describe('Fill Price Wiring by Bot', () => {
     expect(spark).toBeDefined()
     expect(inferno).toBeDefined()
 
-    // SPARK2 joined the roster on 2026-07-13 (replaced KINDLE, which is retired
-    // and removed from BOTS entirely). It runs SPARK's full v2 strategy on the
-    // second live account.
-    expect(BOTS.map(b => b.name)).toEqual(['flame', 'spark', 'inferno', 'spark2'])
+    // KINDLE is retired and removed from BOTS entirely; FORGE (three-market
+    // condor) joined the roster on 2026-08-10, disarmed.
+    expect(BOTS.map(b => b.name)).toEqual(['flame', 'spark', 'inferno', 'forge'])
   })
 
   it('SandboxOrderInfo fill_price flows through to position record', () => {

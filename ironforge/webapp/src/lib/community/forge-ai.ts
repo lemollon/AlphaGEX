@@ -1,4 +1,5 @@
 import { getQuoteDetail } from '@/lib/tradier'
+import { supportEmail } from '@/lib/support-address'
 
 /**
  * Forge — the AI community member for the Forge Community page.
@@ -58,7 +59,7 @@ Hard rules:
 - Use emojis sparingly (at most one per message).
 - Keep replies short — 1 to 3 sentences for chat replies, at most a short paragraph for scheduled updates.
 - NEVER invent market data. Only reference specific prices/levels/numbers that are explicitly provided to you in the prompt. If none are provided, speak in general terms.
-- If a member has an account, billing, or technical problem you cannot resolve, direct them to support@ironforge.trade.
+- If a member has an account, billing, or technical problem you cannot resolve, direct them to ${supportEmail()}.
 - End community updates (not every reply) with "Protect the forge." when it fits naturally.`
 
 /** Reply when a member @-mentions Forge or addresses it directly. */
@@ -123,15 +124,49 @@ export interface ModerationVerdict {
   ok: boolean
   category?: string
   score?: number
+  /**
+   * The scorer itself failed or returned something unusable — not a rejection.
+   * #218: moderation fails CLOSED, not open. A post MUST be checked against
+   * community guidelines before it publishes (design doc §11 acceptance
+   * criterion); an outage is not grounds to skip that check and publish
+   * anyway. Only set when `ok` is false.
+   */
+  pending?: boolean
 }
 
 /** Fast local pre-filter — catches the obvious cases with zero latency. */
 const WORDLIST = /\b(fuck|shit|bitch|asshole|cunt|nigger|faggot|kys|kill yourself)\b/i
 
+/**
+ * Personal financial advice directed AT another member — "you should buy...", "I
+ * recommend you sell...", "put your money into...". Deliberately narrower than a
+ * generic buy/sell mention: "AI posts never instruct members to act on their accounts"
+ * (db-community) applies to every poster, and a plain market opinion ("I think SPY
+ * goes up tomorrow") is explicitly fine per §11 and must never trip this.
+ */
+const ADVICE_PATTERN =
+  /\b(you should|you (ought|need) to|i (recommend|advise) (you|that you)|my advice (is|would be) (to )?|put (your|all your) money)\b[^.?!\n]{0,40}\b(buy|sell|short|go (long|short|all[- ]in)|invest|trade|in(to)?)\b/i
+
+/** Promotions — referral/discount codes, paid signal services, DMs for a sale. Distinct
+ *  from generic 'spam' (the AI scorer's existing category): this is specifically someone
+ *  monetizing the Community itself. */
+const PROMOTION_PATTERN =
+  /\b(use (my|this) (code|referral link)|(promo|discount|referral) code|sign up (with|using) my (link|code)|dm me for (signals|a (service|group|channel))|join my (paid )?(group|channel|discord|telegram|service)|check out my (channel|service|signals)|link in (my )?bio)\b/i
+
+/** Account details — numbers, logins or credentials that never belong in a public
+ *  chat, regardless of intent (the poster offering their own, or asking for someone
+ *  else's). */
+const ACCOUNT_DETAILS_PATTERN =
+  /\b(account\s*(number|#)\s*(is\s*)?\d{4,}|routing\s*number|social\s*security\s*number|\bssn\b\s*(is\s*)?\d|\bmy\s+(brokerage|tradier|tastytrade|robinhood|broker)\s+(account|login|password|pin)\b)/i
+
 const MODERATION_SYSTEM = `You are a strict content moderator for a professional trading community chat.
 Score the message and respond with ONLY a JSON object, no other text:
-{"profanity":0.0,"threat":0.0,"harassment":0.0,"personal_attack":0.0,"spam":0.0}
-Each score is 0.0-1.0. Normal trading talk, disagreement, and market opinions are all fine (all zeros).`
+{"profanity":0.0,"threat":0.0,"harassment":0.0,"personal_attack":0.0,"spam":0.0,"financial_advice":0.0,"promotion":0.0,"account_details":0.0}
+Each score is 0.0-1.0. Normal trading talk, disagreement, and market opinions are all fine (all zeros).
+"financial_advice" scores ONLY advice directed at another specific member telling them what to do with
+their own money/account — a general market opinion is NOT advice and scores 0.
+"promotion" scores referral codes, paid signal services, or other members being solicited for money.
+"account_details" scores account numbers, routing numbers, SSNs, or brokerage login credentials.`
 
 // Thresholds per design doc §11.
 const THRESHOLDS: Array<[string, number]> = [
@@ -140,13 +175,25 @@ const THRESHOLDS: Array<[string, number]> = [
   ['harassment', 0.6],
   ['personal_attack', 0.5],
   ['spam', 0.7],
+  ['financial_advice', 0.6],
+  ['promotion', 0.6],
+  ['account_details', 0.5],
 ]
 
 export async function moderateMessage(message: string): Promise<ModerationVerdict> {
   if (WORDLIST.test(message)) {
     return { ok: false, category: 'PROFANITY_DETECTED', score: 1 }
   }
-  if (!isForgeConfigured()) return { ok: true } // wordlist-only fallback
+  if (ACCOUNT_DETAILS_PATTERN.test(message)) {
+    return { ok: false, category: 'ACCOUNT_DETAILS_DETECTED', score: 1 }
+  }
+  if (ADVICE_PATTERN.test(message)) {
+    return { ok: false, category: 'FINANCIAL_ADVICE_DETECTED', score: 1 }
+  }
+  if (PROMOTION_PATTERN.test(message)) {
+    return { ok: false, category: 'PROMOTION_DETECTED', score: 1 }
+  }
+  if (!isForgeConfigured()) return { ok: true } // local-pattern-only fallback
   try {
     const raw = await callClaude({
       model: MODERATION_MODEL,
@@ -155,7 +202,9 @@ export async function moderateMessage(message: string): Promise<ModerationVerdic
       maxTokens: 120,
     })
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return { ok: true }
+    // #218: a response we can't parse is not a verdict — hold the post rather
+    // than guess it's clean.
+    if (!jsonMatch) return { ok: false, pending: true, category: 'MODERATION_UNAVAILABLE' }
     const scores = JSON.parse(jsonMatch[0]) as Record<string, number>
     for (const [category, threshold] of THRESHOLDS) {
       const score = Number(scores[category] ?? 0)
@@ -165,7 +214,10 @@ export async function moderateMessage(message: string): Promise<ModerationVerdic
     }
     return { ok: true }
   } catch {
-    // Fail-open: a moderation outage must not take the chat down.
-    return { ok: true }
+    // #218: fail CLOSED, not open — a moderation outage holds the post as
+    // pending instead of publishing it unchecked. This is different from the
+    // isForgeConfigured() branch above: that is a deliberate, standing
+    // local-pattern-only mode, not an outage.
+    return { ok: false, pending: true, category: 'MODERATION_UNAVAILABLE' }
   }
 }

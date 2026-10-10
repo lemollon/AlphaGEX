@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY, escapeSql } from '@/lib/db'
+import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY, escapeSql, isSettleAtExpiryBot } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 import { isSparkStrategyBot } from '@/lib/pt-tiers'
 
@@ -34,6 +34,34 @@ export async function POST(
     return NextResponse.json({ closed: 0, results: [], message: 'FLARE manages its own EOD/expiry exits' })
   }
 
+  // 🚨 EBB SETTLES AT THE CLOSE. NEVER BUY IT BACK AT 14:45.
+  //
+  // FLAME and SPARK run EBB since 2026-08-16: SPY 0DTE put credit spread, no
+  // stop, held to expiry and booked at intrinsic against the official close.
+  // The 14:45 cutoff is not a safety net for them, it IS the failure — the
+  // scanner's own note (registry #43) records that every early exit measured
+  // collapses the edge to about zero.
+  //
+  // The scanner learned this twice: settleDefer in the monitor path (8/16) and
+  // the EOD safety-net exemption (8/17, after FLAME's first trade was bought
+  // back at 14:55 for -$13). THIS ROUTE — a second, older EOD close fired by
+  // the dashboard's position-monitor poll, so it only runs when someone has a
+  // bot page open — was never told. On 2026-08-19 it flattened both: FLAME at
+  // 14:45:04 for $0.34 and SPARK at 14:49:19 for $1.75, fifteen minutes before
+  // the settlement that is the strategy. No CLOSE_TRIGGER rows exist for either,
+  // which is what identified this route rather than the scanner.
+  //
+  // Same shape of bug as the swing-hold note below, one layer deeper: a bot's
+  // exit policy has to hold on EVERY path that can close a position, and this
+  // is the third such path.
+  if (isSettleAtExpiryBot(bot)) {
+    return NextResponse.json({
+      closed: 0,
+      results: [],
+      message: `${bot.toUpperCase()} settles at the close — never bought back at the EOD cutoff`,
+    })
+  }
+
   // Optional person filter — if provided, only close positions belonging to this person
   const personParam = req.nextUrl.searchParams.get('person')
   const personFilter = personParam && personParam !== 'all' ? `AND person = $2` : ''
@@ -46,7 +74,7 @@ export async function POST(
     return NextResponse.json({ error: 'Not past EOD cutoff (2:45 PM CT)', ct_minutes: ctMins }, { status: 400 })
   }
 
-  // SWING HOLD (2026-07-21). SPARK-strategy bots (SPARK/SPARK2/KINDLE) are 1DTE
+  // SWING HOLD (2026-07-21). SPARK-strategy bots (SPARK/KINDLE) are 1DTE
   // swings: at the 14:45 CT cutoff on a NON-expiry day the scanner deliberately
   // holds a red position overnight to its expiry day (scanner.ts eodSwingDefer).
   // This route is a SECOND, older implementation of the EOD close, fired by the
@@ -286,6 +314,7 @@ export async function POST(
         await dbExecute(
           `UPDATE ${botTable(bot, 'paper_account')}
            SET current_balance = current_balance + $1,
+               high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                cumulative_pnl = cumulative_pnl + $1,
                total_trades = total_trades + $2,
                collateral_in_use = $3,
@@ -301,6 +330,7 @@ export async function POST(
         await dbExecute(
           `UPDATE ${botTable(bot, 'paper_account')}
            SET current_balance = current_balance + $1,
+               high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), current_balance + $1),
                cumulative_pnl = cumulative_pnl + $1,
                total_trades = total_trades + $2,
                collateral_in_use = $3,

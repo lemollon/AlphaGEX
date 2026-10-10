@@ -35,12 +35,37 @@ const config: ExpoConfig = {
     backgroundColor: '#0B0B0D',
   },
   assetBundlePatterns: ['**/*'],
+  // EAS Update. Until expo-updates was installed the `channel` keys in eas.json were
+  // inert, so a one-line JS fix still meant a full store release and a review wait.
+  updates: {
+    url: 'https://u.expo.dev/06291eb6-55ec-48a3-9e24-80808946023b',
+  },
+  /**
+   * fingerprint, NOT the appVersion policy `eas update:configure` suggests.
+   *
+   * `version` above is a hardcoded '1.0.0' and the store build numbers auto-increment
+   * remotely (eas.json appVersionSource: remote), so under an appVersion policy every
+   * build ever made would share the runtime version "1.0.0". An update published after
+   * a native dependency changed would then be handed to installed binaries that do not
+   * contain that native code — which fails at runtime, on a screen showing somebody's
+   * open positions, with no way to roll back from the user's side.
+   *
+   * The fingerprint policy derives the runtime version from the actual native graph, so
+   * an update can only ever reach a binary it genuinely matches. Native changes simply
+   * stop being OTA-able, which is the correct answer rather than a silent crash.
+   */
+  runtimeVersion: { policy: 'fingerprint' },
   ios: {
     bundleIdentifier: BUNDLE_ID,
     supportsTablet: false,
     // Universal Links. The paths must match the association file served from
     // webapp/public/.well-known/apple-app-site-association.
-    associatedDomains: ['applinks:ironforge.trade'],
+    //
+    // webcredentials is listed because that association file declares a
+    // `webcredentials` section. Without the matching entitlement here the app claims
+    // nothing, iOS never associates the domain for saved passwords, and the section
+    // in the file is dead weight that a reviewer can see is inconsistent.
+    associatedDomains: ['applinks:ironforge.trade', 'webcredentials:ironforge.trade'],
     infoPlist: {
       // Shown in the Face ID prompt (APP-008). Apple rejects builds that use
       // biometrics without an explanation string.
@@ -57,11 +82,19 @@ const config: ExpoConfig = {
     },
     // App Links: autoVerify makes Android check /.well-known/assetlinks.json, so
     // ironforge.trade links open the app instead of a chooser.
+    //
+    // Two data entries in ONE intent filter, not two filters — a second <intent-filter>
+    // with the same action/category is legal but redundant; Android just needs the extra
+    // <data> element to also match /reset-password so WP-A's emailed reset link opens
+    // the app instead of a browser.
     intentFilters: [
       {
         action: 'VIEW',
         autoVerify: true,
-        data: [{ scheme: 'https', host: 'ironforge.trade', pathPrefix: '/app' }],
+        data: [
+          { scheme: 'https', host: 'ironforge.trade', pathPrefix: '/app' },
+          { scheme: 'https', host: 'ironforge.trade', pathPrefix: '/reset-password' },
+        ],
         category: ['BROWSABLE', 'DEFAULT'],
       },
     ],
@@ -71,6 +104,42 @@ const config: ExpoConfig = {
     'expo-router',
     'expo-secure-store',
     'expo-local-authentication',
+    // StoreKit 2 in-app purchase (Apple IAP, Guideline 3.1.1 fix). No options needed for
+    // v1 — default StoreKit config only; iOS alternative/external billing entitlements
+    // are a separate decision this PR does not make. Android stays on Stripe
+    // (canPurchaseInApp is false there), so this plugin only affects the iOS build.
+    'expo-iap',
+    // Oswald (display) + Inter (body) are declared in theme/tokens.ts and were never
+    // actually loaded, so every fontFamily silently fell back to the system face and
+    // no screen matched the approved type. The plugin is required for the native build;
+    // useFonts() in app/_layout.tsx covers the JS side.
+    'expo-font',
+    // Without this plugin expo-notifications ships with no Android status-bar icon
+    // config at all — the OS falls back to the app's launcher icon rendered as a white
+    // square silhouette, which reads as a blank tile. `icon` MUST be a monochrome white
+    // 96x96 PNG (Google's spec); `defaultChannel` matches the "alerts" channel created
+    // at runtime in notifications/push.ts — declaring it here only edits the manifest,
+    // the channel itself still has to exist on-device before the OS will use it.
+    [
+      'expo-notifications',
+      {
+        icon: './assets/icon/android/notification-icon.png',
+        color: '#FD5301',
+        defaultChannel: 'alerts',
+      },
+    ],
+    // Source map upload for crash symbolication (APP-049). No org/project/authToken
+    // here — those come from SENTRY_ORG / SENTRY_PROJECT / SENTRY_AUTH_TOKEN at EAS
+    // build time (the plugin reads them from the environment on its own), which do not
+    // exist yet because the Sentry project has not been created. See the build report
+    // for exactly what Leron needs to fill in.
+    //
+    // Until SENTRY_AUTH_TOKEN exists, the upload step must be OFF, not merely
+    // unconfigured: with the token absent, sentry-cli still runs inside gradle and the
+    // Xcode build phase and fails the whole build ("An organization ID or slug is
+    // required" — Android versionCode 7, 2026-09-03). Keying the switch off the token
+    // means the day the EAS secrets are set, upload turns on with no code change.
+    ['@sentry/react-native', { disableAutoUpload: !process.env.SENTRY_AUTH_TOKEN }],
     // Android API level is PINNED, not inherited from whatever the Expo SDK happens to
     // default to. Google Play requires new apps and updates to target API 36 from
     // 2026-08-31; a silent default drift below that is not a warning, it is an outright

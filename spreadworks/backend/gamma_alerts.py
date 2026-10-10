@@ -29,7 +29,7 @@ import asyncio
 import csv
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -61,7 +61,8 @@ WHAT_TO_DO = {
 # unset ref means the jobs were never armed — see scheduled_jobs().
 _SCHEDULER: dict = {"ref": None}
 
-GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert", "gamma_entry_credit")
+GAMMA_JOB_IDS = ("gamma_capture", "gamma_squeeze_alert", "gamma_entry_credit",
+                 "gamma_intraday")
 
 
 def scheduled_jobs() -> dict:
@@ -596,7 +597,99 @@ def register_gamma_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] fire_squeeze_alert failed: %r", e)
 
-    scheduler.add_job(capture_gamma, "cron", hour=15, minute=5, timezone=CT,
+    # 🚨 day_of_week IS NOT REDUNDANT WITH THE weekday() GUARD INSIDE THE JOB.
+    # The guard stops the work; it does not stop the SCHEDULE. Without
+    # mon-fri, next_run_time on a Friday evening reports Saturday 15:05 — a
+    # firing that wakes up and immediately returns. scheduled_jobs() publishes
+    # that time, and the charts now show it to the user as "next update", so
+    # an advertised firing that does nothing is a lie about when the data
+    # actually moves next. On a Friday the honest answer is Monday.
+    async def record_intraday_gamma():
+        """Every 1 min, 08:30-15:00 CT weekdays: store one net-gamma point.
+
+        🚨 Tightened from every 10 min to every 1 min 2026-10-04 (Leron's
+        call, ~10x more live chain pulls/day -- 390 vs 39 -- accepted
+        knowingly). /squeeze/intraday now READS this job's own output
+        (sw_gamma_intraday) instead of pulling its own separate live chain
+        per page view, so tightening this job's cadence is the only way to
+        make the page's reading fresher -- there is no other live pull left
+        to throttle or tighten independently.
+
+        ⛔ CONTEXT, NOT THE SIGNAL. The verdict stays on the 15:05 capture,
+        which is what seven years of evidence is attached to. An intraday
+        sample lands in the wrong percentile zone 21.6% of the time against its
+        own close.
+
+        ⛔ A JOB, NOT A PAGE HOOK. Storing on page load would make the record a
+        function of who happened to be watching.
+        """
+        try:
+            now = datetime.now(CT)
+            if now.weekday() >= 5:
+                return
+            # 🚨 INCLUSIVE OF THE 15:00 CLOSE. With `< 15:00` the last tick
+            # inside the window is 14:59, so the closing minute went
+            # unrecorded — and the close is both the most informative reading
+            # of the day and the one nearest the 15:05 capture the signal is
+            # built from. Same shape of blind spot as the /session tape, which
+            # was missing 14:00-15:00 including the 0DTE settle hour.
+            if not (dtime(8, 30) <= now.time() <= dtime(15, 0)):
+                return
+            from .routes_squeeze import (ensure_gamma_intraday_table,
+                                         record_gamma_intraday)
+            from .bots.gamma_regime import fetch_net_gex
+            from .bots.routes_helpers import build_live_chain_provider
+
+            def _run() -> dict:
+                return fetch_net_gex(build_live_chain_provider(), "SPY")
+
+            out = await asyncio.to_thread(_run)
+            if out.get("net_gex") is None:
+                logger.info("[GammaAlerts] intraday gamma: no reading (%s)",
+                            out.get("reason"))
+                return
+            # Partial expiry pulls can manufacture a false threshold crossing.
+            if not out.get("chain_complete", False):
+                logger.warning("[GammaAlerts] incomplete intraday chain; skipping alert")
+                return
+            now = datetime.now(CT)  # timestamp the completed pull
+            ensure_gamma_intraday_table()
+            pct = None
+            try:
+                from .routes_squeeze import _pct_if_now, ENGINE as _E
+                pct = _pct_if_now(_E, out["net_gex"] / 1e9)
+            except Exception:                                # noqa: BLE001
+                pct = None
+            # VIX on the same 1-minute grid. The verdict's VIX leg is a
+            # prior-close reading; this is the live one, so you can watch the
+            # missing leg approach 0.95 during the session instead of finding
+            # out after the close.
+            vix_now = vix_ratio = None
+            try:
+                from .routes_squeeze import live_vix_ratio
+                from .bots.routes_helpers import build_live_chain_provider as _p
+                vix_now = await asyncio.to_thread(lambda: _p()._spot("VIX"))
+                vix_ratio = live_vix_ratio(vix_now)
+            except Exception:                                # noqa: BLE001
+                vix_now = vix_ratio = None
+            record_gamma_intraday(now, out.get("spot"),
+                                  out["net_gex"] / 1e9, pct,
+                                  vix=vix_now, vix_ratio=vix_ratio)
+            from .squeeze_intraday_alerts import post_reading
+            from . import _send_intraday_webhook_sync
+            await asyncio.to_thread(
+                post_reading, engine, now, out["net_gex"] / 1e9,
+                out.get("spot"), pct, _send_intraday_webhook_sync)
+
+        except Exception as e:  # noqa: BLE001
+            logger.warning("[GammaAlerts] record_intraday_gamma failed: %r", e)
+
+    scheduler.add_job(record_intraday_gamma, "cron", day_of_week="mon-fri",
+                      minute="*", timezone=CT, id="gamma_intraday",
+                      coalesce=True, max_instances=1, replace_existing=True)
+
+    scheduler.add_job(capture_gamma, "cron", day_of_week="mon-fri",
+                      hour=15, minute=5, timezone=CT,
                       id="gamma_capture", coalesce=True, max_instances=1,
                       replace_existing=True)
     async def capture_entry():
@@ -627,10 +720,12 @@ def register_gamma_alerts(scheduler, app) -> None:
         except Exception as e:  # noqa: BLE001
             logger.warning("[GammaAlerts] capture_entry failed: %r", e)
 
-    scheduler.add_job(capture_entry, "cron", hour=10, minute=5, timezone=CT,
+    scheduler.add_job(capture_entry, "cron", day_of_week="mon-fri",
+                      hour=10, minute=5, timezone=CT,
                       id="gamma_entry_credit", coalesce=True, max_instances=1,
                       replace_existing=True)
-    scheduler.add_job(fire_squeeze_alert, "cron", hour=8, minute=5, timezone=CT,
+    scheduler.add_job(fire_squeeze_alert, "cron", day_of_week="mon-fri",
+                      hour=8, minute=5, timezone=CT,
                       id="gamma_squeeze_alert", coalesce=True, max_instances=1,
                       replace_existing=True)
     # Hold the scheduler so the API can PROVE these jobs are armed. Without it

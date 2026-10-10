@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { ONBOARDING_COOKIE, verifyOnboardingToken } from '@/lib/auth/onboarding'
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
 import { isCustomersDbConfigured, customerQuery } from '@/lib/customers-db'
-import { BOT_PLANS } from '@/lib/billing/plans'
+import { BOT_PLANS, botTagline } from '@/lib/billing/plans'
 import { BOT_RATIONALE, type RecommendedBot } from '@/lib/onboarding/risk-scoring'
 
 export const runtime = 'nodejs'
@@ -40,9 +40,13 @@ export default async function OnboardingCompletePage() {
   }
   const recSlug = recommended === 'FLAME' ? 'flame' : recommended === 'SPARK' ? 'spark' : null
 
+  // These spread BOT_PLANS and then OVERRODE it with hardcoded taglines —
+  // "Next-day" for Spark and "Two-day" for Flame, both retired descriptions. The
+  // good source was already in scope on the same line; the literals shadowed it.
+  // Accent comes from the plan too, so a rebrand reaches this page.
   const base = [
-    { ...BOT_PLANS.spark, tagline: 'Next-day SPY spreads', accent: '#3B82F6' },
-    { ...BOT_PLANS.flame, tagline: 'Two-day SPY spreads', accent: '#EE5A24' },
+    { ...BOT_PLANS.spark, tagline: botTagline('spark'), accent: BOT_PLANS.spark.accent },
+    { ...BOT_PLANS.flame, tagline: botTagline('flame'), accent: BOT_PLANS.flame.accent },
   ]
   // Order the recommended strategy first.
   const strategies = recSlug ? [...base].sort((a, b) => (a.slug === recSlug ? -1 : b.slug === recSlug ? 1 : 0)) : base
@@ -90,7 +94,7 @@ export default async function OnboardingCompletePage() {
         </div>
 
         <p className="mt-4 text-center text-xs text-gray-500">
-          Running both? Add the second for <span className="text-gray-300">+$25/mo</span> — $75 total.
+          Running both? Each strategy is its own ${BOT_PLANS.spark.priceMonthly}/mo subscription.
         </p>
 
         <div className="mt-6 border-t border-white/10 pt-5 text-center">

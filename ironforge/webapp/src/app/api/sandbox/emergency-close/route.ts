@@ -343,6 +343,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
            collateral_in_use = 0,
            buying_power = ${balance},
            total_trades = ${actualTrades},
+           high_water_balance = GREATEST(COALESCE(high_water_balance, starting_capital, 0), ${balance}),
            updated_at = NOW()
        WHERE dte_mode = '${escapeSql(dte)}'`,
     )

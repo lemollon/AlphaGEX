@@ -15,8 +15,8 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from backend.bots.gamma_regime import (DEEP_SHORT_B, PCT_WINDOW, data_freshness,
-                                       sessions_between, signal_history,
-                                       signal_summary, vix_history)
+                                       episode_table, sessions_between,
+                                       signal_history, signal_summary, vix_history)
 from backend.bots.vix_regime import VIX_DAILY_TABLE, ensure_vix_table
 from backend.bots.gamma_regime import GAMMA_DAILY_TABLE, ensure_gamma_table
 
@@ -452,18 +452,19 @@ def test_state_never_422s_on_a_bad_sessions_param(engine, monkeypatch):
     assert len(asyncio.run(rs.state(sessions="99999"))["history"]) <= rs.MAX_HISTORY_ROWS
 
 
-def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
-    """~40 chain requests, cached 60s, for a number that cannot change — and
-    out of hours Tradier serves stale quotes that the strip rendered as a
-    live move."""
-    import asyncio
+def test_intraday_never_pulls_a_chain_at_all(monkeypatch):
+    """🚨 2026-10-04: /intraday no longer pulls ANY live chain, market open or
+    shut — it reads sw_gamma_intraday, written independently by the
+    record_intraday_gamma job. fetch_net_gex must never be called from this
+    endpoint, period (not just "while shut", the old framing — there is no
+    live-pull branch left to gate)."""
     import backend.routes_squeeze as rs
 
     called = {"n": 0}
 
     def _boom(*a, **k):
         called["n"] += 1
-        raise AssertionError("fetch_net_gex must not run while the market is shut")
+        raise AssertionError("fetch_net_gex must not run from /intraday anymore")
 
     monkeypatch.setattr(rs, "_INTRADAY_CACHE", {"ts": 0.0, "payload": None})
     monkeypatch.setattr("backend.bots.gamma_regime.fetch_net_gex", _boom)
@@ -474,11 +475,25 @@ def test_intraday_does_not_pull_the_chain_when_the_market_is_shut(monkeypatch):
             return rs.datetime(2026, 8, 15, 12, 0, tzinfo=rs.CT)   # Saturday
     monkeypatch.setattr(rs, "datetime", _Sat)
 
-    out = asyncio.run(rs.intraday())
+    out = rs.intraday()
     assert called["n"] == 0
     assert out["stale"] is True
     assert out["net_gex_b"] is None
     assert out["reason"] == "market_closed"
+
+
+def test_intraday_reads_the_stored_job_output_not_a_live_pull():
+    """When the market's open, /intraday must read sw_gamma_intraday's
+    latest row for today rather than fetching its own chain — confirmed by
+    source inspection, since fetch_net_gex must not appear in the function
+    body at all anymore."""
+    import inspect
+    import backend.routes_squeeze as rs
+
+    src = inspect.getsource(rs.intraday)
+    assert "fetch_net_gex" not in src
+    assert "build_live_chain_provider" not in src
+    assert rs.GAMMA_INTRADAY_TABLE in src
 
 
 # --------------------------------------------------------------------------
@@ -818,3 +833,175 @@ def test_a_priced_full_breach_loses_width_minus_credit():
     s = ledger_summary(e)
     assert s["pnl_total"] == -158.0      # (0.42 - 2.00) * 100
     assert s["worst_day"] == -158.0
+
+# --------------------------------------------------------------------------
+# break_probability — the regime cell behind "how often does a day like this
+# move more than 1%"
+# --------------------------------------------------------------------------
+def test_break_probability_picks_the_most_specific_cell_first():
+    from backend.bots.gamma_regime import BREAK_CELLS, break_probability
+    # Deep short gamma is a SUBSET of "short gamma, below flip" and must win.
+    assert break_probability(DEEP_SHORT_B - 1) == (BREAK_CELLS["deep_short_gamma"], "deep_short_gamma")
+    assert break_probability(DEEP_SHORT_B) == (BREAK_CELLS["deep_short_gamma"], "deep_short_gamma")
+    assert break_probability(-0.5) == (BREAK_CELLS["short_below_flip"], "short_below_flip")
+    assert break_probability(4.0) == (BREAK_CELLS["long_above_flip"], "long_above_flip")
+
+
+def test_break_probability_has_no_cell_for_zero_or_missing():
+    from backend.bots.gamma_regime import break_probability
+    assert break_probability(None) == (None, "no cell")
+    assert break_probability(0.0) == (None, "no cell")
+
+
+def test_break_probability_is_a_probability():
+    from backend.bots.gamma_regime import BREAK_CELLS
+    for k, v in BREAK_CELLS.items():
+        if k == "sample":
+            continue
+        assert 0.0 < v < 1.0, k
+
+
+# --------------------------------------------------------------------------
+# attach_forward_returns — next-session SPY move per signal_history row, from
+# sw_spy_daily's own closes
+# --------------------------------------------------------------------------
+@pytest.fixture
+def spy_engine(engine):
+    from backend.call_log import Base as CallBase
+    CallBase.metadata.create_all(engine)
+    return engine
+
+
+def _seed_spy(engine, closes: dict):
+    from backend.bots.gamma_regime import SPY_DAILY_TABLE
+    with engine.begin() as conn:
+        for d, c in closes.items():
+            conn.execute(text(
+                f"INSERT INTO {SPY_DAILY_TABLE} (trade_date, open, high, low, close) "
+                "VALUES (:d, :c, :c, :c, :c)"), {"d": d.isoformat(), "c": c})
+
+
+def test_forward_return_is_next_close_over_this_close(spy_engine):
+    from backend.bots.gamma_regime import attach_forward_returns
+    days = _weekdays(date(2026, 8, 20), 4)                  # Mon..Thu
+    _seed_spy(spy_engine, {days[0]: 100.0, days[1]: 101.0, days[2]: 99.99, days[3]: 105.0})
+    rows = [{"trade_date": d.isoformat()} for d in days]   # iso strings, as the route passes them
+    cov = attach_forward_returns(spy_engine, rows)
+    assert rows[0]["fwd1_pct"] == pytest.approx(0.01)
+    assert rows[1]["fwd1_pct"] == pytest.approx(99.99 / 101.0 - 1)
+    assert rows[2]["fwd1_pct"] == pytest.approx(105.0 / 99.99 - 1)
+    assert rows[3]["fwd1_pct"] is None                     # nothing after the newest close yet
+    assert cov["sessions_with_fwd"] == 3
+    assert cov["sessions_total"] == 4
+    assert cov["first_date"] == days[0]
+    assert cov["last_date"] == days[2]
+
+
+def test_forward_return_spans_a_weekend_but_not_a_hole(spy_engine):
+    from backend.bots.gamma_regime import attach_forward_returns
+    fri, mon, tue, wed, thu = (date(2026, 8, 21), date(2026, 8, 24), date(2026, 8, 25),
+                               date(2026, 8, 26), date(2026, 8, 27))
+    _seed_spy(spy_engine, {fri: 100.0, mon: 102.0, tue: 103.0, thu: 110.0})   # SPY has no Wed
+    rows = [{"trade_date": d} for d in (fri, mon, tue, wed, thu)]             # the signal does
+    cov = attach_forward_returns(spy_engine, rows)
+    assert rows[0]["fwd1_pct"] == pytest.approx(0.02)      # Fri -> Mon is one session
+    assert rows[1]["fwd1_pct"] == pytest.approx(103.0 / 102.0 - 1)
+    assert rows[2]["fwd1_pct"] is None                     # SPY's next row is Thu, the signal's is Wed: not one session
+    assert rows[3]["fwd1_pct"] is None                     # no close to measure from
+    assert cov["sessions_with_fwd"] == 2
+
+
+def test_forward_return_treats_a_gap_both_tables_share_as_a_holiday(spy_engine):
+    """No holiday calendar exists here; two calendars agreeing is the only
+    evidence available, and a gap wider than any real holiday is still None."""
+    from backend.bots.gamma_regime import attach_forward_returns
+    tue, thu = date(2026, 8, 25), date(2026, 8, 27)
+    nxt_fri = date(2026, 9, 4)                                 # 8 days on: never one session
+    _seed_spy(spy_engine, {tue: 100.0, thu: 103.0, nxt_fri: 120.0})
+    rows = [{"trade_date": d} for d in (tue, thu, nxt_fri)]
+    attach_forward_returns(spy_engine, rows)
+    assert rows[0]["fwd1_pct"] == pytest.approx(0.03)
+    assert rows[1]["fwd1_pct"] is None
+
+
+def test_forward_return_ignores_a_gamma_hole_the_spy_table_does_not_have(spy_engine):
+    from backend.bots.gamma_regime import attach_forward_returns
+    days = _weekdays(date(2026, 8, 20), 3)
+    _seed_spy(spy_engine, {days[0]: 100.0, days[1]: 101.0, days[2]: 104.0})
+    rows = [{"trade_date": d} for d in (days[0], days[2])]    # gamma skipped the middle session
+    attach_forward_returns(spy_engine, rows)
+    assert rows[0]["fwd1_pct"] is None                         # 104/100 would be a two-session return
+
+
+def test_forward_return_leaves_missing_closes_none_not_zero(spy_engine):
+    from backend.bots.gamma_regime import attach_forward_returns
+    days = _weekdays(date(2026, 8, 20), 3)
+    _seed_spy(spy_engine, {days[0]: 100.0, days[2]: 104.0})  # middle session has no close on file
+    rows = [{"trade_date": d} for d in days]
+    cov = attach_forward_returns(spy_engine, rows)
+    assert rows[0]["fwd1_pct"] is None                     # its next SPY row is 2 sessions on
+    assert rows[1]["fwd1_pct"] is None                     # no close to measure from
+    assert rows[2]["fwd1_pct"] is None
+    assert cov["sessions_with_fwd"] == 0
+    assert cov["first_date"] is None and cov["last_date"] is None
+
+
+def test_forward_return_with_no_rows_reports_empty_coverage(spy_engine):
+    from backend.bots.gamma_regime import attach_forward_returns
+    assert attach_forward_returns(spy_engine, []) == {
+        "sessions_with_fwd": 0, "sessions_total": 0, "first_date": None, "last_date": None}
+
+
+def test_forward_return_survives_a_missing_spy_table(engine):
+    """The route wraps this in try/except, but the failure should be the
+    honest one (the table is missing), not a KeyError three lines later."""
+    from backend.bots.gamma_regime import attach_forward_returns
+    with pytest.raises(Exception):
+        attach_forward_returns(engine, [{"trade_date": date(2026, 8, 20)}])
+
+
+# --------------------------------------------------------------------------
+# episode_table — the "falsification table": every session gamma closed
+# below a threshold, with the forward max at 1/3/5 sessions. Resolvable only
+# once enough future closes exist.
+# --------------------------------------------------------------------------
+def test_episode_table_resolves_includes_excludes(spy_engine):
+    """One sqlite engine, three outcomes: a qualifying episode with a full
+    5-session forward window gets correct fwd_1d/3d/5d_max + fwd_5d + rip;
+    a qualifying episode too close to the end of stored SPY data is excluded
+    and counted in excluded_unresolved, never zero-filled; a session whose
+    gamma never crosses the threshold is never included at all."""
+    days = _weekdays(date(2026, 8, 31), 10)
+    closes = [100.0, 101.0, 100.0, 102.0, 103.0, 99.0, 105.0, 104.0, 106.0, 107.0]
+    gex = [5.0, 5.0, -11.0, 5.0, 5.0, -5.0, 5.0, 5.0, -12.0, 5.0]   # in $B
+
+    _seed(spy_engine, days, lambda d: gex[days.index(d)] * 1e9)
+    _seed_spy(spy_engine, dict(zip(days, closes)))
+
+    out = episode_table(spy_engine, -10.0)
+    episodes, summary = out["episodes"], out["summary"]
+
+    # (a) days[2]: gamma -11B <= -10B, full 5-session forward window resolvable
+    assert len(episodes) == 1
+    ep = episodes[0]
+    assert ep["trade_date"] == days[2].isoformat()
+    assert ep["net_gex_b"] == pytest.approx(-11.0)
+    assert ep["fwd_1d_max"] == pytest.approx(102.0 / 100.0 - 1)
+    assert ep["fwd_3d_max"] == pytest.approx(103.0 / 100.0 - 1)
+    assert ep["fwd_5d_max"] == pytest.approx(105.0 / 100.0 - 1)
+    assert ep["fwd_5d"] == pytest.approx(104.0 / 100.0 - 1)
+    assert ep["rip"] is True   # fwd_5d_max (5%) >= RIP_THRESHOLD (3%)
+
+    # (b) days[8]: gamma -12B <= -10B but only 1 session of SPY closes follows
+    # it — excluded, not zero-filled, and counted
+    assert all(e["trade_date"] != days[8].isoformat() for e in episodes)
+    assert summary["excluded_unresolved"] == 1
+
+    # (c) days[5]: gamma -5B never crosses -10B — never included, never counted
+    assert all(e["trade_date"] != days[5].isoformat() for e in episodes)
+
+    assert summary["n"] == 1
+    assert summary["rip_n"] == 1
+    assert summary["rip_pct"] == pytest.approx(1.0)
+    assert summary["n_negative_fwd_5d"] == 0
+
