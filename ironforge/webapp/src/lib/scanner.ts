@@ -105,7 +105,7 @@ import { PROTECTIVE_REASON_PREFIXES } from './live/riskProtection'
 // throw into the scan tick that also places real orders — see flame-v2/engine.ts
 // header comment for the safety invariant and flame-v2/flags.ts for defaults.
 import {
-  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision,
+  flameRegimeBrainDecision, sparkTrailingBandDecision, sparkS1Decision, recordBandOutcome,
 } from './flame-v2/engine'
 import type { D2Features } from './flame-v2/math'
 import { flameRegimeBrainMode, sparkTrailingBandMode, sparkSignalFilterMode, isLive } from './flame-v2/flags'
@@ -659,6 +659,55 @@ async function buildFlameD2Features(asofDate: string): Promise<D2Features | null
 export async function getFlameVixRatioForUpsize(): Promise<number | null> {
   const asofDate = getCentralTime().toISOString().slice(0, 10)
   return (await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)).ratio
+}
+
+const BAND_RANGE: Record<'flame' | 'spark', { lo: number; hi: number }> = {
+  flame: { lo: VIX_DECAY_CEILING.flame, hi: FLAME_HEADLINE_VIX_CEILING },
+  spark: { lo: VIX_DECAY_CEILING.spark, hi: SPARK_V2_RELAXED_VIX_CEILING },
+}
+
+/**
+ * Go-forward D1/D2 training recorder (2026-10-10). Runs once per cycle,
+ * after close, for FLAME/SPARK; no-ops every other minute and on any day
+ * that isn't band-eligible. See flame-v2/engine.ts's recordBandOutcome for
+ * the pnl derivation and exactly which days it can and cannot record
+ * without fabricating a number — this function's only job is gathering the
+ * inputs (today's raw VIX-decay ratio, the prior-SPY-up rule, and whether
+ * the SPY book actually settled a real trade today) and handing them off.
+ */
+async function recordFlameV2BandOutcomeTick(bot: BotDef, ct: Date): Promise<string> {
+  if (bot.name !== 'flame' && bot.name !== 'spark') return ''
+  if (ctHHMM(ct) < marketCloseMinuteCT(ct)) return ''
+  try {
+    const todayStr = ct.toISOString().slice(0, 10)
+    // Ceiling passed as Infinity so `ratio` comes back regardless of either
+    // bot's own entry ceiling — this function needs the raw number, not a
+    // pass/fail against it.
+    const vix = await vixDecayCheck(todayStr, Infinity)
+    if (vix.ratio === null) return ''
+    const { lo, hi } = BAND_RANGE[bot.name]
+    if (!(vix.ratio > lo && vix.ratio <= hi)) return ''
+
+    const priorSpyUp = await priorSpySessionWasUp(todayStr)
+    if (priorSpyUp === null) return ''
+
+    const settled = await query<{ realized_pnl: string | number | null }>(
+      `SELECT realized_pnl FROM ${botTable(bot.name, 'positions')}
+        WHERE ticker = 'SPY' AND dte_mode = $1 AND expiration = $2 AND status IN ('closed', 'expired')
+        ORDER BY id DESC LIMIT 1`,
+      [bot.dte, todayStr],
+    )
+    const realizedPnl = settled.length > 0 && settled[0].realized_pnl !== null ? num(settled[0].realized_pnl) : null
+
+    const features = bot.name === 'flame' ? await buildFlameD2Features(todayStr) : null
+    const result = await recordBandOutcome({
+      bot: bot.name, dateStr: todayStr, ratio: vix.ratio, priorSpyUp, realizedPnl, features,
+    })
+    return `${bot.name}_band_outcome:${result}`
+  } catch (e) {
+    console.warn(`[flame-v2] recordFlameV2BandOutcomeTick(${bot.name}) failed (non-fatal):`, e)
+    return ''
+  }
 }
 
 /**
@@ -9293,6 +9342,17 @@ async function scanBot(bot: BotDef): Promise<void> {
       if (settled) reason += settled
     } catch (e) {
       console.error(`[scanner] ${botName} settlement failed:`, e)
+    }
+
+    // FLAME/SPARK v2 D1/D2 training recorder — read-only until settlement
+    // is final (gated on close above), writes only to flame_v2_signal_history,
+    // never touches this bot's own positions/paper_account/order path. See
+    // recordFlameV2BandOutcomeTick's own header.
+    try {
+      const bandOutcome = await recordFlameV2BandOutcomeTick(bot, ct)
+      if (bandOutcome) console.log(`[scanner] ${bandOutcome}`)
+    } catch (e) {
+      console.error(`[scanner] ${botName} band outcome recorder failed:`, e)
     }
 
     // XSP_SWAP (R4) settlement: any XSP host-leg contracts opened via the
