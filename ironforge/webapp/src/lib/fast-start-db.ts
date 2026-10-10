@@ -277,13 +277,23 @@ export async function updateFastStartEodState(
       }
     }
 
+    // 🚨 2026-10-10 fix: reusing $4 both as `phase = $4` (inferred SMALLINT,
+    // matching the column) and inside `WHEN $4 = 2` (inferred the literal's
+    // default INTEGER) made Postgres reject the whole query every single
+    // call with "inconsistent types deduced for parameter $4" — confirmed
+    // firing every minute in production logs for Logan's SPARK sandbox
+    // state, meaning this UPDATE has never once succeeded. `triggeredToday`
+    // is already computed above in JS from the exact same (nextPhase===2 &&
+    // phase===1) condition the SQL was trying to re-derive — pass it
+    // straight through as its own parameter instead of re-expressing it
+    // ambiguously in SQL.
     await query(
       `UPDATE fast_start_state
          SET peak_profit = $3, phase = $4, last_eod_date = $5,
-             triggered_at = CASE WHEN $4 = 2 AND phase = 1 THEN NOW() ELSE triggered_at END,
+             triggered_at = CASE WHEN $6 THEN NOW() ELSE triggered_at END,
              updated_at = NOW()
-       WHERE person = $1 AND account_type = $2 AND bot = $6`,
-      [person, accountType, newPeakProfit, nextPhase, tradeDateCt, bot],
+       WHERE person = $1 AND account_type = $2 AND bot = $7`,
+      [person, accountType, newPeakProfit, nextPhase, tradeDateCt, triggeredToday, bot],
     )
     return { updated: true, reason: 'ok', phase: nextPhase, peakProfit: newPeakProfit, triggeredToday }
   } catch (err: unknown) {

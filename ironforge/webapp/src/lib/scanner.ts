@@ -262,7 +262,6 @@ import {
   getAccountsForBot,
   getAccountsForBotAsync,
   getAllocatedCapitalForAccount,
-  getPdtEnabledForAccount,
   getSandboxAccountBalances,
   type SandboxOrderInfo,
   type SandboxCloseInfo,
@@ -7070,55 +7069,33 @@ async function tryOpenTrade(bot: BotDef, spot: number, vix: number): Promise<str
     // Production orders are placed alongside sandbox and recorded independently.
     // Paper position INSERT always runs after this block — NEVER blocked by Tradier.
 
-    // ── Production gating (PDT + already-traded check) ──
-    // PDT is STRUCTURALLY BYPASSED for the production bot:
-    // SPARK trades on a > $25K production account (Iron Viper), which is
-    // exempt from FINRA Rule 4210's day-trade cap. We still write pdt_log
-    // rows for audit, but the scanner gate is disabled here so flipping
-    // ironforge_pdt_config.pdt_enabled=true can never accidentally block a
-    // legitimate trade on a PDT-exempt account.
+    // ── Production gating (already-traded check) ──
+    // 🚨 2026-10-10 (Leron, "there is no PDT any more" / "make sure all the
+    // old logic is purged and deleted" / "I don't want anything stopping the
+    // bots trading the way they are supposed to"): FINRA eliminated the
+    // $25,000 PDT minimum and the day-trade-count designation entirely
+    // (Regulatory Notice 26-10, effective 2026-06-04 — verified independently
+    // via web search, not just the prior memory note). The rolling-window PDT
+    // gate that used to live here was ALREADY hardcoded inert (`pdtEnabled =
+    // false`) before today, for the now-obsolete reason "account is over
+    // $25K, exempt from FINRA Rule 4210" — confirmed by an independent audit
+    // that no live account is blocked by it today. Removed it outright,
+    // along with the `ironforge_pdt_config` SELECT that fed it: that read had
+    // its OWN failure mode (a DB hiccup on this query set
+    // `prodAlreadyTradedToday = true` in the outer catch below, silently
+    // skipping a real production entry for a reason that had nothing to do
+    // with trading) — one less way for a transient error to cost a live
+    // trade. The legitimate dedup/already-traded checks below are untouched;
+    // those are not PDT, they prevent duplicate real orders.
+    //
+    // NOTE (flagged, not fixed here): Tradier's own broker-side PDT
+    // enforcement may still be mid-phase-in (FINRA gives brokers until
+    // 2027-10-20) — if Tradier itself still rejects a day trade on a
+    // sub-$25K account, that shows up as a null fill / skipped trade, not an
+    // error this app can detect or route around. Confirm directly with
+    // Tradier if FLAME's production account is ever below $25K.
     let prodAlreadyTradedToday = false
     try {
-      const pdtConfigRows = await query(
-        `SELECT pdt_enabled, max_day_trades, last_reset_at
-         FROM ironforge_pdt_config
-         WHERE bot_name = $1 LIMIT 1`,
-        [bot.name.toUpperCase()],
-      )
-      const pdtCfg = pdtConfigRows[0]
-      // PDT is structurally disabled for the production bot regardless of the
-      // DB row: this entire block only executes inside the `isProductionFillOnly`
-      // (isProductionBot(bot.name)) guard above, and SPARK's production
-      // account is over $25K and therefore exempt from FINRA Rule 4210. We
-      // still read pdtCfg above so pdt_log writes downstream continue to work
-      // for audit purposes, but the gate is a no-op.
-      // Reference the unused helper so dead-code lints don't yank it (we still
-      // use getPdtEnabledForAccount elsewhere in the scanner).
-      void getPdtEnabledForAccount
-      void pdtCfg
-      const pdtEnabled = false
-      const maxDayTrades = pdtCfg?.max_day_trades != null ? int(pdtCfg.max_day_trades) : 3
-      const lastResetAt: string | null = pdtCfg?.last_reset_at ?? null
-
-      // Production PDT rolling window check (no-op for production bot — pdtEnabled is false above)
-      if (pdtEnabled && maxDayTrades > 0) {
-        let prodPdtSql = `SELECT COUNT(*) as cnt FROM ${botTable(bot.name, 'pdt_log')}
-           WHERE is_day_trade = TRUE AND dte_mode = $1
-             AND account_type = 'production'
-             AND trade_date >= ${CT_TODAY} - INTERVAL '6 days'
-             AND EXTRACT(DOW FROM trade_date) BETWEEN 1 AND 5`
-        const prodPdtParams: any[] = [bot.dte]
-        if (lastResetAt) {
-          prodPdtSql += ` AND created_at > $${prodPdtParams.length + 1}`
-          prodPdtParams.push(lastResetAt)
-        }
-        const prodPdtRows = await query(prodPdtSql, prodPdtParams)
-        if (int(prodPdtRows[0]?.cnt) >= maxDayTrades) {
-          prodAlreadyTradedToday = true
-          console.log(`[scanner] ${bot.name.toUpperCase()} PRODUCTION PDT BLOCKED: ${int(prodPdtRows[0]?.cnt)}/${maxDayTrades} day trades in rolling window`)
-        }
-      }
-
       // Check if production already traded today
       if (!prodAlreadyTradedToday) {
         const prodDayCheck = await query(

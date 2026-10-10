@@ -97,4 +97,21 @@ describe('updateFastStartEodState', () => {
     expect(r.updated).toBe(false)
     expect(r.reason).toBe('deposit_or_equity_unreadable')
   })
+
+  it('2026-10-10 regression: the UPDATE never reuses one placeholder across two different inferred types', async () => {
+    // The real bug this guards: `phase = $4 ... WHEN $4 = 2` made Postgres
+    // reject the query with "inconsistent types deduced for parameter $4"
+    // on every single call in production (confirmed in Render logs, firing
+    // every minute for Logan's SPARK sandbox state) -- a mock can't replicate
+    // Postgres's own type inference, so assert the query text directly: no
+    // placeholder may appear in both a column assignment and a bare `= <int
+    // literal>` comparison, and triggeredToday is passed as its own param.
+    stateStore['User:sandbox'] = { phase: 1, deposit: 2000, peak_profit: 0, last_eod_date: '2026-09-28' }
+    await updateFastStartEodState('User', 'sandbox', '2026-09-29', 3400, 1, true, 170, false, null)
+    const updateCall = mockDbQuery.mock.calls.find(([sql]) => sql.includes('UPDATE fast_start_state'))
+    expect(updateCall).toBeDefined()
+    const [sql, params] = updateCall!
+    expect(sql).not.toMatch(/\$4\s*=\s*2/)
+    expect(params).toContain(true) // triggeredToday, its own parameter
+  })
 })
