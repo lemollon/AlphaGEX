@@ -24,13 +24,21 @@ export async function POST(
   try {
     const body = await req.json()
     const active = Boolean(body.active)
-    const accountType = body.account_type as string | undefined
+    // 🚨 2026-10-10 fix: an omitted account_type used to update EVERY row for
+    // this dte_mode — sandbox AND production together. A toggle call meant
+    // to pause only the sandbox/paper view (the common case; account_type is
+    // optional and most UI calls likely omit it) could silently flip FLAME's
+    // or SPARK's real production account's is_active to false too.
+    // getProductionLadderCapital filters `is_active = TRUE`, so that lookup
+    // then returns null and real-money sizing goes silently inert — no error,
+    // no warning. Default to 'sandbox' instead of "every account_type" so an
+    // unscoped call can never touch production by accident; a caller that
+    // truly wants to toggle production must say so explicitly.
+    const accountType = (body.account_type as string | undefined) ?? 'sandbox'
 
-    // Update paper_account is_active flag (filtered by account_type if provided)
+    // Update paper_account is_active flag, always scoped to a real account_type.
     const dteFilter = dte ? `WHERE dte_mode = '${escapeSql(dte)}'` : 'WHERE is_active IS NOT NULL'
-    const accountTypeFilter = accountType
-      ? ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
-      : ''
+    const accountTypeFilter = ` AND COALESCE(account_type, 'sandbox') = '${escapeSql(accountType)}'`
     await dbExecute(
       `UPDATE ${botTable(bot, 'paper_account')}
        SET is_active = ${active}, updated_at = NOW()
