@@ -190,6 +190,34 @@ def test_section_meaning_market_control_reads_dominant_side():
     blocks['market_control']['control_side']=item({'SPY':{'0dte':'put_sellers'}})
     assert 'Put sellers dominate' in section_meaning('market_control',blocks['market_control'])
 
+def test_section_meaning_market_control_calls_back_to_mission_side():
+    """Leron, 2026-10-10: "each section should flow into each [other]" -- market_control is
+    the one section with its own real bull/bear-leaning read, so it explicitly agrees/
+    conflicts with Today's Mission's verdict when given mission_side; every other section's
+    line must not claim this (vol pricing, pipeline health etc. carry no real direction).
+    Call sellers dominant = capped-upside read = agrees with a defensive mission call,
+    conflicts with a risk-on one (and the reverse for put sellers dominant)."""
+    blocks=empty_blocks()
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'call_sellers'}})
+    agree=section_meaning('market_control',blocks['market_control'],'defensive')
+    assert 'lines up with the defensive mission call' in agree
+    conflict=section_meaning('market_control',blocks['market_control'],'risk-on')
+    assert 'tension with the risk-on mission call' in conflict
+    neutral_case=section_meaning('market_control',blocks['market_control'],'neutral')
+    assert neutral_case=='Call sellers dominate where classified — a sign of capped upside expectations.'
+    # No mission_side given at all -> no fabricated callback, same as before this change.
+    bare=section_meaning('market_control',blocks['market_control'])
+    assert bare=='Call sellers dominate where classified — a sign of capped upside expectations.'
+
+def test_section_meaning_covers_former_bookkeeping_sections_honestly():
+    """The 14 sections previously excluded from this layer now get a real line, but it must
+    say what the section actually is (bookkeeping/audit) rather than inventing a market read."""
+    blocks=empty_blocks()
+    assert 'not advice on your account' in section_meaning('paper_scorecard',blocks['paper_scorecard'])
+    assert 'never itself a market signal' in section_meaning('data_integrity',blocks['data_integrity'])
+    assert 'not a market read' in section_meaning('scanner',blocks['scanner'])
+    assert 'never treat it as today' in section_meaning('event_study',blocks['event_study'])
+
 def test_section_meaning_gamma_reads_sign():
     """Real shape from merge_symbols(gamma,['net_gex_b'],now) is {"SPY":{"net_gex_b":x}},
     not {"SPY":x} — a flat fixture here passed against buggy code once already (live bug,
@@ -410,7 +438,11 @@ def test_plain_value_irregular_dict_still_converts_embedded_timestamps():
     assert NOW.isoformat() not in rendered
     assert '2026-10-06 11:05:00 AM CT' in rendered
 
-def test_render_markdown_adds_decision_lines_only_for_included_sections():
+def test_render_markdown_adds_decision_lines_to_every_section_honestly():
+    """Leron, 2026-10-10: "make the read detailed and fun to read... each section should
+    flow into each [other]" -- every section gets the Section summary / What it means pair
+    now, including former bookkeeping sections like Paper Scorecard, but the bookkeeping
+    ones must say they're not a market read rather than inventing a signal."""
     blocks=empty_blocks()
     blocks['gamma']['net_gex']=item({'SPY':0.12})
     payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
@@ -418,9 +450,10 @@ def test_render_markdown_adds_decision_lines_only_for_included_sections():
     gamma_section=markdown.split('### Gamma')[1].split('###')[0]
     assert 'Section summary:' in gamma_section and 'What it means for the day:' in gamma_section
     paper_section=markdown.split('### Paper Scorecard')[1].split('###')[0]
-    assert 'Section summary:' not in paper_section and 'What it means for the day:' not in paper_section
-    assert set(SECTION_SUMMARY_SECTIONS) <= set(REQUIREMENTS)
-    assert 'paper_scorecard' not in SECTION_SUMMARY_SECTIONS
+    assert 'Section summary:' in paper_section and 'What it means for the day:' in paper_section
+    assert 'not advice on your account' in paper_section
+    assert set(SECTION_SUMMARY_SECTIONS)==set(REQUIREMENTS)
+    assert 'paper_scorecard' in SECTION_SUMMARY_SECTIONS
 
 def test_render_opening_html_carries_decision_first_panels():
     """This is the function the live /view page and the email body actually render from —

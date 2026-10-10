@@ -881,8 +881,9 @@ def _field_row(field,item,img_map=None,show_meta=True):
 
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
-    from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning
+    from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning,_side_label
     payload=stored_report(report_id);parts=[];nav=[]
+    mission_side=_side_label((payload['report_blocks']['risk_on_defensive']['verdict'] or {}).get('value'))
     images=payload.get('chart_urls') or {}
     assets,failures=stored_chart_assets(images)
     inline={asset['name']:'data:image/png;base64,'+asset['png_base64'] for asset in assets}
@@ -904,7 +905,7 @@ def report_view(report_id:str):
             fields_html+=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
                           f'<div class="field decision"><div class="fieldname">What it means for the day</div>'
-                          f'<div class="fieldval">{html.escape(section_meaning(name,block))}</div></div>')
+                          f'<div class="fieldval">{html.escape(section_meaning(name,block,mission_side))}</div></div>')
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
