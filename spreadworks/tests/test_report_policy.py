@@ -11,7 +11,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
-                                   ct_str, fmt_number, narrative_html)
+                                   ct_str, fmt_number, narrative_html, positioning_panel_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -503,6 +503,65 @@ def test_narrative_html_rounds_float_not_raw_repr():
     assert '0.1514' in narrative_html({'median_iv': 0.15139485927028395})
     assert '0.15139485927028395' not in narrative_html({'median_iv': 0.15139485927028395})
     assert '0.1514' in narrative_html({'SPY': {'median_iv': 0.15139485927028395}})
+
+def test_positioning_panel_surfaces_walls_regime_and_premium_suitability():
+    """Leron, 2026-10-10: "I need to be able to see during the day where the call sellers and
+    put sellers are... Should I be playing long or should I be selling premium? And which
+    strikes?" All of gamma.net_gex/walls and premium_selling.suitability already exist as
+    contract fields -- this panel surfaces them at the top instead of leaving them buried in
+    the Gamma/Market Control sections. No new REQUIREMENTS field, no new producer."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':11.91},'QQQ':{'net_gex_b':-0.2}})
+    blocks['gamma']['walls']=item({'SPY':{'walls':{'top_call':[{'strike':780.0,'gex_b':1.0}],
+        'top_put':[{'strike':779.0,'gex_b':-1.5}]}},'QQQ':{'walls':{'top_call':[],'top_put':[]}}})
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH','QQQ':'PREMIUM_CHEAP'})
+    panel=positioning_panel_html(blocks)
+    assert '📍 Positioning' in panel
+    assert 'Positive gamma' in panel and 'favors selling premium' in panel  # SPY, net_gex_b>0
+    assert 'Negative gamma' in panel and 'favors long/directional' in panel  # QQQ, net_gex_b<0
+    assert 'Resistance (call wall):</span> 780.00' in panel
+    assert 'Support (put wall):</span> 779.00' in panel
+    assert 'Premium Rich' in panel and 'Premium Cheap' in panel
+
+def test_positioning_panel_discloses_unavailable_premium_not_silent():
+    """premium_selling.suitability is correctly unavailable pre-market (needs 60 min of
+    realized trading data) -- the panel must say so, never silently omit the line or fabricate
+    a suitability read."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.5}})
+    panel=positioning_panel_html(blocks)
+    assert 'unavailable' in panel.lower()
+    assert 'PREMIUM_RICH' not in panel and 'PREMIUM_CHEAP' not in panel
+
+def test_positioning_panel_who_is_selling_shows_thin_coverage_honestly():
+    """market_control.control_side with every DTE bucket 'inconclusive' (thin classified flow
+    coverage) must say so plainly, never fabricate a confident call/put-seller dominance read."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.5}})
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'inconclusive','1_5dte':'inconclusive'}})
+    panel=positioning_panel_html(blocks)
+    assert 'too thin to call' in panel
+
+def test_positioning_panel_tolerates_flat_scalar_net_gex_shape():
+    """Defensive: net_gex's real contract shape is {"SPY": {"net_gex_b": x}}, but the panel
+    must not crash if a value ever arrives as a flat scalar {"SPY": x} instead."""
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':-0.04})
+    panel=positioning_panel_html(blocks)
+    assert 'Negative gamma' in panel
+
+def test_positioning_panel_empty_when_no_data_available():
+    blocks=empty_blocks()
+    assert positioning_panel_html(blocks) == ''
+
+def test_render_opening_html_includes_positioning_panel_after_mission():
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':11.91}})
+    opening=render_opening_html({'report_blocks':blocks})
+    mission_idx=opening.index('Today’s mission')
+    positioning_idx=opening.index('Positioning')
+    scoreboard_idx=opening.index('30-second scoreboard')
+    assert mission_idx<positioning_idx<scoreboard_idx
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms

@@ -728,6 +728,61 @@ def item_cell_html(item):
         return out
     return pill_html(item) + f'<div style="margin-top:4px">{narrative_html(item.get("value"))}</div>' + meta_line_html(item)
 
+def positioning_panel_html(blocks):
+    """Leron, 2026-10-10: "I need to be able to see during the day where the call sellers and
+    put sellers are... Should I be playing long or should I be selling premium? And which
+    strikes?" -- every input here already exists under gamma.net_gex/walls, market_control.
+    control_side, and premium_selling.suitability; this only moves it to the top of the page
+    instead of leaving it buried in the Gamma/Market Control sections below. No new producer,
+    no new data collection, no new REQUIREMENTS field."""
+    gamma=blocks.get("gamma") or {}
+    mc=blocks.get("market_control") or {}
+    ps=blocks.get("premium_selling") or {}
+    net_gex=(gamma.get("net_gex") or {}).get("value") or {}
+    walls=(gamma.get("walls") or {}).get("value") or {}
+    suitability_item=ps.get("suitability") or {}
+    suitability=suitability_item.get("value") or {}
+    control_side=(mc.get("control_side") or {}).get("value") or {}
+    symbols=sorted(set(net_gex) | set(walls) | set(suitability) | set(control_side))
+    rows=[]
+    for sym in symbols:
+        bits=[]
+        ng_raw=net_gex.get(sym)
+        ng=ng_raw.get("net_gex_b") if isinstance(ng_raw,dict) else ng_raw if isinstance(ng_raw,(int,float)) else None
+        if isinstance(ng,(int,float)):
+            if ng>0:regime="Positive gamma — dealers dampen moves, range-bound, favors selling premium over directional risk."
+            elif ng<0:regime="Negative gamma — dealers amplify moves, trend risk, favors long/directional over selling premium."
+            else:regime="Gamma flat — no dealer-hedging bias either way."
+            bits.append(f'<div style="margin:4px 0">{html.escape(regime)} <span style="color:#8b97a8">(net GEX {fmt_number(ng)}B)</span></div>')
+        wall=((walls.get(sym) or {}).get("walls")) if isinstance(walls.get(sym),dict) else None
+        if isinstance(wall,dict):
+            top_call=next(iter(wall.get("top_call") or []),None)
+            top_put=next(iter(wall.get("top_put") or []),None)
+            if isinstance(top_call,dict) and top_call.get("strike") is not None:
+                bits.append(f'<div style="margin:4px 0"><span style="color:#8b97a8">Resistance (call wall):</span> {fmt_number(top_call["strike"])}</div>')
+            if isinstance(top_put,dict) and top_put.get("strike") is not None:
+                bits.append(f'<div style="margin:4px 0"><span style="color:#8b97a8">Support (put wall):</span> {fmt_number(top_put["strike"])}</div>')
+        suit=suitability.get(sym)
+        if suit:
+            bits.append(f'<div style="margin:4px 0"><span style="color:#8b97a8">Premium:</span> {html.escape(str(suit).replace("_"," ").title())}</div>')
+        elif suitability_item.get("status")=="unavailable":
+            bits.append('<div style="margin:4px 0;color:#8b97a8">Premium suitability: unavailable (needs 60 min of realized trading data; populates after the open)</div>')
+        side=control_side.get(sym)
+        if isinstance(side,dict):
+            conclusive={k:v for k,v in side.items() if v and v!="inconclusive"}
+            if conclusive:
+                bits.append('<div style="margin:4px 0"><span style="color:#8b97a8">Who\'s selling:</span> '
+                             +html.escape(", ".join(f"{field_label(k)} {str(v).replace('_',' ')}" for k,v in conclusive.items()))+'</div>')
+            else:
+                bits.append('<div style="margin:4px 0;color:#8b97a8">Who\'s selling: too thin to call right now</div>')
+        if bits:
+            rows.append(f'<b>{html.escape(sym)}</b>'+"".join(bits))
+    if not rows:
+        return ""
+    parts=[f'<div{"" if i==0 else " style=\"margin:10px 0;padding-top:10px;border-top:1px solid #2a3341\""}>{content}</div>'
+           for i,content in enumerate(rows)]
+    return '<h2>📍 Positioning &amp; levels</h2>'+"".join(parts)
+
 def render_opening_html(payload):
     blocks=payload.get("report_blocks") or {};escape=html.escape
     divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
@@ -744,6 +799,7 @@ def render_opening_html(payload):
     out=("<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
          "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"
+         +positioning_panel_html(blocks)+
          "<h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>")
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks.get(name) or {}

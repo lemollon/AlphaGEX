@@ -350,6 +350,44 @@ def test_fmt_value_caps_nested_per_symbol_chain_dump():
     assert '+115 more items' in html
     assert '<pre class="raw">' not in html or html.count('2026-10-08')<30
 
+def test_fmt_value_single_key_dict_inlines_not_boxed():
+    """Live 2026-10-10: every per-symbol Gamma value ({"net_gex_b": -0.04}) got wrapped in a
+    full bordered/background kvblock just to show ONE number — visual weight with nothing to
+    organize. A single-key dict with a scalar value now inlines as plain "label: value"; a
+    real multi-key dict still gets the kvblock."""
+    assert 'kvblock' not in report._fmt_value({'net_gex_b': -0.04})
+    assert 'net gex b:' in report._fmt_value({'net_gex_b': -0.04})
+    assert 'kvblock' in report._fmt_value({'a': 1, 'b': 2})
+    # A single key whose value is itself a dict/list still needs real structure, not inlining.
+    assert 'kvblock' in report._fmt_value({'walls': {'put': 700.0, 'call': 710.0}})
+
+def test_shared_section_meta_collapses_identical_source_across_fields():
+    """Live 2026-10-10: Gamma's 4 fields each repeated the identical ~160-char source
+    description and timestamp verbatim under every single field — one fact shown four times.
+    When every populated field shares the exact same source+timestamp, show it once at the
+    section level and suppress each field's own repeat."""
+    block={
+        'coverage': {'status': 'historical', 'value': {'SPY': 684}, 'source': 'Tradier',
+                     'source_timestamp': '2026-10-08T20:00:00+00:00', 'age_seconds': 59706},
+        'net_gex': {'status': 'historical', 'value': -0.04, 'source': 'Tradier',
+                    'source_timestamp': '2026-10-08T20:00:00+00:00', 'age_seconds': 59706},
+    }
+    shared = report._shared_section_meta(block)
+    assert shared is not None and 'Tradier' in shared
+    fields_html = ''.join(report._field_row(f, i, show_meta=(shared is None)) for f, i in block.items())
+    assert fields_html.count('class="meta"') == 0  # per-field meta suppressed in favor of the shared line
+
+def test_shared_section_meta_none_when_sources_differ():
+    """A section with genuinely different sources per field must never be collapsed — each
+    field keeps its own meta line so the real distinction isn't hidden."""
+    block={
+        'a': {'status': 'historical', 'value': 1, 'source': 'Tradier',
+              'source_timestamp': '2026-10-08T20:00:00+00:00', 'age_seconds': 1},
+        'b': {'status': 'historical', 'value': 2, 'source': 'ThetaData',
+              'source_timestamp': '2026-10-08T20:00:00+00:00', 'age_seconds': 1},
+    }
+    assert report._shared_section_meta(block) is None
+
 def test_fmt_value_raw_dump_fallback_rounds_floats_not_just_timestamps():
     """Live bug, found 2026-10-10 in Leron's post-#3242-deploy check: event_study's per-event
     list (symbol/date/direction/forward_return/stalled) is too deep/wide for the normal

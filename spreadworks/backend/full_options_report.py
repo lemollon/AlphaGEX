@@ -756,6 +756,13 @@ def _fmt_value(v,depth=0,img_map=None):
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
         if v and depth<6:
             items=list(v.items());shown=items[:_MAX_KV_FIELDS]
+            # A single-key dict (e.g. {"net_gex_b": -0.04}) is one fact, not a table — a whole
+            # bordered/background kvblock box around ONE number (seen live 2026-10-10: every
+            # per-symbol Gamma value boxed this way) is visual weight with nothing to organize.
+            # Inline it like any other value; a real multi-key dict still gets the kvblock.
+            if len(items)==1 and not isinstance(items[0][1],(dict,list)):
+                k,vv=items[0]
+                return f'<span class="k">{html.escape(field_label(k))}:</span> {_fmt_value(vv,depth+1,img_map)}'
             rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
                          f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
             if len(items)>_MAX_KV_FIELDS:
@@ -798,7 +805,29 @@ def _ordered_blocks(report_blocks):
     rank={name:i for i,name in enumerate(_SECTION_DISPLAY_ORDER)}
     return sorted(report_blocks.items(),key=lambda kv:rank.get(kv[0],len(_SECTION_DISPLAY_ORDER)))
 
-def _field_row(field,item,img_map=None):
+def _meta_bits(item):
+    meta=[]
+    if item.get('source'):meta.append(html.escape(str(item['source'])))
+    if item.get('source_timestamp'):meta.append(html.escape(ct_str(item['source_timestamp'])))
+    age=item.get('age_seconds')
+    if isinstance(age,(int,float)):meta.append(f'age {age:.0f}s' if age<120 else f'age {age/60:.1f}m')
+    return meta
+
+def _shared_section_meta(block):
+    """If every populated field in a section carries the EXACT same source+timestamp (common:
+    one collector call backs the whole section), that is one fact, not N repeats of it. Live
+    2026-10-10: Gamma's 4 fields (coverage/net_gex/flip/walls) each repeated the identical
+    ~160-char source description and timestamp verbatim — real information the first time,
+    pure clutter the next three. Falls back to None (each field keeps its own meta line) the
+    moment any field disagrees, so genuinely mixed-source sections are never miscollapsed."""
+    populated=[item for item in block.values() if isinstance(item,dict) and item.get('value') is not None]
+    if not populated:return None
+    pairs={(item.get('source'),item.get('source_timestamp')) for item in populated}
+    if len(pairs)!=1 or None in next(iter(pairs)):return None
+    bits=_meta_bits(populated[0])
+    return ' &middot; '.join(bits) if bits else None
+
+def _field_row(field,item,img_map=None,show_meta=True):
     status=item.get('status','unavailable')
     value=item.get('value')
     pill_cls,pill_label=_STATUS_PILL.get(status,('unavail',status.upper()))
@@ -807,11 +836,7 @@ def _field_row(field,item,img_map=None):
     # actually appears hundreds of times per page — every field with a source_timestamp shows
     # its own raw UTC ISO string here. Same bug, far more pervasive: a Central-Time reader sees
     # a different, unlabeled hour on nearly every field on the page, not just once at the top.
-    meta=[]
-    if item.get('source'):meta.append(html.escape(str(item['source'])))
-    if item.get('source_timestamp'):meta.append(html.escape(ct_str(item['source_timestamp'])))
-    age=item.get('age_seconds')
-    if isinstance(age,(int,float)):meta.append(f'age {age:.0f}s' if age<120 else f'age {age/60:.1f}m')
+    meta=_meta_bits(item) if show_meta else []
     meta_html=f'<div class="meta">{" &middot; ".join(meta)}</div>' if meta else ''
     reason_html=f'<div class="reason">{html.escape(item["reason"])}</div>' if status=='unavailable' and item.get('reason') and value is not None else ''
     return (f'<div class="field"><div class="fieldtop"><span class="fieldname">{html.escape(field_label(field))}</span>'
@@ -837,7 +862,8 @@ def report_view(report_id:str):
         anchor='sec-'+name.replace('_','-')
         title=name.replace('_',' ').title()
         nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
-        fields_html=''.join(_field_row(field,item,img_map) for field,item in block.items())
+        shared_meta=_shared_section_meta(block)
+        fields_html=''.join(_field_row(field,item,img_map,show_meta=(shared_meta is None)) for field,item in block.items())
         if name in SECTION_SUMMARY_SECTIONS:
             fields_html+=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
@@ -848,7 +874,8 @@ def report_view(report_id:str):
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
-        parts.append(f'<section class="card" id="{anchor}"><h2>{html.escape(title)}</h2>'
+        section_meta_html=f'<div class="meta section-meta">{shared_meta}</div>' if shared_meta else ''
+        parts.append(f'<section class="card" id="{anchor}"><h2>{html.escape(title)}</h2>{section_meta_html}'
                      f'{"<div class=\'chart\'>"+image+"</div>" if image else ""}'
                      f'<div class="fields">{fields_html}</div></section>')
     from .report_policy import display
@@ -898,9 +925,11 @@ h1,h2{font-weight:700}
 .pill.hist{background:rgba(251,191,36,.16);color:var(--warn);border:1px solid rgba(251,191,36,.45)}
 .pill.live{background:rgba(52,211,153,.16);color:var(--call);border:1px solid rgba(52,211,153,.45)}
 .meta{color:var(--muted);font-size:.74rem;margin-top:4px;overflow-wrap:anywhere}
+.section-meta{margin:-6px 0 10px}
 .reason{color:var(--muted);font-size:.82rem;margin-top:4px}
 .muted{color:var(--muted)}
 .sep{color:var(--muted)}
+.kv .k{text-transform:capitalize}
 .kvblock{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:4px;min-width:0}
 .kvblock.listitem{margin-bottom:6px}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:.85rem;flex-wrap:wrap}
