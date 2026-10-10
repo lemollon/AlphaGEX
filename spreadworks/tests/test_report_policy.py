@@ -262,6 +262,18 @@ def test_display_compact_drops_repeated_provenance_suffix_keeps_reliability_tag(
     assert 'updated' not in compact and 'age' not in compact
     assert 'LIVE NOW' in compact and 'WATCH' in compact
 
+def test_display_scalar_string_timestamp_value_shows_central_time():
+    """Live bug, found 2026-10-10 in the markdown/Discord path: display()'s main value used
+    bare str(value) for any non-dict/list field, so a field whose VALUE is itself a raw
+    timestamp string (prior_hour_timestamp, heartbeat) showed bare UTC "+00:00" even though
+    the same line's own "[updated ... CT; age ...]" suffix (built separately, a few lines
+    down) already converted source_timestamp to Central Time -- the value and its own
+    metadata disagreed on the hour."""
+    ts_item=item(NOW.isoformat())
+    rendered=display(ts_item)
+    assert NOW.isoformat() not in rendered
+    assert '2026-10-06 11:05:00 AM CT' in rendered
+
 def test_evidence_no_longer_embeds_futures_context():
     """evidence used to embed blocks["futures_context"] wholesale, inside all three strategy
     sections. futures_context.basis is ALWAYS unavailable by design (same-time futures-vs-cash

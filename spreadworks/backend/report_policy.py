@@ -350,7 +350,12 @@ def display(item, compact=False):
     value=item.get("value")
     if item.get("status")=="unavailable":
         return "UNAVAILABLE — "+str(item.get("reason") or "No verified observation")+("; unverified estimate: "+plain_value(value) if value is not None else "")
-    text=plain_value(value) if isinstance(value,(dict,list)) else str(value)
+    # Live bug, found 2026-10-10 in the markdown/Discord delivery path: a scalar string VALUE
+    # (prior_hour_timestamp, heartbeat) skipped plain_value()/ct_str() entirely via bare str(),
+    # leaking raw UTC "+00:00" even though the SAME line's own provenance suffix below already
+    # converts source_timestamp to CT -- the value and its own metadata showed different, both
+    # unlabeled, times.
+    text=plain_value(value) if isinstance(value,(dict,list)) else (ct_str(value) if isinstance(value,str) else str(value))
     age=float(item.get('age_seconds') or 0)
     label='LIVE NOW' if item['status']=='live' else 'LAST KNOWN — CONTEXT ONLY ('+('MEDIUM' if age<3600 else 'LOW')+' contextual reliability)'
     if compact:
