@@ -383,6 +383,20 @@ def test_horizon_comparison_cross_report_timestamps_are_central_time():
     assert hc['prior_checkpoint']['value']['timestamp']=='2026-10-06 10:05:00 AM CT'
     assert NOW.isoformat() not in str(hc['morning_baseline']['value'])
 
+def test_plain_value_irregular_dict_still_converts_embedded_timestamps():
+    """Live bug, found 2026-10-09 in the post-deploy CT sweep: breadth has 18 keys (advances,
+    coverage_pct, a nested vwap.rows keyed by symbol with its own source_timestamp, ...),
+    over plain_value's len(v)<=10 cap, so the WHOLE dict fell straight to json.dumps() before
+    any per-field ct_str() call ran — the one remaining bare-UTC leak after PR #3237/#3238,
+    hiding inside raw JSON text instead of a normal field row."""
+    breadth={f'field_{i}':i for i in range(12)}
+    breadth['source_timestamp']=NOW.isoformat()
+    breadth['vwap']={'above':3,'covered':5,'rows':{'SPY':{'above':True,'vwap':777.3,'close':778.5,
+        'source_timestamp':NOW.isoformat(),'bars':378}}}
+    rendered=plain_value(breadth)
+    assert NOW.isoformat() not in rendered
+    assert '2026-10-06 11:05:00 AM CT' in rendered
+
 def test_render_markdown_adds_decision_lines_only_for_included_sections():
     blocks=empty_blocks()
     blocks['gamma']['net_gex']=item({'SPY':0.12})

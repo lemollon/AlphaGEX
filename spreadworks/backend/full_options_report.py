@@ -15,7 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
-from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str, _ct_safe_tree
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -761,7 +761,7 @@ def _fmt_value(v,depth=0,img_map=None):
             if len(items)>_MAX_KV_FIELDS:
                 rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
             return f'<div class="kvblock">{rows}</div>'
-        return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
+        return f'<pre class="raw">{html.escape(json.dumps(_ct_safe_tree(v),indent=2,ensure_ascii=False))}</pre>'
     if isinstance(v,list):
         if not v:return '<span class="muted">none</span>'
         if all(not isinstance(x,(dict,list)) for x in v):
@@ -776,7 +776,7 @@ def _fmt_value(v,depth=0,img_map=None):
             if len(v)>_MAX_DICT_ITEMS:
                 out+=f'<div class="muted">&hellip; +{len(v)-_MAX_DICT_ITEMS} more items</div>'
             return out
-        return f'<pre class="raw">{html.escape(json.dumps(v,indent=2,ensure_ascii=False))}</pre>'
+        return f'<pre class="raw">{html.escape(json.dumps(_ct_safe_tree(v),indent=2,ensure_ascii=False))}</pre>'
     return _fmt_primitive(v,img_map)
 
 _STATUS_PILL={'live':('live','LIVE'),'historical':('hist','LAST KNOWN'),'unavailable':('unavail','UNAVAILABLE')}
