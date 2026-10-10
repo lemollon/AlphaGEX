@@ -1268,6 +1268,36 @@ async function getFlintCumulativeRealizedPnl(botName: string, person: string): P
 }
 
 /**
+ * Same leak as getFlintCumulativeRealizedPnl, paper-book side (2026-10-10).
+ * FLINT's own always-on paper book (flint_positions rows with
+ * account_type='paper', person NULL — the entry opened at scanner.ts's
+ * "PAPER BOOK" rule R1 branch) settles independently of
+ * {bot}_paper_account.cumulative_pnl, which only tracks this bot's EBB
+ * put-side paper performance. getFlintPaperLedger's `equity` therefore has
+ * NO awareness of FLINT's own paper wins/losses -- rule R1's paper cushion
+ * check was testing FLINT's hypothetical risk against an equity number that
+ * can't see FLINT's own track record at all. Added into equity (not
+ * subtracted — unlike the production fix, nothing else has ever accounted
+ * for it, so there is no double-count to undo). Fails closed to 0 (today's
+ * behavior, correct for every account that's never had a FLINT paper fill).
+ */
+async function getFlintPaperCumulativeRealizedPnl(botName: string): Promise<number> {
+  try {
+    await ensureFlintTable()
+    const rows = await query<{ total: string | number | null }>(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM ${FLINT_TABLE}
+        WHERE bot = $1 AND account_type = 'paper'
+          AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL`,
+      [botName],
+    )
+    return num(rows[0]?.total)
+  } catch (e) {
+    console.warn(`[scanner] getFlintPaperCumulativeRealizedPnl(${botName}) failed (fail-closed to 0):`, e)
+    return 0
+  }
+}
+
+/**
  * Update paper_account.starting_capital when allocated capital changes.
  * Recalculates balance and buying_power to keep accounting consistent.
  */
@@ -4897,10 +4927,17 @@ async function logFlintDailyContext(params: {
 /**
  * FLINT's own paper ledger read — FLAME's paper (sandbox) account, the same
  * row the EBB put-side ladder reads for `bot.dte`. floor = starting_capital
- * (the funded seed); equity = current_balance (starting + realized P&L). Not
- * FLINT's own table — FLINT never gets its own ledger, per spec, it trades
- * "(FLAME account)" and is gated on FLAME's account state. null on any read
- * failure or missing row — the caller must skip, never guess.
+ * (the funded seed); equity = current_balance (starting + realized P&L) PLUS
+ * FLINT's own paper-book realized P&L. Not FLINT's own table — FLINT never
+ * gets its own ledger, per spec, it trades "(FLAME account)" and is gated on
+ * FLAME's account state — that design is correct. The bug (2026-10-10, same
+ * class as getFlintCumulativeRealizedPnl's production fix): current_balance
+ * only ever gets updated by the EBB put side's own settlement, so FLINT's
+ * own paper fills have NEVER moved this account's tracked equity at all —
+ * the "shared account, shared cushion" design was never actually fed
+ * FLINT's side of it. Added in (not netted out — nothing else has ever
+ * accounted for it, so there's no double-count to undo).
+ * null on any read failure or missing row — the caller must skip, never guess.
  */
 export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
   try {
@@ -4912,7 +4949,8 @@ export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number 
     )
     if (rows.length === 0) return { floor: null, equity: null }
     const floor = num(rows[0].starting_capital)
-    const equity = num(rows[0].current_balance)
+    const flintPnl = await getFlintPaperCumulativeRealizedPnl(bot.name)
+    const equity = num(rows[0].current_balance) + flintPnl
     return {
       floor: Number.isFinite(floor) && floor > 0 ? floor : null,
       equity: Number.isFinite(equity) ? equity : null,
@@ -11388,6 +11426,7 @@ export const _testing = {
   tryOpenFlamePutSpread,
   notifyBigMove,
   getFlintCumulativeRealizedPnl,
+  getFlintPaperCumulativeRealizedPnl,
   FLINT_TABLE,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
