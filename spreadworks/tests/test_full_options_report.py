@@ -350,6 +350,19 @@ def test_fmt_value_caps_nested_per_symbol_chain_dump():
     assert '+115 more items' in html
     assert '<pre class="raw">' not in html or html.count('2026-10-08')<30
 
+def test_fmt_value_raw_dump_fallback_rounds_floats_not_just_timestamps():
+    """Live bug, found 2026-10-10 in Leron's post-#3242-deploy check: event_study's per-event
+    list (symbol/date/direction/forward_return/stalled) is too deep/wide for the normal
+    per-field renderer and hits the raw <pre class="raw"> json.dumps() fallback — the SAME
+    fallback that PR #3239's _ct_safe_tree already fixed for bare-UTC timestamps. forward_return
+    -0.0001541364373222054 still dumped at full float repr precision because _ct_safe_tree only
+    converted strings, never floats."""
+    v={'events':[{'symbol':'SPY','date':'2026-10-02','direction':1,
+        'forward_return':-0.0001541364373222054,'stalled':True} for _ in range(3)]}
+    html=report._fmt_value(v,depth=6)
+    assert '0001541364373222054' not in html
+    assert '&quot;-0.0002&quot;' in html
+
 def test_fmt_value_converts_any_timestamp_shaped_string_regardless_of_key_name():
     """Key-name matching (source_timestamp, generated_at, ...) kept missing new field names as
     they turned up live one at a time: "heartbeat", "alert_time", "requested_at", "completed_at",

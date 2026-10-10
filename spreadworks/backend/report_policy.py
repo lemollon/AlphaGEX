@@ -86,13 +86,21 @@ def field_label(key):
 
 def _ct_safe_tree(v):
     """Walk an arbitrary JSON-able structure converting timestamp-shaped strings to Central
-    Time before an irregular shape falls back to raw json.dumps. Live bug, found 2026-10-09:
-    a dict with >10 keys (breadth, 18 fields including a nested per-symbol vwap.rows with its
-    own source_timestamp) skipped every per-field ct_str() call below and dumped the whole
-    tree — including its embedded UTC timestamps — as one raw JSON blob. ct_str() still
-    no-ops on non-timestamp strings and bare dates, so this is safe to apply unconditionally."""
+    Time and rounding raw float precision before an irregular shape falls back to raw
+    json.dumps. Live bug, found 2026-10-09: a dict with >10 keys (breadth, 18 fields including
+    a nested per-symbol vwap.rows with its own source_timestamp) skipped every per-field
+    ct_str() call below and dumped the whole tree — including its embedded UTC timestamps —
+    as one raw JSON blob. A second bug, found 2026-10-10: event_study's per-event list
+    (forward_return, too many entries for the normal per-field renderer) hit this same
+    fallback and dumped floats like -0.0001541364373222054 at full repr precision — fmt_number()
+    returns a formatted string, not a JSON number, which is fine here since this blob is a
+    read-only human-facing <pre>, never machine-parsed. Both conversions still no-op on
+    non-timestamp strings/bare dates and non-float values, so this is safe applied
+    unconditionally."""
     if isinstance(v, str):
         return ct_str(v)
+    if isinstance(v, float):
+        return fmt_number(v)
     if isinstance(v, dict):
         return {k: _ct_safe_tree(vv) for k, vv in v.items()}
     if isinstance(v, list):
