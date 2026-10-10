@@ -220,12 +220,27 @@ def _theta_base() -> str:
 
 
 def _theta_rows(path: str, params: dict[str, Any], timeout: int = 35) -> list[dict[str, Any]]:
+    """One retry on HTTP 429 (rate limited) with a short fixed backoff. Live 2026-10-10: 13 of
+    15 sampled intraday reports showed flow (calls/puts bought/sold -- the put/call-seller read
+    Leron asked for) entirely unavailable, EVERY failure citing HTTP 429 from ThetaData,
+    including one report where all 4 attempted expirations 429'd back to back. A single
+    unretried 429 on the earliest, unguarded call (list expirations, before the per-expiry try/
+    except starts) killed the whole collection for that symbol. The retry costs at most one
+    0.4s backoff plus one more request; callers already track their own remaining time budget
+    per call and re-check it before each subsequent call, so this never blocks past what a
+    caller would have waited for a slow success anyway -- it just means a budget-constrained
+    run attempts fewer strikes/expirations afterward instead of failing the whole symbol."""
     base = _theta_base()
     if not base:
         raise RuntimeError("THETADATA_BASE_URL missing")
-    response = requests.get(f"{base}{path}", params=params, timeout=timeout)
-    response.raise_for_status()
-    return list(csv.DictReader(io.StringIO(response.text))) if response.text.strip() else []
+    for attempt in (1, 2):
+        response = requests.get(f"{base}{path}", params=params, timeout=timeout)
+        if response.status_code == 429 and attempt == 1:
+            logger.warning("[ThetaData] 429 rate limited on %s, retrying once", path)
+            time.sleep(0.4)
+            continue
+        response.raise_for_status()
+        return list(csv.DictReader(io.StringIO(response.text))) if response.text.strip() else []
 
 
 def _theta_live_snapshot_rows(path: str, params: dict[str, Any], observed_at: datetime) -> list[dict[str, Any]]:
