@@ -11,7 +11,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
-                                   ct_str)
+                                   ct_str, fmt_number, narrative_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -482,6 +482,27 @@ def test_opening_html_unavailable_item_still_shows_reason():
     opening=render_opening_html({'report_blocks':blocks})
     assert 'No source observation' in opening
     assert 'color:#f87171' in opening  # unavailable-status color
+
+def test_fmt_number_rounds_raw_float_precision():
+    """Leron, 2026-10-10: "There is to many decimal places in the number it's need to be
+    rounded" -- median_iv 0.15139485927028395 and net_gex_b -0.04018785705263146 (both from
+    his screenshot) rendered at full float precision. Matches full_options_report._fmt_
+    primitive's magnitude-tiered convention (0 decimals >=1000, 2 decimals >=1, 4 below)."""
+    assert fmt_number(0.15139485927028395) == '0.1514'
+    assert fmt_number(-0.04018785705263146) == '-0.0402'
+    assert fmt_number(1234.5678) == '1,235'
+    assert fmt_number(12.3456) == '12.35'
+
+def test_plain_value_rounds_float_not_raw_repr():
+    assert plain_value(0.15139485927028395) == '0.1514'
+    assert plain_value({'median_iv': 0.15139485927028395}) == 'median iv 0.1514'
+
+def test_narrative_html_rounds_float_not_raw_repr():
+    """Same bug, opening-summary path: thesis.volatility_context.SPY.median_iv showed full
+    float precision in the Today vs Forward card even after the run-on-sentence fix."""
+    assert '0.1514' in narrative_html({'median_iv': 0.15139485927028395})
+    assert '0.15139485927028395' not in narrative_html({'median_iv': 0.15139485927028395})
+    assert '0.1514' in narrative_html({'SPY': {'median_iv': 0.15139485927028395}})
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms
