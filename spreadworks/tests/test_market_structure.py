@@ -388,3 +388,59 @@ def test_capture_all_parallel_persists_failed_snapshots(monkeypatch):
     assert any(item["reason"] == "ThetaData chain failure" for item in persisted)
     assert set(out["surface"]) == {"SPY", "QQQ"}
     assert len(surfaces) == 2
+
+
+def test_theta_rows_retries_once_on_429_then_succeeds(monkeypatch):
+    """Live 2026-10-10: 13 of 15 sampled intraday reports showed flow entirely unavailable,
+    every failure citing HTTP 429 from ThetaData, with zero retry. _theta_rows must retry
+    exactly once on a 429 and return the retry's rows on success."""
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://theta.local")
+    monkeypatch.setattr(market_structure.time, "sleep", lambda s: None)
+    calls = []
+
+    class Resp:
+        def __init__(self, status, text):
+            self.status_code = status
+            self.text = text
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                err = requests.HTTPError(f"{self.status_code}")
+                err.response = self
+                raise err
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        if len(calls) == 1:
+            return Resp(429, "")
+        return Resp(200, "strike,expiration\n700,2026-10-10\n")
+
+    monkeypatch.setattr(market_structure.requests, "get", fake_get)
+    rows = market_structure._theta_rows("/v3/option/list/strikes", {"symbol": "SPY"})
+    assert len(calls) == 2
+    assert rows == [{"strike": "700", "expiration": "2026-10-10"}]
+
+
+def test_theta_rows_raises_on_second_429_no_infinite_retry(monkeypatch):
+    """The retry is bounded to exactly one attempt -- a sustained rate limit must still raise,
+    never loop forever or silently swallow the failure."""
+    monkeypatch.setenv("THETADATA_BASE_URL", "http://theta.local")
+    monkeypatch.setattr(market_structure.time, "sleep", lambda s: None)
+    calls = []
+
+    class Resp:
+        def __init__(self, status):
+            self.status_code = status
+            self.text = ""
+        def raise_for_status(self):
+            err = requests.HTTPError("429")
+            err.response = self
+            raise err
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        return Resp(429)
+
+    monkeypatch.setattr(market_structure.requests, "get", fake_get)
+    with pytest.raises(requests.HTTPError):
+        market_structure._theta_rows("/v3/option/list/strikes", {"symbol": "SPY"})
+    assert len(calls) == 2
