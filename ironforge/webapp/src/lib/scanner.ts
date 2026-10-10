@@ -1241,6 +1241,33 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
 }
 
 /**
+ * FLINT's own cumulative realized P&L on ONE real account (bot+person+
+ * account_type='production') — the SAME real brokerage account FLAME's EBB
+ * put side also trades. FLINT settles into its own `flint_positions` table
+ * and never touches `{bot}_paper_account.cumulative_pnl`, so without this,
+ * syncPaperAccountCapital's floor reconstruction (`real equity - pnl`) would
+ * silently absorb FLINT's own gains/losses into the protected deposit floor
+ * instead of counting them against rule R1's cushion — the exact thing R1
+ * exists to prevent. Fails closed to 0 (byte-for-byte today's behavior,
+ * correct for every account FLINT has never filled a production trade on).
+ */
+async function getFlintCumulativeRealizedPnl(botName: string, person: string): Promise<number> {
+  try {
+    await ensureFlintTable()
+    const rows = await query<{ total: string | number | null }>(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM ${FLINT_TABLE}
+        WHERE bot = $1 AND person = $2 AND account_type = 'production'
+          AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL`,
+      [botName, person],
+    )
+    return num(rows[0]?.total)
+  } catch (e) {
+    console.warn(`[scanner] getFlintCumulativeRealizedPnl(${botName}, ${person}) failed (fail-closed to 0):`, e)
+    return 0
+  }
+}
+
+/**
  * Update paper_account.starting_capital when allocated capital changes.
  * Recalculates balance and buying_power to keep accounting consistent.
  */
@@ -1317,13 +1344,27 @@ async function syncPaperAccountCapital(): Promise<void> {
           // it — the same reconciliation seed-production-ledger uses. The old code
           // set starting_capital = equity and then balance = equity + pnl, which
           // double-counted every closed trade on each successful read.
+          //
+          // 🚨 2026-10-10 fix: "the P&L already realized in it" used to mean only
+          // THIS bot's own cumulative_pnl (FLAME's EBB put side). FLINT's call
+          // side shares this SAME real account but settles into flint_positions,
+          // never cumulative_pnl — so a FLINT loss on this account was silently
+          // subtracted out of the FLOOR instead of the cushion, letting rule R1
+          // (flint.ts's evaluateFlintProfitGate) think more profit was available
+          // to risk than the account's true net deposit actually allows. Pull
+          // FLINT's own realized P&L on this SAME account in too.
           const pnl = num(pa.cumulative_pnl)
+          const flintPnl = await getFlintCumulativeRealizedPnl(bot.name, String(pa.person))
           const collateral = num(pa.collateral_in_use)
-          const target = Math.round((alloc.allocated - pnl) * 100) / 100
+          const target = Math.round((alloc.allocated - pnl - flintPnl) * 100) / 100
           const current = num(pa.starting_capital)
           if (Math.abs(current - target) < 1) continue
 
-          const newBalance = Math.round((target + pnl) * 100) / 100
+          // current_balance IS broker equity, directly — not reconstructed from
+          // target+pnl, which would be off by flintPnl now that target also nets
+          // FLINT out. Keeps the "current_balance must equal broker equity"
+          // invariant exactly, regardless of how floor is attributed across sleeves.
+          const newBalance = Math.round(alloc.allocated * 100) / 100
           const newBp = Math.round((newBalance - collateral) * 100) / 100
 
           await query(
@@ -1341,7 +1382,8 @@ async function syncPaperAccountCapital(): Promise<void> {
             `[scanner] ${bot.name.toUpperCase()} PRODUCTION CAPITAL SYNCED (${pa.person}): ` +
             `$${current.toLocaleString()} → $${target.toLocaleString()} ` +
             `(broker equity=$${alloc.equity.toLocaleString()} via ${alloc.source} creds, pct=${alloc.pct}%, ` +
-            `realized=$${pnl.toLocaleString()}, balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
+            `realized=$${pnl.toLocaleString()}, flint_realized=$${flintPnl.toLocaleString()}, ` +
+            `balance=$${newBalance.toLocaleString()}, BP=$${newBp.toLocaleString()})`,
           )
         } catch { /* non-critical — sandbox is the primary account */ }
       }
@@ -11345,6 +11387,8 @@ export const _testing = {
   SPARK_V2_RELAXED_VIX_CEILING,
   tryOpenFlamePutSpread,
   notifyBigMove,
+  getFlintCumulativeRealizedPnl,
+  FLINT_TABLE,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },
