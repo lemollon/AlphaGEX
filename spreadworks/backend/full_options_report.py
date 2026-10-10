@@ -918,7 +918,19 @@ tr:last-child td,tr:last-child th{border-bottom:none}
 p{color:var(--muted)}
 a{color:var(--accent)}
 .bottomline p{color:var(--fg);font-size:.92rem;margin:6px 0}
-@media (max-width:600px){.wrap{padding:12px}}
+h2{display:flex;align-items:center;gap:8px}
+/* A label eating 34% of a phone's width for one word, with the real content crammed into the
+   remaining two-thirds, was the core of the "wall of text" complaint (Leron, 2026-10-10
+   screenshot) -- stack label above value on narrow viewports instead of side-by-side. */
+@media (max-width:600px){
+  .wrap{padding:12px}
+  table,tbody,tr{display:block;width:100%}
+  tr{margin-bottom:2px}
+  tr:not(:last-child){border-bottom:1px solid var(--border)}
+  th,td{display:block;width:100%!important;border-bottom:none;padding:8px 10px}
+  th{padding-bottom:2px;font-size:.78rem;text-transform:uppercase;letter-spacing:.02em}
+  td{padding-top:0;padding-bottom:10px}
+}
 '''
     head=(f'<!doctype html><html><head><meta charset="utf-8">'
           f'<meta name="viewport" content="width=device-width,initial-scale=1">'

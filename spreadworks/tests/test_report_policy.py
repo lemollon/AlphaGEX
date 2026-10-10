@@ -433,6 +433,56 @@ def test_render_opening_html_carries_decision_first_panels():
     assert '<h2>⚠️ Biggest traps</h2>' in opening
     assert '<h2>🧮 If/then day plan</h2>' in opening and 'Require the registered trigger' in opening
 
+def test_opening_html_thesis_dict_breaks_into_labeled_lines_not_comma_runon():
+    """Leron's screenshot, 2026-10-10: "near forward strategy" thesis (a dict with direction/
+    volatility_context/meaning) rendered as one unbroken comma-joined sentence in the opening
+    HTML table, immediately followed by the status field's own text with zero visual
+    separation -- unreadable on a phone. The thesis dict must now render as separate labeled
+    lines (one <div> per key), not plain_value()'s single comma-run-on string."""
+    blocks=empty_blocks()
+    thesis={'direction':'INCONCLUSIVE: no verified directional trade-time flow',
+            'volatility_context':{'SPY':{'median_iv':0.151,'expiries':['2026-10-14']}},
+            'meaning':'Observed expiry-specific option pricing supplies forward risk context.'}
+    blocks['near_forward_strategy']['thesis']=item(thesis)
+    blocks['near_forward_strategy']['status']=item('WATCH')
+    opening=render_opening_html({'report_blocks':blocks})
+    # The old bug: plain_value's comma join put "direction ..., volatility context ..., meaning
+    # ..." all on one line with no tag between fields. The fix renders each key as its own div.
+    assert opening.count('<div style="margin:4px 0">')>=3
+    assert '<span style="color:#8b97a8">Direction:</span>' in opening
+    assert '<span style="color:#8b97a8">Meaning:</span>' in opening
+
+def test_opening_html_status_pill_is_separate_span_not_bracket_text():
+    """The old display()-based cell glued "[LIVE NOW; updated ...; age ...]" onto the end of
+    the value as plain bracket text, indistinguishable from the real content. The pill is now
+    a styled <span>, visually and structurally separate from the value div."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
+    opening=render_opening_html({'report_blocks':blocks})
+    assert '[LIVE NOW' not in opening
+    assert 'color:#34d399' in opening  # live-status pill color
+    assert '>LIVE<' in opening
+
+def test_opening_html_flow_gamma_row_has_visual_divider_not_semicolon_join():
+    """The old scoreboard() row did get("flow",...)+"; "+get("gamma",...) -- two different
+    fields glued together with a semicolon, each carrying its own bracketed provenance tag,
+    in one dense cell. The HTML version must visually separate them with a divider, not a
+    semicolon in running text."""
+    blocks=empty_blocks()
+    blocks['flow']['classified_coverage']=item({'SPY':0.62})
+    blocks['gamma']['net_gex']=item({'SPY':-0.04})
+    opening=render_opening_html({'report_blocks':blocks})
+    assert 'border-top:1px solid #2a3341' in opening
+
+def test_opening_html_unavailable_item_still_shows_reason():
+    """item_cell_html's unavailable branch must still surface the real reason text -- the
+    rewrite must not silently drop unavailable-field disclosures."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']={'status':'unavailable','reason':'No source observation'}
+    opening=render_opening_html({'report_blocks':blocks})
+    assert 'No source observation' in opening
+    assert 'color:#f87171' in opening  # unavailable-status color
+
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms
     def fail(*args,**kw):raise TimeoutError('unavailable')

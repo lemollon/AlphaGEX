@@ -339,13 +339,12 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         "existing_positions":paper.get("trade_details") or [],"reassessment":"Recheck all horizons and recorded baselines every report; maintain frozen morning expected-move bands and explicit current IV separately."}
     blocks["adaptation_rules"]={k:observed(v,source,now,now) for k,v in rules.items()}
 
-def display(item, compact=False):
-    """compact=True drops the per-value "[updated ...; age ...]" provenance suffix, keeping
-    only a short reliability tag. Full display() repeats that suffix verbatim on every cell
-    of a row (edge_board, scoreboard), which is correct for a standalone field but turns a
-    "30-second scoreboard" into a wall of identical timestamps when 3 cells share one source.
-    The reliability tag itself (LIVE vs LAST KNOWN) is kept even in compact mode — this report
-    never hides staleness, it just stops repeating the same clock three times in one row."""
+def _value_text(item):
+    """Plain-text rendering of an item's value/unavailable-reason only, no status/provenance
+    suffix. Shared by display() (which appends the bracketed "[LIVE NOW; updated ...]" suffix
+    for Discord/markdown) and market_story_html (which shows the same reliability info as a
+    separate pill a few lines above, so repeating the bracket text in the paragraph would
+    duplicate it)."""
     if not isinstance(item,dict):return "Unavailable"
     value=item.get("value")
     if item.get("status")=="unavailable":
@@ -355,7 +354,18 @@ def display(item, compact=False):
     # leaking raw UTC "+00:00" even though the SAME line's own provenance suffix below already
     # converts source_timestamp to CT -- the value and its own metadata showed different, both
     # unlabeled, times.
-    text=plain_value(value) if isinstance(value,(dict,list)) else (ct_str(value) if isinstance(value,str) else str(value))
+    return plain_value(value) if isinstance(value,(dict,list)) else (ct_str(value) if isinstance(value,str) else str(value))
+
+def display(item, compact=False):
+    """compact=True drops the per-value "[updated ...; age ...]" provenance suffix, keeping
+    only a short reliability tag. Full display() repeats that suffix verbatim on every cell
+    of a row (edge_board, scoreboard), which is correct for a standalone field but turns a
+    "30-second scoreboard" into a wall of identical timestamps when 3 cells share one source.
+    The reliability tag itself (LIVE vs LAST KNOWN) is kept even in compact mode — this report
+    never hides staleness, it just stops repeating the same clock three times in one row."""
+    if not isinstance(item,dict):return "Unavailable"
+    if item.get("status")=="unavailable":return _value_text(item)
+    text=_value_text(item)
     age=float(item.get('age_seconds') or 0)
     label='LIVE NOW' if item['status']=='live' else 'LAST KNOWN — CONTEXT ONLY ('+('MEDIUM' if age<3600 else 'LOW')+' contextual reliability)'
     if compact:
@@ -507,6 +517,16 @@ def market_story(blocks):
              section_meaning("gamma", blocks["gamma"])]
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 
+def market_story_html(blocks):
+    """Same three fragments as market_story(), without the "[LIVE NOW; updated ...]" bracket
+    tag glued onto each sentence — the scoreboard immediately above this paragraph already
+    shows that same reliability info as its own pill, so repeating it inline here just adds
+    clutter to a paragraph meant to read as plain prose."""
+    parts = [_value_text(blocks["risk_on_defensive"]["verdict"]),
+             _value_text(blocks["premium_selling"]["suitability"]),
+             section_meaning("gamma", blocks["gamma"])]
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
+
 def edge_board(blocks):
     rows = []
     for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
@@ -594,18 +614,127 @@ def validate_semantics(payload,now):
                     errors.append(name+"."+field+": source clock/age mismatch")
     return errors
 
+_TIER_STYLE = {"live": ("#34d399", "LIVE"), "historical": ("#fbbf24", "LAST KNOWN"), "unavailable": ("#f87171", "UNAVAILABLE")}
+
+def pill_html(item):
+    """Small colored status badge, kept visually SEPARATE from the value text it describes.
+    display()'s "[LIVE NOW; updated ...; age ...]" glued a provenance tag onto the end of
+    every sentence; dropped unbroken into a report page's <td> (found live 2026-10-09 — Leron's
+    screenshot of the opening summary read as one unbroken wall of text), that tag became
+    indistinguishable from the real content. Inline styles only (no CSS classes) — this also
+    feeds the email body in report_email.py, which strips <style> blocks and classes."""
+    if not isinstance(item, dict):
+        return ""
+    color, label = _TIER_STYLE.get(item.get("status"), ("#8b97a8", str(item.get("status", "")).upper()))
+    return (f'<span style="display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;'
+            f'color:{color};border:1px solid {color};border-radius:999px;padding:1px 7px;margin-left:6px;'
+            f'white-space:nowrap;vertical-align:middle">{html.escape(label)}</span>')
+
+def meta_line_html(item):
+    """Small muted 'updated ... CT · age ...' line on its own row — the pill already carries
+    the LIVE/LAST KNOWN meaning, so this drops the verbose repeated "CONTEXT ONLY (LOW
+    contextual reliability)" clause that display() appends inline."""
+    if not isinstance(item, dict):
+        return ""
+    stamp = parse_clock(item.get("source_timestamp"))
+    age = item.get("age_seconds")
+    bits = []
+    if stamp:
+        bits.append("updated " + stamp.astimezone(CT).strftime("%Y-%m-%d %I:%M %p CT"))
+    if isinstance(age, (int, float)):
+        bits.append("age " + (f"{age:.0f}s" if age < 120 else f"{age/60:.0f}m" if age < 7200 else f"{age/3600:.1f}h"))
+    if not bits:
+        return ""
+    return f'<div style="color:#8b97a8;font-size:11px;margin-top:3px">{html.escape(" &middot; ".join(bits))}</div>'
+
+def narrative_html(value, depth=0):
+    """Readable HTML for a field's value. A dict (e.g. thesis: {direction, volatility_context,
+    meaning}) renders as one labeled line per key — plain_value()'s comma-joined run-on reads
+    fine as a single Discord embed line, but the exact same string dropped unbroken into a
+    report page's <td> was unreadable prose (Leron, 2026-10-10 screenshot). Everything else
+    keeps plain_value()'s shape-based formatting (symbol dicts, scalar lists, timestamp
+    strings) so numbers/dates still render identically to the rest of the page."""
+    if value is None:
+        return '<span style="color:#8b97a8">&mdash;</span>'
+    if isinstance(value, dict):
+        if value and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in value):
+            return "<br>".join(f"<b>{html.escape(k)}:</b> {narrative_html(v, depth + 1)}" for k, v in value.items())
+        if not value or depth >= 2:
+            return html.escape(plain_value(value, depth))
+        rows = []
+        for k, v in value.items():
+            raw_label=field_label(k)
+            label = html.escape(raw_label[:1].upper()+raw_label[1:] if raw_label else raw_label)
+            if isinstance(v, (dict, list)) and v:
+                rows.append(f'<div style="margin:4px 0"><span style="color:#8b97a8">{label}</span><br>{narrative_html(v, depth + 1)}</div>')
+            else:
+                rows.append(f'<div style="margin:4px 0"><span style="color:#8b97a8">{label}:</span> {narrative_html(v, depth + 1)}</div>')
+        return "".join(rows)
+    if isinstance(value, list):
+        if not value:
+            return '<span style="color:#8b97a8">none</span>'
+        if all(not isinstance(x, (dict, list)) for x in value):
+            shown = value[:8]
+            text = ", ".join(html.escape(plain_value(x, depth + 1)) for x in shown)
+            if len(value) > 8:
+                text += f' <span style="color:#8b97a8">&hellip; +{len(value)-8} more</span>'
+            return text
+        shown = value[:5]
+        out = "<br>".join(narrative_html(x, depth + 1) for x in shown)
+        if len(value) > 5:
+            out += f'<div style="color:#8b97a8">&hellip; +{len(value)-5} more items</div>'
+        return out
+    if isinstance(value, str):
+        return html.escape(ct_str(value))
+    return html.escape(str(value))
+
+def item_cell_html(item):
+    """One observed()-shaped item as a self-contained fragment: status pill, readable value,
+    small muted meta line — the building block for render_opening_html's rows so the opening
+    summary a trader reads first matches the same clear value/status/clock separation the
+    per-field sections below it already use."""
+    if not isinstance(item, dict):
+        return '<span style="color:#8b97a8">Unavailable</span>'
+    if item.get("status") == "unavailable":
+        reason = str(item.get("reason") or "No verified observation")
+        out = pill_html(item) + f'<div style="margin-top:4px;color:#f87171">{html.escape(reason)}</div>'
+        if item.get("value") is not None:
+            out += f'<div style="margin-top:4px">Unverified estimate: {narrative_html(item["value"])}</div>'
+        return out
+    return pill_html(item) + f'<div style="margin-top:4px">{narrative_html(item.get("value"))}</div>' + meta_line_html(item)
+
 def render_opening_html(payload):
     blocks=payload.get("report_blocks") or {};escape=html.escape
-    rows="".join("<tr><th>"+escape(k)+"</th><td>"+escape(v)+"</td></tr>" for k,v in scoreboard(blocks))
-    out="<h2>🎯 Today’s mission</h2><p>"+escape(display(blocks.get("risk_on_defensive",{}).get("verdict",{})))+"</p><h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>"
+    divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
+    def cell(name,field):return item_cell_html((blocks.get(name) or {}).get(field,{}))
+    scoreboard_rows=[
+        ("Regime / trend",cell("risk_on_defensive","verdict")),
+        ("Chop / breakout risk",cell("range_stall","breakout_ends_chop")),
+        ("Premium / volatility buying",cell("premium_selling","suitability")),
+        ("Confidence / data quality",'<span style="color:#8b97a8">See the source clocks and explicit historical/unavailable fields below; no inferred high confidence.</span>'),
+        ("Flow / gamma",cell("flow","classified_coverage")+divider+cell("gamma","net_gex")+'</div>'),
+        ("Best underlying / structure",cell("day_strategy","contracts")),
+    ]
+    rows="".join("<tr><th>"+escape(k)+"</th><td>"+v+"</td></tr>" for k,v in scoreboard_rows)
+    out=("<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
+         "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
+         "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"
+         "<h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>")
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
-        row=blocks.get(name) or {};out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+escape(display(row.get("thesis",{})))+"<br>"+escape(display(row.get("status",{})))+"</td></tr>"
+        row=blocks.get(name) or {}
+        cell_html=item_cell_html(row.get("thesis",{}))+divider+item_cell_html(row.get("status",{}))+'</div>'
+        out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
-    out+="<h2>🧭 Market story</h2><p>"+escape(market_story(blocks))+"</p>"
+    out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th></tr>'
-    for horizon,trigger,invalid,status in edge_board(blocks):
-        out+="<tr><th>"+escape(horizon)+"</th><td>"+escape(trigger)+"</td><td>"+escape(invalid)+"</td><td>"+escape(status)+"</td></tr>"
+    for name in ("day_strategy","near_forward_strategy","forward_strategy"):
+        row=blocks.get(name) or {}
+        out+=("<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+item_cell_html(row.get("trigger",{}))+"</td>"
+              "<td>"+item_cell_html(row.get("invalidation",{}))+"</td><td>"+item_cell_html(row.get("status",{}))+"</td></tr>")
     out+="</table>"
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
-    out+="<h2>🧮 If/then day plan</h2><table>"+"".join("<tr><th>"+escape(k)+"</th><td>"+escape(v)+"</td></tr>" for k,v in if_then_day_plan(blocks))+"</table>"
+    out+="<h2>🧮 If/then day plan</h2><table>"
+    for k,item in (blocks.get("adaptation_rules") or {}).items():
+        out+="<tr><th>"+escape(field_label(k))+"</th><td>"+item_cell_html(item)+"</td></tr>"
+    out+="</table>"
     return out
