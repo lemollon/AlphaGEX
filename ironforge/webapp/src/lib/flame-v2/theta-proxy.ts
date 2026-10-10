@@ -91,8 +91,15 @@ export async function fetchVixMinuteWindow(dateStr: string, entryHHMMSS: string)
   const startHHMMSS = `${String(Math.floor(startMin / 60)).padStart(2, '0')}:${String(startMin % 60).padStart(2, '0')}:00`
   const endMin = entryMin - 1
   const endHHMMSS = `${String(Math.floor(endMin / 60)).padStart(2, '0')}:${String(endMin % 60).padStart(2, '0')}:${String(s ?? 0).padStart(2, '0')}`
+  // 🚨 2026-10-10 fix: this used to send `date`, but the proxy's route
+  // (spreadworks/thetadata_proxy/app.py index_history_ohlc) requires
+  // `start_date`+`end_date` (both Query(...), no default) — every call was
+  // rejected 422 Unprocessable Entity before it ever reached ThetaData.
+  // CALM has been unavailable on every single trading day since this path
+  // shipped as a result. Same-day history, so start_date=end_date=dateStr.
   const res = await getCsv('/v3/index/history/ohlc', {
-    symbol: 'VIX', date: dateStr, interval: '1m', start_time: startHHMMSS, end_time: endHHMMSS,
+    symbol: 'VIX', start_date: dateStr, end_date: dateStr, interval: '1m',
+    start_time: startHHMMSS, end_time: endHHMMSS,
   })
   if (!res.ok) return res
   const rows = parseCsv(res.data)
@@ -134,7 +141,16 @@ export async function fetchLiveGexChain(symbol = 'SPY', maxDte = 60): Promise<Pr
   const ivRows = parseCsv(ivRes.data)
   if (oiRows.length === 0 || ivRows.length === 0) return { ok: false, reason: 'gex_empty_chain' }
 
-  const key = (r: Record<string, string>) => `${r.expiration ?? r.exp ?? ''}|${r.strike ?? ''}|${(r.right ?? r.option_right ?? '').toUpperCase().slice(0, 1)}`
+  // 🚨 2026-10-10 fix: keying on the RAW strike/expiration strings broke the
+  // join whenever the two snapshot endpoints format the same value
+  // differently (e.g. strike "770" vs "770.0", expiration "2026-10-09" vs
+  // "20261009") — any mismatch silently produced byStrikeExp.size===0
+  // ("gex_no_matched_strikes"), failing LONGG closed every single day.
+  // Normalize both sides the same way before building the key: numeric
+  // strike (so "770"/"770.0" collide) and digits-only expiration (so
+  // "2026-10-09"/"20261009" collide).
+  const normExp = (raw: string) => raw.replace(/[^0-9]/g, '')
+  const key = (r: Record<string, string>) => `${normExp(r.expiration ?? r.exp ?? '')}|${toNum(r.strike)}|${(r.right ?? r.option_right ?? '').toUpperCase().slice(0, 1)}`
   const ivByKey = new Map<string, number>()
   for (const r of ivRows) {
     const iv = toNum(r.implied_volatility ?? r.iv)
