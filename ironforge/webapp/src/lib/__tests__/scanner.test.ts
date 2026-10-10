@@ -94,6 +94,7 @@ const {
   assignmentGuardWindow,
   notifyBigMove,
   getFlintCumulativeRealizedPnl,
+  getFlintPaperCumulativeRealizedPnl,
   FLINT_TABLE,
 } = _testing
 
@@ -1239,6 +1240,26 @@ describe('getFlintCumulativeRealizedPnl', () => {
   it('returns 0 when FLINT has never settled a production trade on this account (today\'s reality)', async () => {
     (query as any).mockResolvedValueOnce([{ total: '0' }])
     const result = await getFlintCumulativeRealizedPnl('flame', 'Flame')
+    expect(result).toBe(0)
+  })
+})
+
+describe('getFlintPaperCumulativeRealizedPnl', () => {
+  beforeEach(() => { (query as any).mockReset() })
+
+  it('sums only this bot\'s own paper-book (account_type=paper) closed/expired FLINT rows', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '-18.50' }])
+    const result = await getFlintPaperCumulativeRealizedPnl('flame')
+    expect(result).toBe(-18.5)
+    const sql = (query as any).mock.calls[0][0] as string
+    expect(sql).toContain(FLINT_TABLE)
+    expect(sql).toContain("account_type = 'paper'")
+    expect((query as any).mock.calls[0][1]).toEqual(['flame'])
+  })
+
+  it('fails closed to 0 on a DB error', async () => {
+    (query as any).mockRejectedValueOnce(new Error('relation does not exist'))
+    const result = await getFlintPaperCumulativeRealizedPnl('flame')
     expect(result).toBe(0)
   })
 })
