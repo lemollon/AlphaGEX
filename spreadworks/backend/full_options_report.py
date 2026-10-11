@@ -15,7 +15,7 @@ from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
-from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str, _ct_safe_tree
+from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -782,44 +782,51 @@ _MAX_DICT_ITEMS=5
 
 def _fmt_value(v,depth=0,img_map=None):
     """Render a field's raw value for a human: per-symbol lines, small key/value blocks for
-    structured data, and a bounded "+N more" preview for large collections — never an
-    unbounded json.dumps() wall of text. Truncation only changes the display; counts shown
-    for the hidden remainder are always real, never fabricated."""
+    structured data, and a bounded "+N more" preview for large collections — never raw
+    json.dumps() text. Live bug, found 2026-10-11 in a user screenshot: the old depth>=6 (dict)
+    / depth>=5-or-mixed (list) fallback below dumped a `<pre class="raw">` block of literal
+    JSON braces/quotes straight into the page for anything too deep or irregular to summarize
+    the normal way (same bug class as report_policy.py's plain_value(), which had an
+    equivalent >10-key/depth fallback). There is no raw-JSON fallback left anywhere below —
+    every branch bottoms out in a kvblock, a truncated list, or a short "[N fields]"/"[N items]"
+    placeholder. Truncation only changes the display; counts shown for the hidden remainder are
+    always real, never fabricated."""
     if v is None:return '<span class="muted">&mdash;</span>'
     if isinstance(v,dict):
         if v and all(isinstance(k,str) and _SYM_KEY_RE.match(k) for k in v):
             return ' <span class="sep">&middot;</span> '.join(
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
-        if v and depth<6:
-            items=list(v.items());shown=items[:_MAX_KV_FIELDS]
-            # A single-key dict (e.g. {"net_gex_b": -0.04}) is one fact, not a table — a whole
-            # bordered/background kvblock box around ONE number (seen live 2026-10-10: every
-            # per-symbol Gamma value boxed this way) is visual weight with nothing to organize.
-            # Inline it like any other value; a real multi-key dict still gets the kvblock.
-            if len(items)==1 and not isinstance(items[0][1],(dict,list)):
-                k,vv=items[0]
-                return f'<span class="k">{html.escape(field_label(k))}:</span> {_fmt_value(vv,depth+1,img_map)}'
-            rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
-                         f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
-            if len(items)>_MAX_KV_FIELDS:
-                rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
-            return f'<div class="kvblock">{rows}</div>'
-        return f'<pre class="raw">{html.escape(json.dumps(_ct_safe_tree(v),indent=2,ensure_ascii=False))}</pre>'
+        if not v:return '<span class="muted">none</span>'
+        if depth>=6:return f'<span class="muted">[{len(v)} fields]</span>'
+        items=list(v.items());shown=items[:_MAX_KV_FIELDS]
+        # A single-key dict (e.g. {"net_gex_b": -0.04}) is one fact, not a table — a whole
+        # bordered/background kvblock box around ONE number (seen live 2026-10-10: every
+        # per-symbol Gamma value boxed this way) is visual weight with nothing to organize.
+        # Inline it like any other value; a real multi-key dict still gets the kvblock.
+        if len(items)==1 and not isinstance(items[0][1],(dict,list)):
+            k,vv=items[0]
+            return f'<span class="k">{html.escape(field_label(k))}:</span> {_fmt_value(vv,depth+1,img_map)}'
+        rows=''.join(f'<div class="kv"><span class="k">{html.escape(field_label(k))}</span>'
+                     f'<span class="v">{_fmt_value(vv,depth+1,img_map)}</span></div>' for k,vv in shown)
+        if len(items)>_MAX_KV_FIELDS:
+            rows+=f'<div class="kv more">&hellip; +{len(items)-_MAX_KV_FIELDS} more fields</div>'
+        return f'<div class="kvblock">{rows}</div>'
     if isinstance(v,list):
         if not v:return '<span class="muted">none</span>'
+        if depth>=5:return f'<span class="muted">[{len(v)} items]</span>'
         if all(not isinstance(x,(dict,list)) for x in v):
             shown=v[:_MAX_SCALAR_ITEMS]
             text=', '.join(_fmt_value(x,depth+1,img_map) for x in shown)
             if len(v)>_MAX_SCALAR_ITEMS:
                 text+=f' <span class="muted">&hellip; +{len(v)-_MAX_SCALAR_ITEMS} more</span>'
             return text
-        if depth<5 and all(isinstance(x,dict) for x in v):
-            shown=v[:_MAX_DICT_ITEMS]
-            out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1,img_map)}</div>' for x in shown)
-            if len(v)>_MAX_DICT_ITEMS:
-                out+=f'<div class="muted">&hellip; +{len(v)-_MAX_DICT_ITEMS} more items</div>'
-            return out
-        return f'<pre class="raw">{html.escape(json.dumps(_ct_safe_tree(v),indent=2,ensure_ascii=False))}</pre>'
+        # Mixed (dicts/lists/scalars together) or all-dict — render every item through
+        # _fmt_value itself rather than requiring a uniform shape; each item stays bounded.
+        shown=v[:_MAX_DICT_ITEMS]
+        out=''.join(f'<div class="kvblock listitem">{_fmt_value(x,depth+1,img_map)}</div>' for x in shown)
+        if len(v)>_MAX_DICT_ITEMS:
+            out+=f'<div class="muted">&hellip; +{len(v)-_MAX_DICT_ITEMS} more items</div>'
+        return out
     return _fmt_primitive(v,img_map)
 
 _STATUS_PILL={'live':('live','LIVE'),'historical':('hist','LAST KNOWN'),'unavailable':('unavail','UNAVAILABLE')}

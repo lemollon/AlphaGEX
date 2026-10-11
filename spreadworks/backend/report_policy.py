@@ -84,35 +84,18 @@ def field_label(key):
         return f"{prefix} {bucket}" if prefix else bucket
     return key.replace("_", " ")
 
-def _ct_safe_tree(v):
-    """Walk an arbitrary JSON-able structure converting timestamp-shaped strings to Central
-    Time and rounding raw float precision before an irregular shape falls back to raw
-    json.dumps. Live bug, found 2026-10-09: a dict with >10 keys (breadth, 18 fields including
-    a nested per-symbol vwap.rows with its own source_timestamp) skipped every per-field
-    ct_str() call below and dumped the whole tree — including its embedded UTC timestamps —
-    as one raw JSON blob. A second bug, found 2026-10-10: event_study's per-event list
-    (forward_return, too many entries for the normal per-field renderer) hit this same
-    fallback and dumped floats like -0.0001541364373222054 at full repr precision — fmt_number()
-    returns a formatted string, not a JSON number, which is fine here since this blob is a
-    read-only human-facing <pre>, never machine-parsed. Both conversions still no-op on
-    non-timestamp strings/bare dates and non-float values, so this is safe applied
-    unconditionally."""
-    if isinstance(v, str):
-        return ct_str(v)
-    if isinstance(v, float):
-        return fmt_number(v)
-    if isinstance(v, dict):
-        return {k: _ct_safe_tree(vv) for k, vv in v.items()}
-    if isinstance(v, list):
-        return [_ct_safe_tree(x) for x in v]
-    return v
-
 def plain_value(v, depth=0):
     """Plain-text (markdown/Discord-safe, no HTML) rendering of a field value for display().
 
     A raw json.dumps() of a per-symbol dict ({"SPY": "PREMIUM_RICH", "QQQ": ...}) is not
-    readable at a glance; render it as "SPY: PREMIUM_RICH; QQQ: ..." instead. Only shapes
-    too irregular to summarize this way fall back to a compact JSON string.
+    readable at a glance; render it as "SPY: PREMIUM_RICH; QQQ: ..." instead. Live bug, found
+    2026-10-11 in a user-reported screenshot: shapes too irregular for the branches below (a
+    dict with >10 keys like breadth's 18 fields, or a long flat list like holdings.symbols'
+    503 tickers) used to fall back to raw json.dumps() of the whole tree, which rendered as
+    literal braces/quotes bleeding straight into the "Section summary" UI text instead of
+    prose. There is no raw-JSON fallback left anywhere below — every branch bottoms out in
+    readable "key value" pairs or a short "[N items]"/"[N fields]" placeholder, so this can
+    never again dump code onto the page.
     """
     if v is None:
         return "none"
@@ -121,19 +104,30 @@ def plain_value(v, depth=0):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
         if v and len(v) <= 10 and depth < 4:
             return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
-        return json.dumps(_ct_safe_tree(v), ensure_ascii=False, default=str)
+        if not v:
+            return "none"
+        if depth >= 4:
+            return f"[{len(v)} fields]"
+        # More than 10 keys (e.g. breadth's 18 fields) is too many for the cap above. Render
+        # every field as a normal "key value" pair — each recursive plain_value() call still
+        # bounds its own nested lists/dicts, so this is a longer plain-text line, never JSON.
+        return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
     if isinstance(v, list):
         if not v:
             return "none"
-        if len(v) <= 12 and all(not isinstance(x, (dict, list)) for x in v):
-            return ", ".join(plain_value(x, depth + 1) for x in v)
-        if depth < 3 and all(isinstance(x, dict) for x in v):
-            shown = v[:5]
-            text = "; ".join(plain_value(x, depth + 1) for x in shown)
-            if len(v) > 5:
-                text += f" (+{len(v) - 5} more)"
+        if depth >= 3:
+            return f"[{len(v)} items]"
+        if all(not isinstance(x, (dict, list)) for x in v):
+            shown = v[:12]
+            text = ", ".join(plain_value(x, depth + 1) for x in shown)
+            if len(v) > 12:
+                text += f" (+{len(v) - 12} more)"
             return text
-        return json.dumps(_ct_safe_tree(v), ensure_ascii=False, default=str)
+        shown = v[:5]
+        text = "; ".join(plain_value(x, depth + 1) for x in shown)
+        if len(v) > 5:
+            text += f" (+{len(v) - 5} more)"
+        return text
     if isinstance(v, str):
         # Shape-based, not key-name-based: ct_str() only converts strings that actually parse
         # as a timezone-aware instant (a bare calendar date like an option expiration has no
