@@ -411,18 +411,20 @@ def test_shared_section_meta_none_when_sources_differ():
     }
     assert report._shared_section_meta(block) is None
 
-def test_fmt_value_raw_dump_fallback_rounds_floats_not_just_timestamps():
+def test_fmt_value_deep_structure_never_raw_dumps_full_precision_floats():
     """Live bug, found 2026-10-10 in Leron's post-#3242-deploy check: event_study's per-event
     list (symbol/date/direction/forward_return/stalled) is too deep/wide for the normal
-    per-field renderer and hits the raw <pre class="raw"> json.dumps() fallback — the SAME
-    fallback that PR #3239's _ct_safe_tree already fixed for bare-UTC timestamps. forward_return
-    -0.0001541364373222054 still dumped at full float repr precision because _ct_safe_tree only
-    converted strings, never floats."""
+    per-field renderer and used to hit a raw <pre class="raw"> json.dumps() fallback, leaking
+    forward_return -0.0001541364373222054 at full float repr precision. 2026-10-11: that raw
+    fallback was removed entirely — a user screenshot caught the same bug class leaking a
+    503-symbol breadth dict straight into the Section summary UI. Deep/wide structures now
+    collapse to a short bounded placeholder instead of dumping anything, so the full-precision
+    float can never appear."""
     v={'events':[{'symbol':'SPY','date':'2026-10-02','direction':1,
         'forward_return':-0.0001541364373222054,'stalled':True} for _ in range(3)]}
     html=report._fmt_value(v,depth=6)
     assert '0001541364373222054' not in html
-    assert '&quot;-0.0002&quot;' in html
+    assert html=='<span class="muted">[1 fields]</span>'
 
 def test_fmt_value_converts_any_timestamp_shaped_string_regardless_of_key_name():
     """Key-name matching (source_timestamp, generated_at, ...) kept missing new field names as
