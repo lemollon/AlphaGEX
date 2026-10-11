@@ -412,25 +412,451 @@ SECTION_SUMMARY_SECTIONS = (
     "morning_comparison", "horizon_comparison", "adaptation_rules", "visuals", "data_integrity",
 )
 
-def section_summary(name, block):
-    """Mechanical recap of a section's own populated fields — literal field:value pairs,
-    never a model-generated sentence. Cites real data so it can't drift from the section above it.
-    """
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+def _narrative_risk_on_defensive(block):
+    verdict_item = block.get("verdict") or {}
+    verdict = verdict_item.get("value")
+    if not isinstance(verdict, str) or verdict_item.get("status") == "unavailable":
+        return None
+    mood = ("leaning bullish" if "Risk-on" in verdict else "leaning defensive" if "Defensive" in verdict
+            else "split, no clean lean")
+    sentence = f"Price is {mood}."
+    evidence = (block.get("evidence") or {}).get("value") or {}
+    returns = evidence.get("returns") if isinstance(evidence.get("returns"), dict) else {}
+    ranked = sorted(((s, v) for s, v in returns.items() if _num(v)), key=lambda kv: kv[1], reverse=True)
+    if ranked:
+        top_sym, top_val = ranked[0]
+        bottom_sym, bottom_val = ranked[-1]
+        if top_sym != bottom_sym:
+            sentence += f" {top_sym} leads at {top_val:+.2f}%, {bottom_sym} trails at {bottom_val:+.2f}%."
+        else:
+            sentence += f" {top_sym} is {'up' if top_val >= 0 else 'down'} {abs(top_val):.2f}% today."
+    breadth = evidence.get("breadth")
+    if isinstance(breadth, dict):
+        adv, dec = breadth.get("advances"), breadth.get("declines")
+        if _num(adv) and _num(dec) and (adv + dec) > 0:
+            if adv > dec * 1.3:
+                sentence += f" Breadth backs it up — {int(adv)} advancers to {int(dec)} decliners."
+            elif dec > adv * 1.3:
+                sentence += f" Breadth pushes back — only {int(adv)} advancers against {int(dec)} decliners."
+            else:
+                sentence += f" Breadth is a near dead heat, {int(adv)} up to {int(dec)} down."
+    return sentence
+
+def _narrative_gamma(block):
+    net_item = block.get("net_gex") or {}
+    net_val = net_item.get("value")
+    if not isinstance(net_val, dict) or net_item.get("status") == "unavailable":
+        return None
+    walls_val = (block.get("walls") or {}).get("value") or {}
+    flip_val = (block.get("flip") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        row = net_val.get(sym)
+        gex = row.get("net_gex_b") if isinstance(row, dict) else None
+        if not _num(gex):
+            continue
+        regime = ("dealers are long gamma and should dampen swings" if gex > 0
+                  else "dealers are short gamma and can accelerate moves" if gex < 0
+                  else "gamma is flat — no dealer cushion either way")
+        sentence = f"{sym} net GEX sits at {gex:+.2f}B — {regime}."
+        wall_row = (walls_val.get(sym) or {}).get("walls") or {}
+        top_call = wall_row.get("top_call") or []
+        top_put = wall_row.get("top_put") or []
+        call_strike = top_call[0].get("strike") if top_call and isinstance(top_call[0], dict) else None
+        put_strike = top_put[0].get("strike") if top_put and isinstance(top_put[0], dict) else None
+        if _num(call_strike) and _num(put_strike):
+            sentence += f" Call sellers are dug in hardest at {call_strike:g}, put sellers at {put_strike:g}."
+        flip_row = flip_val.get(sym)
+        flip = flip_row.get("gamma_flip") if isinstance(flip_row, dict) else None
+        if _num(flip):
+            sentence += f" Flip sits at {flip:g}."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_market_control(block):
+    side_item = block.get("control_side") or {}
+    sides = side_item.get("value")
+    if not isinstance(sides, dict) or side_item.get("status") == "unavailable":
+        return None
+    conf_val = (block.get("control_confidence") or {}).get("value") or {}
+    outlook_val = (block.get("forward_control_outlook") or {}).get("value") or {}
+    label_word = {"call_sellers": "call sellers", "put_sellers": "put sellers",
+                  "mixed": "a mixed crowd", "inconclusive": "no clear side"}
+    conf_word = {"HIGH": "high-confidence", "MEDIUM": "medium-confidence", "LOW_FORCES_INCONCLUSIVE": "thin"}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        buckets = sides.get(sym)
+        if not isinstance(buckets, dict) or not buckets:
+            continue
+        lead_side = buckets.get("0dte") or next(iter(buckets.values()), None)
+        word = label_word.get(lead_side, str(lead_side).replace("_", " "))
+        conf = conf_val.get(sym) if isinstance(conf_val, dict) else None
+        conf_bit = conf_word.get((conf or {}).get("label")) if isinstance(conf, dict) else None
+        sentence = f"{sym} is being run by {word} today" + (f", a {conf_bit} read" if conf_bit else "") + "."
+        out = outlook_val.get(sym) if isinstance(outlook_val, dict) else None
+        if isinstance(out, dict):
+            if out.get("outlook") == "persists":
+                sentence += " Forward flow agrees — this looks like more than a one-day lean."
+            elif out.get("outlook") == "flips":
+                sentence += " Forward flow disagrees — don't assume this holds past today."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_premium_selling(block):
+    suit_item = block.get("suitability") or {}
+    suit_val = suit_item.get("value")
+    if not isinstance(suit_val, dict) or suit_item.get("status") == "unavailable":
+        return None
+    meaning_val = (block.get("iv_rv_meaning_today") or {}).get("value") or {}
+    forward_val = (block.get("forward_implications") or {}).get("value") or {}
+    label_word = {"PREMIUM_RICH": "premium is rich — IV is outrunning realized vol, a seller's edge",
+                  "PREMIUM_CHEAP": "premium is cheap — IV isn't paying you enough for the risk",
+                  "PREMIUM_FAIR": "premium is fairly priced — no edge either way"}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        suit = suit_val.get(sym)
+        if not isinstance(suit, str):
+            continue
+        sentence = f"{sym}: " + label_word.get(suit, suit.replace("_", " ").lower())
+        meaning = meaning_val.get(sym) if isinstance(meaning_val, dict) else None
+        ratio = (meaning or {}).get("ratio")
+        if _num(ratio):
+            sentence += f" (IV/realized ratio {ratio:.2f})"
+        sentence += "."
+        forward = forward_val.get(sym) if isinstance(forward_val, dict) else None
+        if isinstance(forward, str) and forward:
+            sentence += " " + forward
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_flow(block):
+    conf_val = (block.get("price_vix_confirmation") or {}).get("value")
+    cb = (block.get("calls_bought") or {}).get("value") or {}
+    cs = (block.get("calls_sold") or {}).get("value") or {}
+    pb = (block.get("puts_bought") or {}).get("value") or {}
+    ps = (block.get("puts_sold") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        totals = {}
+        for label, src in (("calls bought", cb), ("calls sold", cs), ("puts bought", pb), ("puts sold", ps)):
+            row = src.get(sym) if isinstance(src, dict) else None
+            if isinstance(row, dict):
+                total = sum(v for v in row.values() if _num(v))
+                if total:
+                    totals[label] = total
+        if not totals:
+            continue
+        leader = max(totals, key=totals.get)
+        sentence = f"{sym} flow is dominated by {leader} — ${totals[leader]:,.0f} in premium."
+        conf = conf_val.get(sym) if isinstance(conf_val, dict) else None
+        if isinstance(conf, dict):
+            read = conf.get("read")
+            if read == "confirms":
+                sentence += " Price is moving the same way the flow is paying for — this one's clean."
+            elif read == "conflicts":
+                sentence += " Price is fighting the flow right now — a yellow flag, not a trade."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_expected_move(block):
+    dollars_item = block.get("dollars") or {}
+    dollars_val = dollars_item.get("value")
+    if not isinstance(dollars_val, dict) or dollars_item.get("status") == "unavailable":
+        return None
+    pct_val = (block.get("percent") or {}).get("value") or {}
+    lower_val = (block.get("lower") or {}).get("value") or {}
+    upper_val = (block.get("upper") or {}).get("value") or {}
+    budget_val = (block.get("budget_used") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        d = dollars_val.get(sym)
+        dollars = d.get("expected_move_dollars_1d") if isinstance(d, dict) else None
+        if not _num(dollars):
+            continue
+        pct = ((pct_val.get(sym) or {}) if isinstance(pct_val, dict) else {}).get("expected_move_pct_1d")
+        lo = ((lower_val.get(sym) or {}) if isinstance(lower_val, dict) else {}).get("expected_move_low")
+        hi = ((upper_val.get(sym) or {}) if isinstance(upper_val, dict) else {}).get("expected_move_high")
+        sentence = f"{sym}'s one-day expected move is ${dollars:.2f}"
+        if _num(pct):
+            sentence += f" ({pct:.2f}%)"
+        if _num(lo) and _num(hi):
+            sentence += f", pricing a {lo:.2f}-{hi:.2f} band"
+        sentence += "."
+        budget = budget_val.get(sym) if isinstance(budget_val, dict) else None
+        frac = (budget or {}).get("absolute_move_fraction")
+        if _num(frac):
+            used_pct = frac * 100
+            if used_pct >= 90:
+                sentence += f" It's already burned {used_pct:.0f}% of this morning's frozen move — the room left is thin."
+            elif used_pct <= 25:
+                sentence += f" Only {used_pct:.0f}% of this morning's frozen move is used — plenty of room either way."
+            else:
+                sentence += f" {used_pct:.0f}% of this morning's frozen move is used so far."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_smile(block):
+    atm_item = block.get("atm_iv") or {}
+    atm_val = atm_item.get("value")
+    if not isinstance(atm_val, dict) or atm_item.get("status") == "unavailable":
+        return None
+    put_val = (block.get("put_25d_iv") or {}).get("value") or {}
+    call_val = (block.get("call_25d_iv") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        atm = (atm_val.get(sym) or {}).get("atm_iv") if isinstance(atm_val.get(sym), dict) else None
+        if not _num(atm):
+            continue
+        put_iv = ((put_val.get(sym) or {}) if isinstance(put_val, dict) else {}).get("put_25d_iv")
+        call_iv = ((call_val.get(sym) or {}) if isinstance(call_val, dict) else {}).get("call_25d_iv")
+        sentence = f"{sym}'s skew is pricing ATM IV at {atm*100:.1f}%"
+        if _num(put_iv) and _num(call_iv):
+            skew = put_iv - call_iv
+            lean = ("puts are bid harder than calls — the market's paying up for downside protection" if skew > 0.01
+                    else "calls are bid harder than puts — unusual, the market's paying up for upside" if skew < -0.01
+                    else "puts and calls are priced about evenly")
+            sentence += f"; {lean} ({put_iv*100:.1f}% put vs {call_iv*100:.1f}% call at 25-delta)"
+        sentence += "."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_surface(block):
+    atm_item = block.get("atm_iv") or {}
+    atm_val = atm_item.get("value")
+    if not isinstance(atm_val, dict) or atm_item.get("status") == "unavailable":
+        return None
+    term0 = (block.get("term_0dte") or {}).get("value") or {}
+    term_far = (block.get("term_21plus") or {}).get("value") or {}
+    ivrv_val = (block.get("iv_vs_realized") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        atm = (atm_val.get(sym) or {}).get("atm_iv") if isinstance(atm_val.get(sym), dict) else None
+        if not _num(atm):
+            continue
+        near = ((term0.get(sym) or {}) if isinstance(term0, dict) else {}).get("iv_0dte")
+        far = ((term_far.get(sym) or {}) if isinstance(term_far, dict) else {}).get("iv_21_365dte")
+        sentence = f"{sym}'s vol surface: ATM IV {atm*100:.1f}%"
+        if _num(near) and _num(far) and far > 0:
+            shape = ("inverted — 0DTE is pricing hotter than the back of the curve, classic event/fear pattern" if near > far * 1.15
+                     else "upward-sloping — normal contango, no near-term fear priced in" if near < far * 0.9
+                     else "flat across expiries")
+            sentence += f"; the term structure is {shape}"
+        row = ivrv_val.get(sym) if isinstance(ivrv_val, dict) else None
+        iv, rv = (row or {}).get("atm_iv"), (row or {}).get("realized_vol_60m")
+        if _num(iv) and _num(rv) and rv > 0:
+            gap = (iv - rv) * 100
+            sentence += f". IV is running {abs(gap):.1f} points {'above' if gap > 0 else 'below'} realized vol"
+        sentence += "."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_breadth(block):
+    ad_item = block.get("advance_decline") or {}
+    ad = ad_item.get("value")
+    if not isinstance(ad, dict) or ad_item.get("status") == "unavailable":
+        return None
+    adv, dec = ad.get("advances"), ad.get("declines")
+    if not _num(adv) or not _num(dec):
+        return None
+    total = adv + dec
+    pct_up = (adv / total * 100) if total else None
+    verdict = ("broad and convincing" if pct_up is not None and pct_up >= 65
+               else "thin and unconvincing" if pct_up is not None and pct_up <= 40
+               else "roughly balanced")
+    sentence = f"{int(adv)} stocks are advancing against {int(dec)} declining — participation is {verdict}."
+    uv = (block.get("up_down_volume") or {}).get("value") or {}
+    ratio = uv.get("up_down_volume_ratio") if isinstance(uv, dict) else None
+    if _num(ratio):
+        sentence += f" Up-volume is running {ratio:.2f}x down-volume."
+    nh = (block.get("new_highs_lows") or {}).get("value") or {}
+    highs, lows = (nh or {}).get("new_52w_highs"), (nh or {}).get("new_52w_lows")
+    if _num(highs) and _num(lows):
+        if highs > lows * 2 and highs > 5:
+            sentence += f" New 52-week highs ({int(highs)}) are swamping new lows ({int(lows)}) — a real bullish tell."
+        elif lows > highs * 2 and lows > 5:
+            sentence += f" New 52-week lows ({int(lows)}) are swamping new highs ({int(highs)}) — a real bearish tell."
+    return sentence
+
+def _narrative_sector_credit(block):
+    rel_item = block.get("relative_returns") or {}
+    rel = rel_item.get("value")
+    if not isinstance(rel, dict) or rel_item.get("status") == "unavailable" or not rel:
+        return None
+    ranked = sorted(((s, v) for s, v in rel.items() if _num(v)), key=lambda kv: kv[1], reverse=True)
+    if not ranked:
+        return None
+    top, bottom = ranked[:3], ranked[-3:]
+    sentence = ("Leading today: " + ", ".join(f"{s} {v:+.2f}%" for s, v in top)
+                + ". Lagging: " + ", ".join(f"{s} {v:+.2f}%" for s, v in reversed(bottom)) + ".")
+    credit = (block.get("credit_confirmation") or {}).get("value") or {}
+    hyg = credit.get("HYG") if isinstance(credit, dict) else None
+    if _num(hyg) and abs(hyg) > 0.02:
+        market_up = ranked[0][1] > 0
+        if (hyg > 0) == market_up:
+            sentence += " Credit (HYG) is backing up the move."
+        else:
+            sentence += " Credit (HYG) isn't confirming — worth a second look before sizing up."
+    return sentence
+
+def _narrative_morning_comparison(block):
+    regime_item = block.get("regime_shift") or {}
+    regime = regime_item.get("value")
+    if not isinstance(regime, dict) or regime_item.get("status") == "unavailable" or not regime:
+        return None
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        row = regime.get(sym)
+        if not isinstance(row, dict):
+            continue
+        status = row.get("status")
+        if status == "FIRST_REPORT":
+            bits.append(f"{sym}: first read of the day — nothing to compare against yet.")
+        elif status == "HOLDING":
+            bits.append(f"{sym} is holding the same read as this morning — no reason to tear up the plan.")
+        elif status == "CHANGED":
+            changed = row.get("changed") or []
+            if changed:
+                bits.append(f"{sym} has moved since this morning: {'; '.join(changed)}. "
+                             "This is exactly the kind of shift that should make you revisit the plan intraday.")
+            else:
+                bits.append(f"{sym}'s setup has shifted since this morning.")
+    return " ".join(bits) if bits else None
+
+def _narrative_strategy(block):
+    status_item = block.get("status") or {}
+    status = status_item.get("value")
+    if not isinstance(status, str):
+        return None
+    status_phrase = {"OPEN PAPER": "a paper position is already open on this one",
+                      "ENTRY_READY": "the setup just confirmed — every box is checked",
+                      "WATCH": "still a watch item, nothing confirmed yet",
+                      "PENDING EVIDENCE": "not enough evidence yet to even call this a watch"}.get(status, status)
+    sentence = f"Status: {status_phrase}."
+    thesis = (block.get("thesis") or {}).get("value")
+    if isinstance(thesis, dict):
+        if "direction" in thesis:
+            direction = thesis.get("direction")
+            if isinstance(direction, str):
+                sentence += f" Thesis: {direction}."
+        else:
+            leaning = [(s, r) for s, r in thesis.items()
+                       if isinstance(r, dict) and r.get("read") not in (None, "balanced or unclassified")]
+            if leaning:
+                sentence += " " + "; ".join(f"{s} flow leans {r['read']}" for s, r in leaning) + "."
+    elif isinstance(thesis, str):
+        mood = ("leaning bullish" if "Risk-on" in thesis else "leaning defensive" if "Defensive" in thesis
+                else "mixed, no clean lean")
+        sentence += f" Today's price read is {mood}."
+    trigger = (block.get("trigger") or {}).get("value")
+    if isinstance(trigger, list) and trigger:
+        sentence += f" {len(trigger)} registered setup{'s' if len(trigger) != 1 else ''} on watch."
+    return sentence
+
+def _narrative_contract_packages(block):
+    legs_item = block.get("legs") or {}
+    legs_rows = legs_item.get("value")
+    if not isinstance(legs_rows, list) or not legs_rows or legs_item.get("status") == "unavailable":
+        return None
+    risk_rows = {r.get("setup_id"): r.get("value") for r in (block.get("max_risk_reward") or {}).get("value") or []
+                 if isinstance(r, dict)}
+    debit_rows = {r.get("setup_id"): r.get("value") for r in (block.get("debit_credit") or {}).get("value") or []
+                  if isinstance(r, dict)}
+    bits = []
+    for row in legs_rows[:3]:
+        if not isinstance(row, dict):
+            continue
+        sid, strategy = row.get("setup_id"), row.get("strategy") or "Structure"
+        legs = row.get("value") or []
+        strikes = sorted({l.get("strike") for l in legs if isinstance(l, dict) and _num(l.get("strike"))})
+        sentence = str(strategy).replace("_", " ").title()
+        if strikes:
+            sentence += " at " + "/".join(f"{k:g}" for k in strikes)
+        dc = debit_rows.get(sid) or {}
+        credit, debit = dc.get("natural_credit"), dc.get("natural_debit")
+        if _num(credit) and credit:
+            sentence += f" — collects ${credit:.2f}"
+        elif _num(debit) and debit:
+            sentence += f" — costs ${debit:.2f}"
+        payoff = risk_rows.get(sid) or {}
+        max_risk, max_reward = payoff.get("max_risk"), payoff.get("max_reward")
+        if _num(max_risk) and max_risk:
+            if max_reward == "unlimited":
+                sentence += f", risking ${max_risk:.0f} with unlimited upside"
+            elif _num(max_reward):
+                sentence += f", risking ${max_risk:.0f} to make ${max_reward:.0f}"
+        sentence += " — qualified and live right now."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
+def _narrative_entry_watches(block):
+    trigger_item = block.get("trigger") or {}
+    rows = trigger_item.get("value")
+    if not isinstance(rows, list) or not rows:
+        return None
+    state_word = {"ENTRY_READY": "just confirmed and ready", "WATCH": "still on watch, not confirmed yet"}
+    bits = []
+    for row in rows[:3]:
+        if not isinstance(row, dict):
+            continue
+        sym, sid, state = row.get("symbol"), row.get("setup_id"), row.get("state")
+        word = state_word.get(state, (str(state).replace("_", " ").lower() if state else "status unclear"))
+        bits.append(f"{sym} setup {sid} is {word}.")
+    return " ".join(bits) if bits else None
+
+_NARRATIVE_BUILDERS = {
+    "risk_on_defensive": _narrative_risk_on_defensive,
+    "gamma": _narrative_gamma,
+    "market_control": _narrative_market_control,
+    "premium_selling": _narrative_premium_selling,
+    "flow": _narrative_flow,
+    "expected_move": _narrative_expected_move,
+    "smile": _narrative_smile,
+    "surface": _narrative_surface,
+    "breadth": _narrative_breadth,
+    "sector_credit": _narrative_sector_credit,
+    "morning_comparison": _narrative_morning_comparison,
+    "day_strategy": _narrative_strategy,
+    "near_forward_strategy": _narrative_strategy,
+    "forward_strategy": _narrative_strategy,
+    "contract_packages": _narrative_contract_packages,
+    "entry_watches": _narrative_entry_watches,
+}
+
+def _generic_narrative_summary(block):
     parts = []
-    for field, item in block.items():
+    for field, field_item in block.items():
         if len(parts) >= 3:
             break
-        if not isinstance(item, dict) or item.get("status") == "unavailable":
+        if not isinstance(field_item, dict) or field_item.get("status") == "unavailable":
             continue
-        value = item.get("value")
-        # A raw chart URL/data-URI is never a meaningful "field: value" recap line (it's the
-        # same image already embedded on the page) — skip it rather than echo the URL as prose.
+        value = field_item.get("value")
+        # A raw chart URL/data-URI is never a meaningful recap line (it's the same image
+        # already embedded on the page) — skip it rather than echo the URL as prose.
         if value is None or (isinstance(value, str) and (value.startswith("http") or value.startswith("data:"))):
             continue
-        parts.append(field.replace("_", " ") + ": " + plain_value(value))
+        parts.append(f"{field_label(field)} is {plain_value(value)}")
     if not parts:
         return "No verified observation yet this checkpoint."
-    return "; ".join(parts) + "."
+    text = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + ", and " + parts[-1]
+    return text[0].upper() + text[1:] + "."
+
+def section_summary(name, block):
+    """Narrative recap of a section's own real, populated data — deterministic Python templates,
+    never a live model call (RULES forbids model prose in canonical delivery), so every word
+    traces back to the same values rendered in the section above it. The sections that drive
+    today's trade (gamma, flow, market control, premium selling, the strategy horizons, ...) get
+    a bespoke, voice-rich builder built from the real field shapes. A section without one — mostly
+    bookkeeping (paper scorecard, scanner health, data integrity, ...) — gets a plain but still
+    readable sentence, never a raw field:value dump."""
+    builder = _NARRATIVE_BUILDERS.get(name)
+    if builder:
+        text = builder(block)
+        if text:
+            return text
+    return _generic_narrative_summary(block)
 
 def _side_label(verdict_text):
     t = (verdict_text or "").lower()

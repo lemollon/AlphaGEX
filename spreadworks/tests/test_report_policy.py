@@ -165,12 +165,60 @@ def test_entry_ready_downgrades_when_quotes_age_at_publication():
     assert payload['report_blocks']['day_strategy']['status']['value']=='WATCH'
 
 def test_section_summary_cites_real_field_values_or_explicit_absence():
+    """2026-10-11: Leron asked for the Section summary lines to read as narrative, not a
+    field:value dump -- gamma/market_control/flow/etc now get bespoke builders in
+    section_policy._NARRATIVE_BUILDERS keyed on the REAL nested producer shapes (merge_symbols()
+    always wraps even a single key: {'SPY': {'net_gex_b': x}}, never a bare {'SPY': x})."""
     blocks=empty_blocks()
-    blocks['gamma']['net_gex']=item({'SPY':0.12,'QQQ':-3.1})
-    blocks['gamma']['flip']=item({'SPY':775.3,'QQQ':758.8})
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.12},'QQQ':{'net_gex_b':-3.1}})
+    blocks['gamma']['flip']=item({'SPY':{'gamma_flip':775.3},'QQQ':{'gamma_flip':758.8}})
     summary=section_summary('gamma',blocks['gamma'])
-    assert 'net gex' in summary and 'flip' in summary
+    assert 'SPY' in summary and 'net GEX' in summary and '0.12' in summary
+    assert 'QQQ' in summary and '-3.1' in summary
+    assert '{' not in summary and '"' not in summary
+    # A section with no bespoke builder still cites real values, as a sentence, never a dump.
+    blocks['scanner']['minute_cadence']=item(5)
+    generic=section_summary('scanner',blocks['scanner'])
+    assert 'minute cadence' in generic.lower() and '5' in generic and generic[0].isupper()
     assert section_summary('profile',empty_blocks()['profile'])=='No verified observation yet this checkpoint.'
+
+def test_section_summary_narrative_builders_cover_the_money_sections():
+    """Each bespoke builder must actually fire (not silently fall back to the generic sentence)
+    on realistic, production-shaped data -- this is what the live report screenshot pipeline
+    renders, so a shape mismatch here is a shape mismatch on the real page."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['evidence']=item({'returns':{'SPY':0.60,'QQQ':0.49},
+        'breadth':{'advances':319,'declines':184}})
+    summary=section_summary('risk_on_defensive',blocks['risk_on_defensive'])
+    assert 'leaning bullish' in summary and 'SPY' in summary and '319' in summary
+
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'call_sellers','1_5dte':'call_sellers'}})
+    blocks['market_control']['control_confidence']=item({'SPY':{'classified_contract_fraction':0.8,'label':'HIGH'}})
+    summary=section_summary('market_control',blocks['market_control'])
+    assert 'call sellers' in summary and 'high-confidence' in summary
+
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH'})
+    summary=section_summary('premium_selling',blocks['premium_selling'])
+    assert 'premium is rich' in summary
+
+    blocks['expected_move']['dollars']=item({'SPY':{'expected_move_dollars_1d':5.52}})
+    blocks['expected_move']['percent']=item({'SPY':{'expected_move_pct_1d':0.71}})
+    summary=section_summary('expected_move',blocks['expected_move'])
+    assert '$5.52' in summary and '0.71%' in summary
+
+    blocks['breadth']['advance_decline']=item({'advances':319,'declines':184})
+    summary=section_summary('breadth',blocks['breadth'])
+    assert '319' in summary and '184' in summary and 'advancing' in summary
+
+    blocks['morning_comparison']['regime_shift']=item({'SPY':{'status':'CHANGED',
+        'changed':['net GEX flipped positive to negative']}})
+    summary=section_summary('morning_comparison',blocks['morning_comparison'])
+    assert 'revisit the plan intraday' in summary and 'net GEX flipped' in summary
+
+    blocks['day_strategy']['status']=item('ENTRY_READY')
+    summary=section_summary('day_strategy',blocks['day_strategy'])
+    assert 'every box is checked' in summary
 
 def test_section_meaning_risk_on_defensive_reads_side_from_verdict():
     blocks=empty_blocks()
