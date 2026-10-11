@@ -102,21 +102,20 @@ def plain_value(v, depth=0):
     if isinstance(v, dict):
         if v and all(isinstance(k, str) and _SYM_KEY_RE.match(k) for k in v):
             return "; ".join(f"{k}: {plain_value(sv, depth + 1)}" for k, sv in v.items())
-        if v and len(v) <= 10 and depth < 4:
-            return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
         if not v:
             return "none"
-        if depth >= 4:
-            return f"[{len(v)} fields]"
-        # More than 10 keys (e.g. breadth's 18 fields) is too many for the cap above. Render
-        # every field as a normal "key value" pair — each recursive plain_value() call still
-        # bounds its own nested lists/dicts, so this is a longer plain-text line, never JSON.
+        # Any width still renders every field as a "key value" pair — real recursion, real
+        # values, never a raw dump. No depth cutoff here: report data is always a finite,
+        # acyclic tree built by producer code, never arbitrary/cyclic input, and a hard depth
+        # gate at a low number (found live 2026-10-11) was collapsing small, perfectly normal
+        # nested values -- a 3-field payoff dict with a 1-item breakeven list -- into a useless
+        # "[1 items]" placeholder several levels in. The real protection against an actually
+        # unbounded structure (breadth's 503-symbol holdings list) is the per-list item cap
+        # below, not depth.
         return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
     if isinstance(v, list):
         if not v:
             return "none"
-        if depth >= 3:
-            return f"[{len(v)} items]"
         if all(not isinstance(x, (dict, list)) for x in v):
             shown = v[:12]
             text = ", ".join(plain_value(x, depth + 1) for x in shown)
@@ -1129,6 +1128,93 @@ def meta_line_html(item):
         return ""
     return f'<div style="color:#8b97a8;font-size:11px;margin-top:3px">{html.escape(" &middot; ".join(bits))}</div>'
 
+_OCC_RE = re.compile(r"^[A-Z]{1,6}(\d{6})([CP])(\d{8})$")
+
+def _parse_occ_leg(symbol):
+    """Best-effort parse of an OCC option symbol (ROOT+YYMMDD+C/P+strike*1000) into an expiry
+    date string, 'call'/'put', and strike. Returns (None, None, None) on any non-match --
+    cosmetic for a trade-idea sentence, never a data source, so it must never raise."""
+    m = _OCC_RE.match(str(symbol or ""))
+    if not m:
+        return None, None, None
+    yy, mm, dd = m.group(1)[:2], m.group(1)[2:4], m.group(1)[4:6]
+    return f"20{yy}-{mm}-{dd}", ("call" if m.group(2) == "C" else "put"), int(m.group(3)) / 1000.0
+
+def _looks_like_package(d):
+    return (isinstance(d, dict) and isinstance(d.get("legs"), list) and d["legs"]
+            and all(isinstance(l, dict) and _num(l.get("strike")) and l.get("action") in ("buy", "sell")
+                    for l in d["legs"]))
+
+def narrative_package_html(pkg):
+    """One qualified option structure (qualify_package()'s raw shape: legs + natural_credit/
+    debit + payoff) as a plain-English trade idea instead of a per-leg field:value dump --
+    Leron, 2026-10-11, screenshot of exactly that dump in the Today's Mission panel: "I don't
+    know how to read the information in this image." Every number here still traces to the
+    same leg/payoff data; this only changes how it reads."""
+    legs = pkg.get("legs") or []
+    leg_bits, expiry = [], None
+    for l in legs:
+        action = "Sell" if l.get("action") == "sell" else "Buy"
+        strike = l.get("strike")
+        right = "call" if l.get("right") in ("C", "call") else "put" if l.get("right") in ("P", "put") else None
+        parsed_expiry, parsed_right, _strike = _parse_occ_leg(l.get("symbol"))
+        right = right or parsed_right or "option"
+        expiry = expiry or parsed_expiry
+        leg_bits.append(f"{action} the {strike:g} {right}" if _num(strike) else f"{action} the {right}")
+    sentence = ", ".join(leg_bits) if leg_bits else "Structure"
+    strategy = pkg.get("strategy")
+    if isinstance(strategy, str) and strategy:
+        sentence = f"<b>{html.escape(strategy.replace('_', ' ').title())}</b> — " + sentence
+    if expiry:
+        sentence += f" (expiring {expiry})"
+    credit, debit = pkg.get("natural_credit"), pkg.get("natural_debit")
+    if _num(credit) and credit:
+        sentence += f" — collect ${credit:.2f}"
+    elif _num(debit) and debit:
+        sentence += f" — pay ${debit:.2f}"
+    payoff = pkg.get("payoff") or {}
+    max_risk, max_reward = payoff.get("max_risk"), payoff.get("max_reward")
+    if _num(max_risk) and max_risk:
+        if max_reward == "unlimited":
+            sentence += f". Risk ${max_risk:.0f} with unlimited upside"
+        elif _num(max_reward):
+            sentence += f". Risk ${max_risk:.0f} to make ${max_reward:.0f}"
+    breakeven = payoff.get("breakeven")
+    be = breakeven[0] if isinstance(breakeven, list) and breakeven else (breakeven if _num(breakeven) else None)
+    if _num(be):
+        sentence += f", breakeven at ${be:.2f}"
+    sentence += ". Qualified on fresh per-leg quotes — ready to trade right now."
+    return sentence
+
+def _looks_like_setup(d):
+    return (isinstance(d, dict) and isinstance(d.get("setup_id"), str) and isinstance(d.get("symbol"), str)
+            and any(k in d for k in ("thesis", "entry", "invalidation")))
+
+def narrative_setup_html(setup):
+    """One registered trade setup -- the full internal plan object (thesis/entry/invalidation
+    plus ~15 supporting fields: expiration_preference, profit_taking_framework, source_metadata,
+    created_at, sessions, ...) -- as a plain-English trigger description instead of a 17-field
+    label dump. Same bug class as narrative_package_html, caught in the Edge Board's Trigger
+    column: Leron, 2026-10-11, "why do I feel like something is missing" after the contracts
+    fix landed but this sibling field didn't."""
+    symbol = setup.get("symbol") or ""
+    strategy = setup.get("strategy")
+    strategy_label = str(strategy).replace("_", " ") if isinstance(strategy, str) and strategy else "setup"
+    sentence = f"<b>{html.escape(str(symbol))} {html.escape(strategy_label)}</b>"
+    thesis = setup.get("thesis")
+    if isinstance(thesis, str) and thesis:
+        sentence += f" — {html.escape(thesis)}"
+    entry = setup.get("entry")
+    if isinstance(entry, str) and entry:
+        sentence += f". Enters on: {html.escape(entry)}"
+    invalidation = setup.get("invalidation")
+    if isinstance(invalidation, str) and invalidation:
+        sentence += f". Cancels if: {html.escape(invalidation)}"
+    catalyst = setup.get("catalyst")
+    if isinstance(catalyst, str) and catalyst and "no specific catalyst" not in catalyst.lower():
+        sentence += f". Catalyst: {html.escape(catalyst)}"
+    return sentence + "."
+
 def narrative_html(value, depth=0):
     """Readable HTML for a field's value. A dict (e.g. thesis: {direction, volatility_context,
     meaning}) renders as one labeled line per key — plain_value()'s comma-joined run-on reads
@@ -1155,6 +1241,18 @@ def narrative_html(value, depth=0):
     if isinstance(value, list):
         if not value:
             return '<span style="color:#8b97a8">none</span>'
+        if value and all(_looks_like_package(x) for x in value):
+            shown = value[:3]
+            out = "<br>".join(f'<div style="margin:6px 0">{narrative_package_html(x)}</div>' for x in shown)
+            if len(value) > 3:
+                out += f'<div style="color:#8b97a8">&hellip; +{len(value)-3} more</div>'
+            return out
+        if value and all(_looks_like_setup(x) for x in value):
+            shown = value[:3]
+            out = "<br>".join(f'<div style="margin:6px 0">{narrative_setup_html(x)}</div>' for x in shown)
+            if len(value) > 3:
+                out += f'<div style="color:#8b97a8">&hellip; +{len(value)-3} more</div>'
+            return out
         if all(not isinstance(x, (dict, list)) for x in value):
             shown = value[:8]
             text = ", ".join(html.escape(plain_value(x, depth + 1)) for x in shown)

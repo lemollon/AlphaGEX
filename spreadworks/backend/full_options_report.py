@@ -797,7 +797,11 @@ def _fmt_value(v,depth=0,img_map=None):
             return ' <span class="sep">&middot;</span> '.join(
                 f'<b>{html.escape(sym)}</b>: {_fmt_value(sv,depth+1,img_map)}' for sym,sv in v.items())
         if not v:return '<span class="muted">none</span>'
-        if depth>=6:return f'<span class="muted">[{len(v)} fields]</span>'
+        # No depth cutoff: report data is a finite, acyclic tree from producer code, never
+        # arbitrary/cyclic input. A hard depth gate here (found live 2026-10-11) collapsed small,
+        # perfectly normal nested values -- a 3-field payoff dict with a 1-item breakeven list,
+        # several levels into a contract package -- into a useless "[1 items]" placeholder. The
+        # real protection against an actually unbounded structure is the per-list item cap below.
         items=list(v.items());shown=items[:_MAX_KV_FIELDS]
         # A single-key dict (e.g. {"net_gex_b": -0.04}) is one fact, not a table — a whole
         # bordered/background kvblock box around ONE number (seen live 2026-10-10: every
@@ -813,7 +817,6 @@ def _fmt_value(v,depth=0,img_map=None):
         return f'<div class="kvblock">{rows}</div>'
     if isinstance(v,list):
         if not v:return '<span class="muted">none</span>'
-        if depth>=5:return f'<span class="muted">[{len(v)} items]</span>'
         if all(not isinstance(x,(dict,list)) for x in v):
             shown=v[:_MAX_SCALAR_ITEMS]
             text=', '.join(_fmt_value(x,depth+1,img_map) for x in shown)

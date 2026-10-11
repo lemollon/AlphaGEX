@@ -11,7 +11,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
-                                   ct_str, fmt_number, narrative_html, positioning_panel_html)
+                                   ct_str, fmt_number, narrative_html, positioning_panel_html,
+                                   narrative_package_html, item_cell_html, narrative_setup_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -659,6 +660,82 @@ def test_render_opening_html_includes_positioning_panel_after_mission():
     positioning_idx=opening.index('Positioning')
     scoreboard_idx=opening.index('30-second scoreboard')
     assert mission_idx<positioning_idx<scoreboard_idx
+
+def test_plain_value_small_nested_payoff_never_collapses_to_item_count():
+    """Live bug, found 2026-10-11 in Leron's screenshot of the Today's Mission panel: a
+    contract package's payoff ({'max_risk':365.0,'max_reward':135.0,'breakeven':[768.65]}) is
+    only 3 keys with one trivially small nested list, but it sits several levels deep inside
+    contracts -> package -> value -> payoff -> breakeven. The depth>=4 (dict) / depth>=3 (list)
+    cutoffs added for the raw-JSON-leak fix collapsed it to "breakeven [1 items]" instead of the
+    real number -- a regression as bad as the bug it fixed, just quieter. There is no depth
+    cutoff left; only the per-list item count protects against something actually unbounded."""
+    payoff={'max_risk':365.0,'max_reward':135.0,'breakeven':[768.65]}
+    text=plain_value(payoff,depth=4)
+    assert '768.65' in text and '[1 items]' not in text and 'items]' not in text
+    # Still protects against the real danger: a genuinely long flat list stays truncated.
+    big=plain_value({'symbols':list(range(600))},depth=4)
+    assert '(+588 more)' in big and big.count(',')<30
+
+def test_narrative_package_html_reads_as_a_trade_idea_not_a_field_dump():
+    """Leron, 2026-10-11, screenshot of the Today's Mission 'Best underlying / structure' row
+    showing a raw per-leg field dump ("symbol SPY261013P00770000, action sell, right P, strike
+    770.00, bid 1.62, ask 1.68, delta -0.2800..."): "I don't know how to read the information in
+    this image." A qualified package list (day_strategy.contracts' real shape from
+    qualify_package()) must now render as a plain-English trade sentence instead."""
+    package={'strategy':'put_credit_spread','natural_credit':1.35,
+        'legs':[{'symbol':'SPY261013P00770000','action':'sell','right':'P','strike':770.0,
+                 'bid':1.62,'ask':1.68,'delta':-0.28},
+                {'symbol':'SPY261013P00765000','action':'buy','right':'P','strike':765.0,
+                 'bid':0.29,'ask':0.33,'delta':-0.14}],
+        'payoff':{'max_risk':365.0,'max_reward':135.0,'breakeven':[768.65]},
+        'qualification':'Fresh per-leg BBO; conditional advisory package, not a submitted order'}
+    text=narrative_package_html(package)
+    assert 'Sell the 770 put' in text and 'Buy the 765 put' in text
+    assert 'collect $1.35' in text and 'Risk $365' in text and 'make $135' in text
+    assert 'breakeven at $768.65' in text
+    assert 'expiring 2026-10-13' in text
+    # The raw per-leg noise from the screenshot must be gone.
+    assert 'SPY261013P00770000' not in text and 'bid' not in text and 'delta' not in text
+
+    # Integration: a list of these packages through narrative_html / item_cell_html (the actual
+    # call path for day_strategy.contracts in render_opening_html's scoreboard) must use this
+    # narrative path, not the generic per-item field dump.
+    html_out=narrative_html([package])
+    assert 'Sell the 770 put' in html_out and 'bid' not in html_out
+    cell=item_cell_html(observed([package],'Qualified per-leg executable packages',NOW,NOW))
+    assert 'Sell the 770 put' in cell and 'bid' not in cell
+
+def test_narrative_setup_html_reads_as_a_trigger_not_a_17_field_dump():
+    """Sibling bug to narrative_package_html's contracts fix: the Edge Board's Trigger column
+    renders day_strategy.trigger, whose real shape is the FULL internal plan setup object --
+    setup_id/symbol/strategy/thesis/entry/invalidation plus ~15 more fields (expiration_preference,
+    profit_taking_framework, source_metadata, created_at, sessions, ...). Leron, 2026-10-11, "why
+    do I feel like something is missing" right after the contracts fix shipped -- this is it."""
+    setup={'setup_id':'cloud-spy-put_credit_spread','symbol':'SPY','strategy':'put_credit_spread',
+        'thesis':'Dealers long gamma, range-bound, premium rich — sell the put wall',
+        'entry':'Two 1-min closes above 775 with held retest','invalidation':'Break and hold below 770',
+        'support_levels':[770.0],'resistance_levels':[790.0],'expiration_preference':'7-14 DTE',
+        'target_delta_profile':'15-20 delta short strike','profit_taking_framework':'Take profit at 50% max credit',
+        'max_risk_logic':'Defined-risk structure only.','main_risks':'Gap risk, event risk, and option liquidity at trigger time.',
+        'thesis_reason':'Current evidence-supported setup.','catalyst':'No specific catalyst confirmed.',
+        'source_metadata':{'engine':'cloud'},'created_at':'2026-10-13T12:00:00+00:00',
+        'expires_at':'2026-10-13T20:00:00+00:00','sessions':['regular']}
+    text=narrative_setup_html(setup)
+    assert 'SPY put credit spread' in text
+    assert 'Dealers long gamma' in text
+    assert 'Enters on: Two 1-min closes above 775' in text
+    assert 'Cancels if: Break and hold below 770' in text
+    # The generic-catalyst placeholder is noise, not signal -- must not appear.
+    assert 'No specific catalyst confirmed' not in text
+    # None of the 12 supporting/bookkeeping fields leak through as labeled rows.
+    for noise in ('Expiration preference', 'Profit taking framework', 'Source metadata',
+                  'Created at', 'Sessions', 'Target delta profile', 'Max risk logic'):
+        assert noise not in text
+
+    html_out=narrative_html([setup])
+    assert 'SPY put credit spread' in html_out and 'Expiration preference' not in html_out
+    cell=item_cell_html(observed([setup],'Registered plan and isolated minute watcher',NOW,NOW))
+    assert 'SPY put credit spread' in cell and 'Source metadata' not in cell
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms

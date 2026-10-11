@@ -416,15 +416,20 @@ def test_fmt_value_deep_structure_never_raw_dumps_full_precision_floats():
     list (symbol/date/direction/forward_return/stalled) is too deep/wide for the normal
     per-field renderer and used to hit a raw <pre class="raw"> json.dumps() fallback, leaking
     forward_return -0.0001541364373222054 at full float repr precision. 2026-10-11: that raw
-    fallback was removed entirely — a user screenshot caught the same bug class leaking a
-    503-symbol breadth dict straight into the Section summary UI. Deep/wide structures now
-    collapse to a short bounded placeholder instead of dumping anything, so the full-precision
-    float can never appear."""
+    fallback was removed and replaced with a hard depth>=6 cutoff ("[N fields]" placeholder) --
+    but a second screenshot the same day caught that cutoff firing on small, perfectly normal
+    data too (a 3-field payoff dict with a 1-item breakeven list, nested a few levels into a
+    contract package, collapsed to "[1 items]" instead of showing the real number). The depth
+    cutoff was removed entirely: report data is a finite, acyclic tree from producer code, so
+    there is no runaway-recursion risk, and the real protection against something actually
+    unbounded (breadth's 503-symbol holdings list) is the per-list item cap, not depth. A deep
+    structure now renders in full -- real values, properly rounded -- never a placeholder."""
     v={'events':[{'symbol':'SPY','date':'2026-10-02','direction':1,
         'forward_return':-0.0001541364373222054,'stalled':True} for _ in range(3)]}
     html=report._fmt_value(v,depth=6)
     assert '0001541364373222054' not in html
-    assert html=='<span class="muted">[1 fields]</span>'
+    assert '-0.0002' in html and 'SPY' in html and '2026-10-02' in html
+    assert '[1 fields]' not in html and 'raw' not in html
 
 def test_fmt_value_converts_any_timestamp_shaped_string_regardless_of_key_name():
     """Key-name matching (source_timestamp, generated_at, ...) kept missing new field names as
