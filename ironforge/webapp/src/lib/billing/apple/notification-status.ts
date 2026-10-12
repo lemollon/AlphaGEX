@@ -44,14 +44,20 @@ export function statusForNotification(input: StatusForNotificationInput): AppleS
     case 'REVOKE':
       return 'canceled'
 
-    // A live/renewed subscription, or a renewal-preference change that doesn't itself end
-    // access (turning auto-renew off takes effect at the CURRENT period's expiry, not now).
+    // A live/renewed subscription, a renewal-preference change that doesn't itself end
+    // access (turning auto-renew off takes effect at the CURRENT period's expiry, not now),
+    // a reversed refund (restores access — Apple undid the REFUND that canceled the row),
+    // or a renewal-product change (DID_CHANGE_RENEWAL_PREF; the route additionally retires
+    // the OLD product's row on an UPGRADE subtype — see billing/apple/notifications/route.ts).
     // Derive from the transaction's own expiresDate/revocationDate rather than assuming
     // 'active', so a notification that happens to arrive after expiry doesn't resurrect a
-    // dead row.
+    // dead row — this is what makes the REFUND_REVERSED restore safe to apply automatically
+    // instead of only logging it for manual follow-up.
     case 'SUBSCRIBED':
     case 'DID_RENEW':
     case 'DID_CHANGE_RENEWAL_STATUS':
+    case 'REFUND_REVERSED':
+    case 'DID_CHANGE_RENEWAL_PREF':
       if (input.revocationDate) return 'canceled'
       return typeof input.expiresDateMs === 'number' && input.expiresDateMs > now ? 'active' : 'canceled'
 

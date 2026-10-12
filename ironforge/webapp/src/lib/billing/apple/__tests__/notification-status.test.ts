@@ -48,6 +48,27 @@ describe('statusForNotification — the type -> status mapping table', () => {
       { notificationType: 'DID_FAIL_TO_RENEW', gracePeriodExpiresMs: PAST, now: NOW },
       'canceled',
     ],
+
+    [
+      'REFUND_REVERSED + future expiry -> active (restores access Apple had canceled)',
+      { notificationType: 'REFUND_REVERSED', expiresDateMs: FUTURE, now: NOW },
+      'active',
+    ],
+    [
+      'REFUND_REVERSED + past expiry -> canceled (defensive: never resurrect a dead row)',
+      { notificationType: 'REFUND_REVERSED', expiresDateMs: PAST, now: NOW },
+      'canceled',
+    ],
+    [
+      'DID_CHANGE_RENEWAL_PREF + future expiry -> active',
+      { notificationType: 'DID_CHANGE_RENEWAL_PREF', expiresDateMs: FUTURE, now: NOW },
+      'active',
+    ],
+    [
+      'DID_CHANGE_RENEWAL_PREF + revocationDate set -> canceled even with future expiry',
+      { notificationType: 'DID_CHANGE_RENEWAL_PREF', expiresDateMs: FUTURE, revocationDate: NOW - 1000, now: NOW },
+      'canceled',
+    ],
   ]
 
   it.each(table)('%s', (_label, input, expected) => {

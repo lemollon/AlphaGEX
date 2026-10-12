@@ -28,10 +28,35 @@ export interface UpsertSubscriptionInput {
   priceLookupKey?: string | null
 }
 
+/** Statuses that mean "this row is currently paying/live" — the ones worth protecting
+ *  from a cross-provider clobber. past_due is included: the customer is mid-grace-period
+ *  on whichever provider currently owns the row, not up for grabs by the other rail. */
+const ACTIVE_PAYING_STATUSES = new Set(['trialing', 'active', 'past_due'])
+
 export async function upsertSubscription(opts: UpsertSubscriptionInput): Promise<void> {
   const derivedKey = isCommunityKey(opts.bot) ? COMMUNITY_PLAN.lookupKey : getBotPlan(opts.bot)?.lookupKey
   const lookupKey = opts.priceLookupKey ?? derivedKey ?? null
   const provider = opts.provider ?? 'stripe'
+
+  // Ownership guard: a customer's live entitlement is owned by whichever provider wrote
+  // it, and must never be silently overwritten by the OTHER rail — e.g. an old Apple
+  // restore landing after Stripe is the real, current subscription (or the reverse). Read
+  // the existing row first; only a same-provider write, or a write onto a row that is not
+  // currently active/paying, is allowed through. When in doubt, don't downgrade.
+  const existing = await customerQuery<{ provider: string; status: string }>(
+    `SELECT provider, status FROM customer_bot_subscriptions WHERE user_id = $1 AND bot = $2 LIMIT 1`,
+    [opts.userId, opts.bot],
+  )
+  const current = existing[0]
+  if (current && current.provider !== provider && ACTIVE_PAYING_STATUSES.has(current.status)) {
+    console.warn(
+      `[membership-sync] skipping cross-provider write for user=${opts.userId} bot=${opts.bot}: ` +
+        `existing row is ${current.provider}/${current.status} (active/paying); refusing to let ` +
+        `a ${provider}/${opts.status} event from a different provider overwrite it`,
+    )
+    return
+  }
+
   await customerExecute(
     `INSERT INTO customer_bot_subscriptions
        (user_id, bot, status, provider, stripe_subscription_id, apple_original_transaction_id, price_lookup_key, current_period_end, updated_at)

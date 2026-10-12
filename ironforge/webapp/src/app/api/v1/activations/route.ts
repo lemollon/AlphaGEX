@@ -125,6 +125,13 @@ export async function POST(req: NextRequest) {
           priceId: priceId!,
           userId: session.customerId,
           bot: config.agent_code,
+          // Stripe-level idempotency key, derived from the app's own Idempotency-Key
+          // header. The header alone only dedupes a client retry of THIS route; without
+          // this, a retry after Stripe succeeds but the DB write below throws would call
+          // Stripe again and create a genuinely second live subscription (bug fix).
+          // Namespaced so it can never collide with a Stripe call this same raw key might
+          // be reused for elsewhere.
+          idempotencyKey: `activate:${idemKey}`,
         })
 
     let activationId = ''
