@@ -842,6 +842,77 @@ def test_decision_brief_flags_price_flow_conflict_and_names_the_clean_edge():
     # No verdict yet -> nothing to synthesize, not a half-built section.
     assert decision_brief_lines(empty_blocks()) == []
 
+def test_decision_brief_vix_contradiction_risk_on_up_blocks_clean_edge():
+    """Leron, 2026-10-12: "build the contradiction-calling" -- VIX up while price rallies is a
+    hedging-demand contradiction. Also confirms it overrides a clean edge that gamma/suitability
+    would otherwise have named (SPY premium-rich + pinning + no SPY/QQQ flow conflict)."""
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['gamma']['net_gex'] = item({'SPY': {'net_gex_b': 1.75}, 'QQQ': {'net_gex_b': 0.5}})
+    blocks['day_strategy']['thesis'] = item({
+        'SPY': {'read': 'upside pressure'}, 'QQQ': {'read': 'upside pressure'}})
+    blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_RICH', 'QQQ': 'PREMIUM_FAIR'})
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': 5.0, 'baseline_session_matches': True}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX: up +5.0% while price rallies -- hedging demand against the move, a real contradiction.' in text
+    # Without the VIX override, SPY would be named the one clean edge -- confirm it is not.
+    assert 'the one clean edge right now is SPY' not in text
+    assert "nothing yet -- price and flow are fighting each other" in text
+
+def test_decision_brief_vix_contradiction_defensive_down():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Defensive price confirmation')
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': -4.2, 'baseline_session_matches': True}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX: down -4.2% while price sells off -- no fear behind the drop, a real contradiction.' in text
+
+def test_decision_brief_vix_move_below_threshold_no_contradiction():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': 1.5, 'baseline_session_matches': True}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX:' not in text
+
+def test_decision_brief_vix_stale_baseline_gated_out_even_if_pct_is_large():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': 9.0, 'baseline_session_matches': False}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX:' not in text
+
+def test_decision_brief_vix_neutral_regime_gated_out():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Mixed signal')
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': 9.0, 'baseline_session_matches': True}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX:' not in text
+
+def test_decision_brief_vix_row_missing_entirely_no_exception():
+    # Old reports before this change, or still-building change_vs_baselines without 'VIX'.
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'SPY': {'price_change_pct': 2.0}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'VIX:' not in text
+    assert 'leaning bullish' in text  # rest of the brief unaffected
+
 def test_decision_brief_leads_both_renderers():
     blocks = empty_blocks()
     blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')

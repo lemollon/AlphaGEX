@@ -1050,6 +1050,24 @@ def decision_brief_lines(blocks):
         if bits:
             lines.append(f"{sym}: " + "; ".join(bits) + ".")
 
+    # VIX usually moves opposite price. When it moves WITH price instead -- VIX up while
+    # price rallies, or VIX down while price sells off -- that's a real contradiction worth
+    # flagging, not noise. Leron, 2026-10-12: "build the contradiction-calling." Gated on
+    # regime_side != neutral (SPY and QQQ already agree in direction) and a same-session
+    # baseline so a stale VIX snapshot never fabricates a signal.
+    baselines_val = ((blocks.get("risk_on_defensive") or {}).get("change_vs_baselines") or {}).get("value") or {}
+    vix_row = baselines_val.get("VIX") if isinstance(baselines_val, dict) else None
+    vix_pct = vix_row.get("price_change_pct") if isinstance(vix_row, dict) else None
+    if regime_side != "neutral" and isinstance(vix_row, dict) and vix_row.get("baseline_session_matches") and _num(vix_pct):
+        if regime_side == "risk-on" and vix_pct > 3.0:
+            any_conflict = True
+            clean_edge = None
+            lines.append(f"VIX: up {vix_pct:+.1f}% while price rallies -- hedging demand against the move, a real contradiction.")
+        elif regime_side == "defensive" and vix_pct < -3.0:
+            any_conflict = True
+            clean_edge = None
+            lines.append(f"VIX: down {vix_pct:+.1f}% while price sells off -- no fear behind the drop, a real contradiction.")
+
     if clean_edge:
         lines.append(f"What this means: the one clean edge right now is {clean_edge} "
                       "premium-selling -- gamma is pinning it and nothing is fighting that read.")

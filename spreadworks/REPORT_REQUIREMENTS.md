@@ -190,6 +190,26 @@ strategy, so the lookup states only which side the evidence favors (sellers
 vs buyers, which direction), consistent with `structure`'s own existing text
 ("no structure invented from directional pressure").
 
+## VIX contradiction-calling (2026-10-12)
+
+`risk_on_defensive.change_vs_baselines` already carried `market_comparison`'s
+free-form per-symbol dict (SPY/QQQ price vs morning/prior baseline) with zero
+fixed schema, so this adds a `'VIX'` entry to that same dict via a new
+`vix_comparison` producer (`full_options_report.py`) rather than a new field
+name — no contract version bump. It reads the VIX level already persisted
+under each stored report's `evidence.volatility.indices.VIX` (every report
+snapshot already carries the full `core` dict; VIX's own level was simply
+never read back out before now) and compares it to the current level, same
+shape as the SPY/QQQ rows (`price_change_pct`, `baseline_session_matches`,
+etc).
+
+`decision_brief_lines` (`report_policy.py`) uses it to flag the one
+contradiction VIX can carry: VIX normally moves opposite price, so VIX up
+while SPY/QQQ both rally, or VIX down while both sell off, is flagged as a
+real contradiction (gated on `regime_side != neutral`, a same-session
+baseline, and a >3% VIX move to filter noise) — never fabricated from a
+missing or stale VIX reading.
+
 ## Integrity and failure behavior
 
 Source timestamps require a timezone and cannot be in the future. Age is

@@ -124,6 +124,49 @@ def test_yesterdays_expected_move_cannot_be_consumed_as_today_budget():
     assert blocks['morning_comparison']['price_location']['value']!=blocks['morning_comparison']['stall_risk']['value']
 
 
+def vix_core(price=None,ts=None):
+    c=core()
+    if price is not None:
+        c['volatility']={'indices':{'VIX':{'price':price,'source_timestamp':ts or NOW.isoformat()}}}
+    return c
+
+def test_vix_comparison_same_session_baseline_computes_pct_change():
+    current=vix_core(22,NOW.isoformat())
+    baseline={'generated_at':NOW.isoformat(),'evidence':{'volatility':{'indices':{'VIX':{'price':20,'source_timestamp':NOW.isoformat()}}}}}
+    result=report.vix_comparison(current,baseline)
+    assert result['price_change_pct']==pytest.approx(10.0)
+    assert result['morning_spot']==20;assert result['current_spot']==22
+    assert result['baseline_session_matches']
+
+def test_vix_comparison_prior_day_baseline_session_does_not_match():
+    current=vix_core(22,NOW.isoformat())
+    baseline={'generated_at':NOW.isoformat(),'evidence':{'volatility':{'indices':{
+        'VIX':{'price':20,'source_timestamp':(NOW-timedelta(days=1)).isoformat()}}}}}
+    result=report.vix_comparison(current,baseline)
+    assert not result['baseline_session_matches']
+    assert result['price_change_pct']==pytest.approx(10.0)  # pct math itself is unaffected by staleness
+
+def test_vix_comparison_missing_vix_degrades_without_exception():
+    # No VIX in core (core() default has volatility={}), baseline has one.
+    baseline={'generated_at':NOW.isoformat(),'evidence':{'volatility':{'indices':{'VIX':{'price':20,'source_timestamp':NOW.isoformat()}}}}}
+    result=report.vix_comparison(core(),baseline)
+    assert result['price_change_pct'] is None;assert result['current_spot'] is None
+    assert result['morning_spot']==20;assert not result['baseline_session_matches']
+    # No VIX in baseline's evidence, core has one.
+    current=vix_core(22,NOW.isoformat())
+    result=report.vix_comparison(current,{'generated_at':NOW.isoformat(),'evidence':{'volatility':{}}})
+    assert result['price_change_pct'] is None;assert result['morning_spot'] is None
+    assert result['current_spot']==22;assert not result['baseline_session_matches']
+
+def test_vix_comparison_empty_baseline_dict_degrades_without_exception():
+    # No morning report has been generated yet (baseline={}), mirrors market_comparison's
+    # own degraded-baseline test at test_yesterdays_expected_move_cannot_be_consumed_as_today_budget.
+    current=vix_core(22,NOW.isoformat())
+    result=report.vix_comparison(current,{})
+    assert result['price_change_pct'] is None
+    assert result['morning_timestamp'] is None;assert result['morning_spot'] is None
+    assert result['current_spot']==22;assert not result['baseline_session_matches']
+
 def test_study_frozen_forward_window_rejects_gap_and_no_option_pnl_claim():
     bars=[{'timestamp':NOW.timestamp()+i*60,'high':101,'low':99,'close':100} for i in range(45)]
     bars[20].update(close=102,high=102);bars[30]['close']=101
