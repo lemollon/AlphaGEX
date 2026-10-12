@@ -1090,8 +1090,17 @@ def register(scheduler,app):
     scheduler.add_job(candidate_surface_tick,'cron',hour='8-15',minute='*',second=35,day_of_week='mon-fri',id='report_candidate_surfaces',replace_existing=True,max_instances=1,coalesce=True)
     async def opening():await scheduled_intraday(app,kind='market_open')
     scheduler.add_job(context_tick,'cron',hour='7-15',minute='1,6,11,16,21,26,31,36,41,46,51,56',day_of_week='mon-fri',id='full_report_context',replace_existing=True,max_instances=1,coalesce=True)
+    # Leron, 2026-10-12: "the intraday report only need to report hourly no every 5 mins."
+    # There used to be a ':05,:10' recovery job here too. It looked like a harmless safety net,
+    # but claim_delivery()'s lease only blocks a RE-SEND once a slot reaches POSTED -- a report
+    # that fails prepare_report_delivery()'s publishable gate (common; data isn't always fully
+    # fresh) still gets fully assembled and archived via assemble_report() before that gate
+    # runs, then finish_delivery() marks the slot FAILED (not POSTED), so the next recovery
+    # tick re-claims the SAME hour and archives a SECOND real report. That's what produced
+    # 2-3 archived "intraday" reports an hour instead of one. Hourly-only now; a single missed
+    # hour (e.g. a transient data gap at :00) is an acceptable gap, not worth re-introducing
+    # the duplicate-report side effect to avoid.
     scheduler.add_job(hourly,'cron',hour='9-15',minute=0,day_of_week='mon-fri',id='full_intraday_report',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
-    scheduler.add_job(hourly,'cron',hour='9-15',minute='5,10',day_of_week='mon-fri',id='full_intraday_report_recovery',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
     scheduler.add_job(opening,'cron',hour=8,minute=30,day_of_week='mon-fri',id='full_open_report',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
     scheduler.add_job(opening,'cron',hour=8,minute='35,40',day_of_week='mon-fri',id='full_open_report_recovery',replace_existing=True,max_instances=1,coalesce=True,misfire_grace_time=300)
     scheduler.add_job(study,'cron',hour=17,minute=15,day_of_week='mon-fri',id='report_historical_study',replace_existing=True,max_instances=1,coalesce=True)
