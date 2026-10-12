@@ -1408,6 +1408,42 @@ def item_cell_html(item):
         return out
     return pill_html(item) + f'<div style="margin-top:4px">{narrative_html(item.get("value"))}</div>' + meta_line_html(item)
 
+_CONTROL_BUCKET_ORDER = ("0dte", "1_5dte", "6_20dte", "21_60dte")
+_CONTROL_SIDE_WORD = {"call_sellers": "Call sellers", "put_sellers": "Put sellers"}
+
+def _control_side_narrative(side_map):
+    """side_map: {bucket_key: 'call_sellers'|'put_sellers'|'mixed'}, already excluding
+    'inconclusive'. Groups consecutive same-side buckets into one flowing clause instead of
+    the old mechanical '0 DTE mixed, 1-5 DTE call sellers' list -- caught in a 2026-10-12
+    content review as the one spot in the positioning panel still reading like a field dump
+    next to everything else now being prose."""
+    ordered = [(b, side_map[b]) for b in _CONTROL_BUCKET_ORDER if b in side_map]
+    if not ordered:
+        return None
+    groups = []
+    for bucket, side in ordered:
+        label = field_label(bucket)
+        if groups and groups[-1][0] == side:
+            groups[-1][1].append(label)
+        else:
+            groups.append((side, [label]))
+
+    def _join(labels):
+        if len(labels) == 1:
+            return labels[0]
+        if len(labels) == 2:
+            return " and ".join(labels)
+        return ", ".join(labels[:-1]) + f", and {labels[-1]}"
+
+    sentences = []
+    for side, labels in groups:
+        where = _join(labels)
+        if side == "mixed":
+            sentences.append(f"{where} too mixed to call a side")
+        else:
+            sentences.append(f"{_CONTROL_SIDE_WORD.get(side, side)} control {where}")
+    return "; ".join(sentences)
+
 def positioning_panel_html(blocks):
     """Leron, 2026-10-10: "I need to be able to see during the day where the call sellers and
     put sellers are... Should I be playing long or should I be selling premium? And which
@@ -1468,9 +1504,10 @@ def positioning_panel_html(blocks):
         side=control_side.get(sym)
         if isinstance(side,dict):
             conclusive={k:v for k,v in side.items() if v and v!="inconclusive"}
-            if conclusive:
+            narrative=_control_side_narrative(conclusive) if conclusive else None
+            if narrative:
                 bits.append('<div style="margin:4px 0"><span style="color:#8b97a8">Who\'s selling:</span> '
-                             +html.escape(", ".join(f"{field_label(k)} {str(v).replace('_',' ')}" for k,v in conclusive.items()))+'</div>')
+                             +html.escape(narrative)+'</div>')
             else:
                 bits.append('<div style="margin:4px 0;color:#8b97a8">Who\'s selling: too thin to call right now</div>')
         if bits:

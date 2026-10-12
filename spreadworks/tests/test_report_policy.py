@@ -13,7 +13,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
-                                   decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html)
+                                   decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html,
+                                   _control_side_narrative)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -673,6 +674,26 @@ def test_positioning_panel_who_is_selling_shows_thin_coverage_honestly():
     blocks['market_control']['control_side']=item({'SPY':{'0dte':'inconclusive','1_5dte':'inconclusive'}})
     panel=positioning_panel_html(blocks)
     assert 'too thin to call' in panel
+
+def test_control_side_narrative_groups_buckets_instead_of_listing_them():
+    """Leron, 2026-10-12, content review: rated the report 8/10 but flagged the positioning
+    panel's "Who's selling: 0 DTE mixed, 1-5 DTE call sellers" line as the one spot still
+    reading like a raw field dump next to everything else now being prose. Same-side buckets
+    now merge into one clause instead of listing every bucket mechanically."""
+    assert _control_side_narrative({'0dte':'mixed','1_5dte':'call_sellers'})== \
+        '0 DTE too mixed to call a side; Call sellers control 1-5 DTE'
+    assert _control_side_narrative({'0dte':'put_sellers','1_5dte':'put_sellers','6_20dte':'put_sellers'})== \
+        'Put sellers control 0 DTE, 1-5 DTE, and 6-20 DTE'
+    assert _control_side_narrative({'0dte':'call_sellers','1_5dte':'put_sellers'})== \
+        'Call sellers control 0 DTE; Put sellers control 1-5 DTE'
+    assert _control_side_narrative({})is None
+
+    blocks=empty_blocks()
+    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.5}})
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'mixed','1_5dte':'call_sellers'}})
+    panel=positioning_panel_html(blocks)
+    assert '0 DTE too mixed to call a side; Call sellers control 1-5 DTE' in panel
+    assert '0 DTE mixed, 1-5 DTE call sellers' not in panel  # the old mechanical join is gone
 
 def test_positioning_panel_tolerates_flat_scalar_net_gex_shape():
     """Defensive: net_gex's real contract shape is {"SPY": {"net_gex_b": x}}, but the panel
