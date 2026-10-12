@@ -1358,6 +1358,78 @@ def positioning_panel_html(blocks):
            for i,content in enumerate(rows)]
     return '<h2>📍 Positioning &amp; levels</h2>'+"".join(parts)
 
+def _week_ahead_outlook_html(blocks):
+    """Morning-only lead paragraph: last-known volatility, the week-ahead vol/expected-move
+    context, upcoming catalysts, and carried-over gamma positioning -- synthesized into one
+    forward-looking story instead of a page of pre-market 'LAST KNOWN'/'unavailable' sections
+    with nothing fresh to say. Leron, 2026-10-12: "it should do forward looking by last known
+    volatility, expected move and more for the upcoming week, news that affect market
+    conditions and it should be outlook based." Every number here still traces to the same
+    field rendered in its own section below; this never invents a forward price or level."""
+    bits = []
+
+    surface = blocks.get("surface") or {}
+    atm_val = (surface.get("atm_iv") or {}).get("value") or {}
+    term_far_val = (surface.get("term_21plus") or {}).get("value") or {}
+    row = atm_val.get("SPY")
+    atm = row.get("atm_iv") if isinstance(row, dict) else None
+    if _num(atm):
+        far_row = term_far_val.get("SPY")
+        far = far_row.get("iv_21_365dte") if isinstance(far_row, dict) else None
+        sentence = f"SPY vol is sitting at {atm*100:.1f}% ATM heading into the week"
+        if _num(far) and far > 0:
+            if atm > far * 1.15:
+                sentence += " — elevated relative to the back of the curve, priced for event risk"
+            elif atm < far * 0.9:
+                sentence += " — calm, no term premium baked in yet"
+        bits.append(sentence + ".")
+
+    nf_thesis = ((blocks.get("near_forward_strategy") or {}).get("thesis") or {}).get("value")
+    if isinstance(nf_thesis, dict):
+        vol_ctx = nf_thesis.get("volatility_context") or {}
+        spy_ctx = vol_ctx.get("SPY") if isinstance(vol_ctx, dict) else None
+        median_iv = (spy_ctx or {}).get("median_iv")
+        expiries = (spy_ctx or {}).get("expiries")
+        if _num(median_iv):
+            n_exp = len(expiries) if isinstance(expiries, (list, set)) else None
+            sentence = f"Options expiring next week price a {median_iv*100:.1f}% median IV in SPY"
+            if n_exp:
+                sentence += f" across {n_exp} expiry{'ies' if n_exp != 1 else ''}"
+            if _num(atm) and atm > 0 and median_iv > atm * 1.3:
+                sentence += (f" — a real step up from today's calmer {atm*100:.1f}% ATM read, "
+                             "a sign the market is already pricing in next week's catalysts")
+            elif _num(atm) and atm > 0 and median_iv < atm * 0.8:
+                sentence += f" — lower than today's {atm*100:.1f}% ATM read, no extra premium baked in for next week yet"
+            bits.append(sentence + ".")
+
+    events = ((blocks.get("event_calendar") or {}).get("catalysts") or {}).get("value")
+    if isinstance(events, list) and events:
+        high = [e for e in events if isinstance(e, dict) and str(e.get("impact")).upper() == "HIGH"]
+        shown = (high or events)[:3]
+        names = "; ".join(f"{e.get('name')} ({str(e.get('datetime') or '')[:10]})"
+                           for e in shown if isinstance(e, dict) and e.get("name"))
+        if names:
+            label = "High-impact catalysts this week" if high else "On the calendar this week"
+            bits.append(f"{label}: {names}.")
+
+    gamma = blocks.get("gamma") or {}
+    net_row = ((gamma.get("net_gex") or {}).get("value") or {}).get("SPY")
+    gex = net_row.get("net_gex_b") if isinstance(net_row, dict) else None
+    if _num(gex):
+        wall_row = (((gamma.get("walls") or {}).get("value") or {}).get("SPY") or {}).get("walls") or {}
+        top_call = (wall_row.get("top_call") or [{}])[0].get("strike") if wall_row.get("top_call") else None
+        top_put = (wall_row.get("top_put") or [{}])[0].get("strike") if wall_row.get("top_put") else None
+        sentence = f"Dealers are carrying {gex:+.2f}B net gamma in SPY into the week"
+        if _num(top_call) and _num(top_put):
+            sentence += f", sellers dug in at {top_call:g} on the call side and {top_put:g} on the put side"
+        bits.append(sentence + ".")
+
+    if not bits:
+        return ""
+    return ('<h2>🔭 Week ahead outlook</h2><p>' + " ".join(html.escape(b) for b in bits) + "</p>"
+            '<p style="font-size:.8rem;color:#8b97a8">Built from the last verified observation of '
+            "each input — nothing here is invented ahead of the open.</p>")
+
 def render_opening_html(payload):
     blocks=payload.get("report_blocks") or {};escape=html.escape
     divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
@@ -1374,6 +1446,7 @@ def render_opening_html(payload):
     out=("<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
          "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"
+         +(_week_ahead_outlook_html(blocks) if payload.get("kind")=="morning" else "")
          +positioning_panel_html(blocks)+
          "<h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>")
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
