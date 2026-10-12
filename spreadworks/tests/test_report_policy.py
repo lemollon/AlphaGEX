@@ -12,7 +12,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
-                                   narrative_package_html, item_cell_html, narrative_setup_html)
+                                   narrative_package_html, item_cell_html, narrative_setup_html,
+                                   decision_brief_lines)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -758,6 +759,52 @@ def test_narrative_setup_html_reads_as_a_trigger_not_a_17_field_dump():
     assert 'SPY put credit spread' in html_out and 'Expiration preference' not in html_out
     cell=item_cell_html(observed([setup],'Registered plan and isolated minute watcher',NOW,NOW))
     assert 'SPY put credit spread' in cell and 'Source metadata' not in cell
+
+def test_decision_brief_flags_price_flow_conflict_and_names_the_clean_edge():
+    """Leron, 2026-10-12: "all the decision making information and why should be at the
+    beginning of every report, supporting information after" -- this is the exact walk-through
+    he assembled by hand reading a live report end to end (regime, per-symbol gamma character,
+    whether flow agrees or conflicts with the regime call, the one clean edge, Plan status),
+    now automated as the report's lead section instead of chat-only."""
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Defensive price confirmation')
+    blocks['gamma']['net_gex'] = item({'SPY': {'net_gex_b': 1.75}, 'QQQ': {'net_gex_b': -3.35}})
+    blocks['day_strategy']['thesis'] = item({
+        'SPY': {'read': 'upside pressure'}, 'QQQ': {'read': 'downside pressure'}})
+    blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_RICH', 'QQQ': 'PREMIUM_FAIR'})
+    blocks['morning_comparison']['regime_shift'] = item({
+        'SPY': {'status': 'HOLDING'}, 'QQQ': {'status': 'HOLDING'}})
+
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert 'leaning defensive' in text
+    assert 'SPY' in text and 'conflicts with the regime call' in text  # SPY flow fights the regime
+    assert 'QQQ' in text and 'agrees with the regime call' in text  # QQQ flow confirms it
+    # SPY is premium-rich AND conflicted -> no clean edge there; nothing else qualifies either.
+    assert "nothing yet -- price and flow are fighting each other" in text
+    assert 'holding since this morning' in text
+
+    # Flip it: no conflict anywhere, SPY premium-rich and pinning -> names SPY as the clean edge.
+    blocks['day_strategy']['thesis'] = item({
+        'SPY': {'read': 'downside pressure'}, 'QQQ': {'read': 'downside pressure'}})
+    lines2 = decision_brief_lines(blocks)
+    text2 = ' '.join(lines2)
+    assert 'agrees with the regime call' in text2
+    assert 'the one clean edge right now is SPY premium-selling' in text2
+
+    # No verdict yet -> nothing to synthesize, not a half-built section.
+    assert decision_brief_lines(empty_blocks()) == []
+
+def test_decision_brief_leads_both_renderers():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['gamma']['net_gex'] = item({'SPY': {'net_gex_b': 0.5}})
+    payload = {'generated_at': NOW.isoformat(), 'kind': 'intraday', 'report_blocks': blocks,
+               'report_completeness': 'INCOMPLETE'}
+    md = render_markdown(payload)
+    assert md.index('Decision brief') < md.index("Today’s mission")
+    html_out = render_opening_html(payload)
+    assert html_out.index('Decision brief') < html_out.index("Today’s mission")
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms

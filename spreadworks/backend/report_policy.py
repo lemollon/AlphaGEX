@@ -987,6 +987,73 @@ def section_meaning(name, block, mission_side=None):
         return _STATUS_MEANING.get(status, "Status is " + str(status) + "; apply the adaptation rules before acting.")
     return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
 
+def decision_brief_lines(blocks):
+    """The decision-first synthesis every report should open with, before any supporting
+    detail: the regime call, whether each symbol's flow agrees or conflicts with it, the one
+    clean edge if any, and whether the plan has changed since this morning. Leron, 2026-10-12:
+    "all the decision making information and why should be at the beginning of every report,
+    supporting information after" -- this is the exact walk-through he assembled by hand
+    reading a report end to end, now automated. Deterministic: every line traces to a real
+    field rendered in its own section below; conflict detection only fires when both readings
+    are real values, never inferred from a gap."""
+    verdict_item = (blocks.get("risk_on_defensive") or {}).get("verdict") or {}
+    verdict = verdict_item.get("value")
+    if not isinstance(verdict, str) or verdict_item.get("status") == "unavailable":
+        return []
+    regime_side = _side_label(verdict)
+    mood = {"defensive": "leaning defensive", "risk-on": "leaning bullish",
+            "neutral": "mixed, no clean lean"}[regime_side]
+    lines = [f"Regime: price is {mood}."]
+
+    net_val = ((blocks.get("gamma") or {}).get("net_gex") or {}).get("value") or {}
+    suit_val = ((blocks.get("premium_selling") or {}).get("suitability") or {}).get("value") or {}
+    day_thesis = ((blocks.get("day_strategy") or {}).get("thesis") or {}).get("value")
+    clean_edge, any_conflict = None, False
+    for sym in ("SPY", "QQQ"):
+        bits = []
+        row = net_val.get(sym)
+        gex = row.get("net_gex_b") if isinstance(row, dict) else None
+        pinning = None
+        if _num(gex):
+            pinning = gex > 0
+            bits.append("gamma is pinning it, a flat-day setup" if pinning
+                        else "gamma is amplifying it, a break can run" if gex < 0
+                        else "gamma is flat")
+        flow_read = None
+        sym_thesis = day_thesis.get(sym) if isinstance(day_thesis, dict) else None
+        if isinstance(sym_thesis, dict):
+            flow_read = sym_thesis.get("read")
+        conflict = False
+        if flow_read in ("upside pressure", "downside pressure") and regime_side != "neutral":
+            flow_side = "risk-on" if flow_read == "upside pressure" else "defensive"
+            if flow_side != regime_side:
+                conflict, any_conflict = True, True
+                bits.append(f"but flow is {flow_read} -- conflicts with the regime call")
+            else:
+                bits.append(f"flow ({flow_read}) agrees with the regime call")
+        suit = suit_val.get(sym)
+        if suit == "PREMIUM_RICH" and not conflict and pinning and clean_edge is None:
+            clean_edge = sym
+        if bits:
+            lines.append(f"{sym}: " + "; ".join(bits) + ".")
+
+    if clean_edge:
+        lines.append(f"What this means: the one clean edge right now is {clean_edge} "
+                      "premium-selling -- gamma is pinning it and nothing is fighting that read.")
+    elif any_conflict:
+        lines.append("What this means: nothing yet -- price and flow are fighting each other, "
+                      "that is the don't-commit signal.")
+    else:
+        lines.append("What this means: wait for the setups below to confirm -- no clean edge yet.")
+
+    rs = ((blocks.get("morning_comparison") or {}).get("regime_shift") or {}).get("value") or {}
+    statuses = [(rs.get(s) or {}).get("status") for s in ("SPY", "QQQ") if isinstance(rs.get(s), dict)]
+    if statuses and all(s == "HOLDING" for s in statuses):
+        lines.append("Plan status: holding since this morning -- nothing has actually changed.")
+    elif any(s == "CHANGED" for s in statuses):
+        lines.append("Plan status: changed since this morning -- worth a second look before trusting the old plan.")
+    return lines
+
 def market_story(blocks):
     """Three independent fragments (regime verdict, premium suitability, gamma read) joined
     into one paragraph. A blind join produced run-ons like "...UNAVAILABLE — no timestamped
@@ -1039,10 +1106,14 @@ def render_markdown(payload):
     from .report_contract import REQUIREMENTS
     blocks=payload["report_blocks"]
     title="☀️ Morning Options Sentiment" if payload.get("kind")=="morning" else "📡 Intraday Options Sentiment"
-    lines=["# "+title,ct_str(payload.get("generated_at"))+" · "+str(payload.get("kind","report"))+" · "+payload["report_completeness"],
+    lines=["# "+title,ct_str(payload.get("generated_at"))+" · "+str(payload.get("kind","report"))+" · "+payload["report_completeness"]]
+    brief=decision_brief_lines(blocks)
+    if brief:
+        lines.extend(["## 🧭 Decision brief"]+brief)
+    lines.extend([
         "## 🎯 Today’s mission",display(blocks["risk_on_defensive"]["verdict"]),
         "Day and forward plans are separate. Execute no strategy from historical or unqualified quotes; use the recorded triggers and conflicts below.",
-        "## 🚦 30-second scoreboard","| Decision | Current read |","|---|---|"]
+        "## 🚦 30-second scoreboard","| Decision | Current read |","|---|---|"])
     for label,read in scoreboard(blocks):lines.append("| "+label+" | "+read.replace("|","\\|").replace("\n"," ")+" |")
     lines.extend(["## Today vs forward","| Horizon | Thesis | Status |","|---|---|---|"])
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
@@ -1371,7 +1442,9 @@ def render_opening_html(payload):
         ("Best underlying / structure",cell("day_strategy","contracts")),
     ]
     rows="".join("<tr><th>"+escape(k)+"</th><td>"+v+"</td></tr>" for k,v in scoreboard_rows)
-    out=("<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
+    brief=decision_brief_lines(blocks)
+    out=(('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
+         +"<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
          "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"
          +positioning_panel_html(blocks)+
