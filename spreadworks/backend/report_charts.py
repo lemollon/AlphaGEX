@@ -6,6 +6,7 @@ from .report_policy import parse_clock, field_label
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from .report_producers import number
+from .report_contract import LIVE_MAX_AGE_SECONDS
 LOCK=threading.Lock()
 BG='#0B1220'; PANEL='#111827'; TEXT='#E5E7EB'; CYAN='#22D3EE'; GREEN='#34D399'; RED='#F87171'
 
@@ -23,7 +24,7 @@ def chart_png(kind,evidence):
             ts=parse_clock(row.get('source_timestamp') or row.get('chain_timestamp'))
             if not ts:return label+' — update clock unavailable'
             age=(generated-ts).total_seconds()
-            return label+(' LIVE NOW' if 0<=age<=90 else ' LAST KNOWN')+' '+ts.astimezone(ZoneInfo('America/Chicago')).strftime('%m/%d %H:%M:%S CT')
+            return label+(' LIVE NOW' if 0<=age<=LIVE_MAX_AGE_SECONDS else ' LAST KNOWN')+' '+ts.astimezone(ZoneInfo('America/Chicago')).strftime('%m/%d %H:%M:%S CT')
         if kind=='smile_term':
             for symbol,row in surfaces.items():
                 points=row.get('surface_points') or []

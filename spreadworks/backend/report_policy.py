@@ -12,6 +12,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from .report_contract import LIVE_MAX_AGE_SECONDS
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
@@ -144,7 +145,7 @@ def observed(value, source, stamp, now):
     age = (now - clock).total_seconds()
     return dict(value=value, source=source, source_timestamp=clock.isoformat(),
                 age_seconds=round(age, 1), confidence="MEDIUM",
-                status="live" if age <= 90 else "historical")
+                status="live" if age <= LIVE_MAX_AGE_SECONDS else "historical")
 
 def normalize_item(item, now):
     if not isinstance(item, dict):

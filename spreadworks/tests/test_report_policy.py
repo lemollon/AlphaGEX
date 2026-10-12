@@ -6,7 +6,7 @@ import pytest
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 from backend import full_options_report as report
-from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report
+from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
@@ -805,6 +805,22 @@ def test_decision_brief_leads_both_renderers():
     assert md.index('Decision brief') < md.index("Today’s mission")
     html_out = render_opening_html(payload)
     assert html_out.index('Decision brief') < html_out.index("Today’s mission")
+
+def test_live_threshold_is_ten_minutes_not_ninety_seconds():
+    """Leron, 2026-10-12: "i dont need them live at the exact instant as long as thier no
+    older than 10 mins." Raised LIVE_MAX_AGE_SECONDS from 90 to 600 -- the shared constant
+    report_policy.observed() and report_producers.observation() both key off, so a field
+    refreshed by the last ~5-minute collection cycle now reads "live" instead of "historical"
+    for display/completeness purposes. Deliberately NOT the same threshold as the
+    options-execution BBO freshness gates (report_ledger.qualify_package,
+    tradier_report_source's fill-sim check, intraday_watch.normalize_contract) -- those keep
+    their own independent <=90s check; a quote too old to trust for a simulated fill and a
+    report field too old to call "live" in the text are different risks."""
+    assert LIVE_MAX_AGE_SECONDS == 600
+    fresh_9min = observed(1.0, 'test', NOW - timedelta(seconds=540), NOW)
+    assert fresh_9min['status'] == 'live'
+    stale_11min = observed(1.0, 'test', NOW - timedelta(seconds=660), NOW)
+    assert stale_11min['status'] == 'historical'
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms
