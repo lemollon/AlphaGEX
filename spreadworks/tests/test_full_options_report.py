@@ -7,9 +7,24 @@ from sqlalchemy.pool import StaticPool
 from freezegun import freeze_time
 from PIL import Image
 from backend import report_producers as p,report_ledger as ledger,full_options_report as report
-from backend.report_contract import REQUIREMENTS,validate_rendered_report
+from backend.report_contract import REQUIREMENTS,validate_rendered_report,LIVE_MAX_AGE_SECONDS
 UTC=timezone.utc
 NOW=datetime(2026,10,2,15,0,tzinfo=UTC)
+
+def test_producer_observation_live_threshold_is_ten_minutes():
+    """Same fix as report_policy.observed() -- report_producers.observation() is the other,
+    more heavily-used wrapper that stamps live/historical on most report_blocks fields
+    (surface, gamma, flow metadata, breadth, macro, ...). Both must move together or
+    validate_report()'s own re-check of "live"-labeled items (which also keys off
+    LIVE_MAX_AGE_SECONDS) would reject a field the producer just correctly called live."""
+    assert LIVE_MAX_AGE_SECONDS == 600
+    fresh=p.observation(1.0,'test',(NOW-timedelta(seconds=540)).isoformat(),NOW)
+    assert fresh['status']=='live'
+    stale=p.observation(1.0,'test',(NOW-timedelta(seconds=660)).isoformat(),NOW)
+    assert stale['status']=='historical'
+    # The `delayed` override still forces historical regardless of age -- unchanged behavior.
+    delayed=p.observation(1.0,'test',NOW.isoformat(),NOW,delayed=True)
+    assert delayed['status']=='historical'
 
 @pytest.fixture
 def db(monkeypatch):

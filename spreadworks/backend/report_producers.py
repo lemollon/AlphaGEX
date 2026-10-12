@@ -6,6 +6,7 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 import requests
 from . import market_structure as ms
+from .report_contract import LIVE_MAX_AGE_SECONDS
 UTC=timezone.utc
 ET=ZoneInfo('America/New_York')
 HOLDINGS_URL='https://www.ssga.com/us/en/institutional/etfs/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spy.xlsx'
@@ -22,7 +23,7 @@ def observation(value, source, source_time, now, reason=None, confidence='MEDIUM
     age=(now-ts).total_seconds() if ts else None
     if value is None or ts is None or age is None or age<0:
         return unavailable(reason or 'No timestamped observation')
-    return {'value':value,'status':'live' if age<=90 and not delayed else 'historical',
+    return {'value':value,'status':'live' if age<=LIVE_MAX_AGE_SECONDS and not delayed else 'historical',
             'source':source,'source_timestamp':ts.isoformat(),'age_seconds':round(age,1),
             'confidence':confidence,'reason':reason}
 

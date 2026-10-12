@@ -233,7 +233,16 @@ REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "hist
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
 CONTRACT_VERSION = "2026-10-10.1"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
-LIVE_MAX_AGE_SECONDS = 90
+# Display/completeness freshness only -- how old a field's own observation may be before it
+# stops counting as "live" for the reader and for report_completeness. Leron, 2026-10-12: "i
+# dont need them live at the exact instant as long as thier no older than 10 mins" -- raised
+# from 90s. This is NOT the options-execution BBO freshness gate (qualify_package() in
+# report_ledger.py, the fill-sim check in tradier_report_source.py, and the ENTRY_READY
+# confirmation-evidence check in report_policy.py all keep their own independent <=90s
+# check -- RULES' "fresh BBO <=90s" still holds for anything that could become a simulated
+# fill). Those stay untouched on purpose: a quote being too old to trust for a trade and a
+# field being too old to call "live" in the report text are different risks.
+LIVE_MAX_AGE_SECONDS = 600
 CHART_FORMAT = "PNG"
 PROHIBITED_VISUALS = ("mermaid", "ascii", "decorative_ai")
 
