@@ -70,6 +70,28 @@ def test_invalid_provenance_values_and_clocks_cannot_be_live(corrupt):
     rejected=normalize_blocks(blocks,NOW)['surface']['atm_iv']
     assert rejected['status']=='unavailable' and rejected['reason']
 
+def test_designed_unavailable_field_does_not_block_completeness():
+    """Leron, 2026-10-12: "why does it always say incomplete" -- futures_context.basis is
+    unconditionally unavailable() every single report (full_options_report.py: same-time
+    futures-vs-cash basis cannot be computed, SPY is not substituted for SPX), which alone
+    made complete_live_data impossible forever, for every report kind, no matter how fresh
+    everything else was. DESIGNED_UNAVAILABLE excludes it from the completeness bar while
+    keeping it fully disclosed in unavailable_fields -- nothing is hidden, it just stops
+    permanently vetoing COMPLETE."""
+    blocks = {n: {f: item() for f in fs} for n, fs in REQUIREMENTS.items()}
+    blocks['futures_context']['basis'] = {'status': 'unavailable',
+        'reason': 'Exact same-time futures vs cash-index basis unavailable; SPY is not substituted for SPX'}
+    check = validate_report(blocks)
+    assert check['publishable']
+    assert check['complete_live_data']
+    assert 'futures_context.basis' in check['unavailable_fields']
+
+    # A genuinely missing field (not the one designed-permanent exception) still blocks it.
+    blocks['surface']['atm_iv'] = {'status': 'unavailable', 'reason': 'No verified observation'}
+    check2 = validate_report(blocks)
+    assert check2['publishable']
+    assert not check2['complete_live_data']
+
 def test_validator_rejects_nan_historical_age_and_boolean_live_age():
     blocks=empty_blocks();blocks['surface']['atm_iv']=dict(item(),age_seconds=True)
     assert not validate_report(blocks)['publishable']

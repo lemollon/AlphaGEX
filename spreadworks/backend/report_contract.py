@@ -237,6 +237,15 @@ LIVE_MAX_AGE_SECONDS = 90
 CHART_FORMAT = "PNG"
 PROHIBITED_VISUALS = ("mermaid", "ascii", "decorative_ai")
 
+# Fields that are permanently, structurally unavailable regardless of data quality -- kept in
+# the contract because the disclosure must stay explicit, but excluded from the completeness
+# bar below because no amount of good data can ever make them live. Leron, 2026-10-12: "why
+# does it always say incomplete" -- futures_context.basis is unconditionally unavailable()
+# every single report (full_options_report.py: "Exact same-time futures vs cash-index basis
+# unavailable; SPY is not substituted for SPX"), which alone made complete_live_data
+# impossible forever, for every report kind, regardless of how fresh everything else was.
+DESIGNED_UNAVAILABLE = {("futures_context", "basis")}
+
 def validate_report(blocks):
     """Validate actual structured output, including explicit per-field disclosures.
     
@@ -281,8 +290,9 @@ def validate_report(blocks):
                     errors.append(key + ": invalid confidence")
             else:
                 errors.append(key + ": invalid status")
+    blocking_unavailable = [k for k in unavailable if tuple(k.split(".", 1)) not in DESIGNED_UNAVAILABLE]
     return {"contract_version": CONTRACT_VERSION, "publishable": not errors,
-            "complete_live_data": not errors and not unavailable,
+            "complete_live_data": not errors and not blocking_unavailable,
             "errors": errors, "unavailable_fields": unavailable}
 
 def completeness(blocks, rendered):
