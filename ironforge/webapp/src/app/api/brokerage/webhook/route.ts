@@ -209,22 +209,36 @@ export async function POST(req: NextRequest) {
         )
       }
     } else if (statusByEvent[eventType] && snaptradeUserId) {
-      const newStatus = statusByEvent[eventType]
-      await customerExecute(
-        `UPDATE brokerage_connections SET status = $3, updated_at = now()
-           WHERE user_id = (SELECT id FROM users WHERE snaptrade_user_id = $1)
-             AND ($2::text IS NULL OR authorization_id = $2)`,
-        [snaptradeUserId, authorizationId, newStatus],
-      )
-      // If a connection broke/was removed and none remain active, clear the user flag.
-      await customerExecute(
-        `UPDATE users SET brokerage_connected = FALSE, updated_at = now()
-           WHERE snaptrade_user_id = $1
-             AND NOT EXISTS (
-               SELECT 1 FROM brokerage_connections bc
-                WHERE bc.user_id = users.id AND bc.status = 'active')`,
-        [snaptradeUserId],
-      )
+      // Same guard as the reactivating-events branch above: SnapTrade can send this
+      // event with a null/missing authorizationId. Without a specific id to match, the
+      // old `$2::text IS NULL OR authorization_id = $2` clause matched EVERY row for
+      // this user — removing connections the customer never asked to disconnect, not
+      // just the one SnapTrade meant. Skip rather than guess.
+      if (!authorizationId) {
+        console.error(
+          '[brokerage/webhook] missing authorizationId on',
+          eventType,
+          '— skipping update for user',
+          snaptradeUserId,
+        )
+      } else {
+        const newStatus = statusByEvent[eventType]
+        await customerExecute(
+          `UPDATE brokerage_connections SET status = $3, updated_at = now()
+             WHERE user_id = (SELECT id FROM users WHERE snaptrade_user_id = $1)
+               AND authorization_id = $2`,
+          [snaptradeUserId, authorizationId, newStatus],
+        )
+        // If a connection broke/was removed and none remain active, clear the user flag.
+        await customerExecute(
+          `UPDATE users SET brokerage_connected = FALSE, updated_at = now()
+             WHERE snaptrade_user_id = $1
+               AND NOT EXISTS (
+                 SELECT 1 FROM brokerage_connections bc
+                  WHERE bc.user_id = users.id AND bc.status = 'active')`,
+          [snaptradeUserId],
+        )
+      }
     }
   } catch (e) {
     console.error('[brokerage/webhook] update failed:', eventType, e)
