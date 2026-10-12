@@ -4,7 +4,8 @@ REQUIREMENTS = {
         "verdict",
         "evidence",
         "conflicts",
-        "change_vs_baselines"
+        "change_vs_baselines",
+        "regime_label"
     ],
     "premium_selling": [
         "suitability",
@@ -164,7 +165,8 @@ REQUIREMENTS = {
         "chop_status",
         "stall_risk",
         "setup_status",
-        "regime_shift"
+        "regime_shift",
+        "regime_label_shift"
     ],
     "range_stall": [
         "chop_low",
@@ -231,7 +233,7 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-10.1"
+CONTRACT_VERSION = "2026-10-12.2"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 # Display/completeness freshness only -- how old a field's own observation may be before it
 # stops counting as "live" for the reader and for report_completeness. Leron, 2026-10-12: "i

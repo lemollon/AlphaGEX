@@ -386,9 +386,30 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     from .report_policy import HOLDING_PERIODS, business_dates
     holding_dates=business_dates(now.astimezone(CT).date(),21)
     put('event_study','holding_period_context',{'periods':{str(n):{'sessions':n,'label':label,'measurement':'Close-to-close underlying return; not option P&L','illustrative_exit_date':holding_dates[n].isoformat()} for n,label in HOLDING_PERIODS.items()},'comparison_rule':'Compare 10 versus 20 sessions only within the same verified entry cohort, costs and sample; unverified performance figures are not asserted as measured returns.'},source='Trading-session horizon definition')
+    # Leron, 2026-10-12: "come out and say if its risk on day, choppy day, defensive day" -- a
+    # flat label, not a hedge. Same risk/defensive logic the verdict text already used; CHOPPY
+    # is the existing "mixed" state (SPY/QQQ returns disagree in sign), just named the way he
+    # actually thinks about it. Computed here, ahead of the morning_comparison loop below, so
+    # today's label can be compared against the stored morning/prior-hour label.
+    regime_label=None
+    if 'SPY' in relative and 'QQQ' in relative:
+        risk=all(relative[s]>0 for s in ('SPY','QQQ'))
+        defensive=all(relative[s]<0 for s in ('SPY','QQQ'))
+        regime_label='RISK-ON' if risk else 'DEFENSIVE' if defensive else 'CHOPPY'
     for field in REQUIREMENTS['morning_comparison']:
+        if field=='regime_label_shift':
+            morning_label=(core.get('baseline_blocks') or {}).get('regime_label')
+            prior_label=(core.get('prior_blocks') or {}).get('regime_label')
+            current_label=regime_label
+            put('morning_comparison',field,{'morning_label':morning_label,'prior_hour_label':prior_label,'current_label':current_label,
+                'changed_since_morning':bool(morning_label and current_label and morning_label!=current_label),
+                'changed_since_prior_hour':bool(prior_label and current_label and prior_label!=current_label)} if current_label else None,
+                source='Current regime label vs morning/prior-hour stored report labels',ts=cross_ts,
+                reason='No current regime label: SPY/QQQ returns unavailable')
+            continue
         values={}
         for symbol,row in comparison.items():
+            if symbol=='VIX':continue  # VIX rides in change_vs_baselines for contradiction-calling only; SPY/QQQ-shaped fields here never had a VIX row
             old=((core.get('baseline_blocks') or {}).get(field) or {}).get(symbol)
             prior=((core.get('prior_blocks') or {}).get(field) or {}).get(symbol)
             if field=='morning_timestamp':values[symbol]=row.get('morning_timestamp')
@@ -448,12 +469,10 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     # which silently dropped this entire headline field whenever either quote aged past 90s
     # mid-collection, even though every other section downgrades gracefully to LAST KNOWN instead
     # of disappearing. cross_ts still carries the real timestamp, so staleness is labeled normally.
-    if 'SPY' in relative and 'QQQ' in relative:
-        risk=all(relative[s]>0 for s in ('SPY','QQQ'))
-        defensive=all(relative[s]<0 for s in ('SPY','QQQ'))
-        verdict='Risk-on price confirmation' if risk else 'Defensive price confirmation' if defensive else 'Mixed price confirmation'
+    if regime_label:
+        verdict={'RISK-ON':'Risk-on price confirmation','DEFENSIVE':'Defensive price confirmation','CHOPPY':'Mixed price confirmation'}[regime_label]
         inputs={'returns':relative,'breadth':breadth if breadth.get('covered') else None,'flow':'Side estimates; not opening/closing inventory'}
-        for field,value in {'verdict':verdict,'evidence':inputs,'conflicts':'Sector, breadth, volatility and flow may diverge; verdict is conditional price evidence, not a prediction','change_vs_baselines':comparison}.items():put('risk_on_defensive',field,value,source='Deterministic interpretation of current observed returns',ts=cross_ts)
+        for field,value in {'verdict':verdict,'evidence':inputs,'conflicts':'Sector, breadth, volatility and flow may diverge; verdict is conditional price evidence, not a prediction','change_vs_baselines':comparison,'regime_label':regime_label}.items():put('risk_on_defensive',field,value,source='Deterministic interpretation of current observed returns',ts=cross_ts)
     for field in REQUIREMENTS['premium_selling']:
         values={};stamps=[]
         for s,row in surface.items():
@@ -567,6 +586,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
             return raw.get('net_gex_b') if isinstance(raw,dict) else raw if isinstance(raw,(int,float)) else None
         result['regime_shift']={symbol:{'net_gex_b':_net_gex_b(symbol),'control_side':control_side.get(symbol),
             'suitability':suitability.get(symbol)} for symbol in ('SPY','QQQ')}
+        result['regime_label']=(b.get('risk_on_defensive',{}).get('regime_label') or {}).get('value')
         return result
     core.update(comparison=comparison,prior_comparison=prior_comparison,baseline_blocks=comparable(morning),prior_blocks=comparable(prior))
     blocks=report_blocks(core,context,plan,runtime,paper,context['study'],comparison,events,now)

@@ -26,7 +26,8 @@ def item(value=1,age=0):
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     assert len(REQUIREMENTS)==33
-    assert sum(map(len,REQUIREMENTS.values()))==243
+    # 243 + regime_label (risk_on_defensive) + regime_label_shift (morning_comparison), 2026-10-12.
+    assert sum(map(len,REQUIREMENTS.values()))==245
     assert 'regime_shift' in REQUIREMENTS['morning_comparison']
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
@@ -923,6 +924,64 @@ def test_decision_brief_leads_both_renderers():
     assert md.index('Decision brief') < md.index("Today’s mission")
     html_out = render_opening_html(payload)
     assert html_out.index('Decision brief') < html_out.index("Today’s mission")
+
+def test_decision_brief_flat_regime_label_no_shift():
+    """Leron, 2026-10-12: "come out and say if its risk on day, choppy day, defensive day" --
+    with a real regime_label and no recorded shift, the opening line is the bare flat label,
+    not the old hedge phrasing."""
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['regime_label'] = item('RISK-ON')
+    lines = decision_brief_lines(blocks)
+    assert lines[0] == 'RISK-ON.'
+
+def test_decision_brief_flat_regime_label_changed_since_morning():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Mixed signal')
+    blocks['risk_on_defensive']['regime_label'] = item('CHOPPY')
+    blocks['morning_comparison']['regime_label_shift'] = item({
+        'morning_label': 'RISK-ON', 'prior_hour_label': 'RISK-ON', 'current_label': 'CHOPPY',
+        'changed_since_morning': True, 'changed_since_prior_hour': True})
+    lines = decision_brief_lines(blocks)
+    assert lines[0] == 'CHOPPY -- changed from RISK-ON since this morning.'
+
+def test_decision_brief_flat_regime_label_changed_since_prior_hour_only():
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Defensive price confirmation')
+    blocks['risk_on_defensive']['regime_label'] = item('DEFENSIVE')
+    blocks['morning_comparison']['regime_label_shift'] = item({
+        'morning_label': 'DEFENSIVE', 'prior_hour_label': 'CHOPPY', 'current_label': 'DEFENSIVE',
+        'changed_since_morning': False, 'changed_since_prior_hour': True})
+    lines = decision_brief_lines(blocks)
+    assert lines[0] == 'DEFENSIVE -- changed from CHOPPY last hour.'
+
+def test_decision_brief_without_regime_label_falls_back_to_hedged_mood():
+    """Old-shape blocks (or regime_label left unavailable) must keep the pre-existing hedged
+    phrasing, and regime_side must still resolve off the verdict text so every other branch
+    (flow-conflict detection, the VIX-contradiction block) is unaffected."""
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Defensive price confirmation')
+    lines = decision_brief_lines(blocks)
+    assert lines[0] == 'Regime: price is leaning defensive.'
+
+def test_decision_brief_regime_label_mapping_still_gates_vix_contradiction():
+    """regime_label='RISK-ON' must map to regime_side='risk-on' exactly like the old
+    verdict-text parse did -- the VIX-contradiction block (gated on regime_side != 'neutral')
+    must still fire with an explicit regime_label present, not just the legacy verdict text."""
+    blocks = empty_blocks()
+    blocks['risk_on_defensive']['verdict'] = item('Risk-on price confirmation')
+    blocks['risk_on_defensive']['regime_label'] = item('RISK-ON')
+    blocks['gamma']['net_gex'] = item({'SPY': {'net_gex_b': 1.75}, 'QQQ': {'net_gex_b': 0.5}})
+    blocks['day_strategy']['thesis'] = item({
+        'SPY': {'read': 'upside pressure'}, 'QQQ': {'read': 'upside pressure'}})
+    blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_RICH', 'QQQ': 'PREMIUM_FAIR'})
+    blocks['risk_on_defensive']['change_vs_baselines'] = item({'VIX': {
+        'price_change_pct': 5.0, 'baseline_session_matches': True}})
+    lines = decision_brief_lines(blocks)
+    text = ' '.join(lines)
+    assert lines[0] == 'RISK-ON.'
+    assert 'VIX: up +5.0% while price rallies -- hedging demand against the move, a real contradiction.' in text
+    assert 'the one clean edge right now is SPY' not in text
 
 def test_live_threshold_is_ten_minutes_not_ninety_seconds():
     """Leron, 2026-10-12: "i dont need them live at the exact instant as long as thier no
