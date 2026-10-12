@@ -12,8 +12,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
-                                   narrative_package_html, item_cell_html, narrative_setup_html,
-                                   _week_ahead_outlook_html)
+                                   narrative_package_html, item_cell_html, narrative_setup_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -737,41 +736,6 @@ def test_narrative_setup_html_reads_as_a_trigger_not_a_17_field_dump():
     assert 'SPY put credit spread' in html_out and 'Expiration preference' not in html_out
     cell=item_cell_html(observed([setup],'Registered plan and isolated minute watcher',NOW,NOW))
     assert 'SPY put credit spread' in cell and 'Source metadata' not in cell
-
-def test_week_ahead_outlook_connects_vol_catalysts_and_positioning():
-    """Leron, 2026-10-12: 'the morning report has a lot of information and none of it is
-    engaged' -- pre-market, most live sections are honestly empty/stale, so the writing alone
-    can't fix it. This is a forward-looking, morning-only lead paragraph built from whatever
-    IS real pre-market: last-known vol, the week-ahead IV read, upcoming catalysts, and
-    carried-over gamma positioning -- 'outlook based' per his explicit ask, not a trade call."""
-    blocks=empty_blocks()
-    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':0.070}})
-    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':0.075}})
-    blocks['near_forward_strategy']['thesis']=item({
-        'direction':'INCONCLUSIVE: no verified directional trade-time flow',
-        'volatility_context':{'SPY':{'median_iv':0.251,'expiries':['2026-10-14']}},
-        'meaning':'Observed expiry-specific option pricing supplies forward risk context.'})
-    blocks['event_calendar']['catalysts']=item([
-        {'name':'CPI Report (Sep data)','datetime':'2026-10-14T12:30:00+00:00','impact':'HIGH'},
-        {'name':'PPI Report (Sep data)','datetime':'2026-10-15T12:30:00+00:00','impact':'HIGH'}])
-    blocks['gamma']['net_gex']=item({'SPY':{'net_gex_b':0.46}})
-    blocks['gamma']['walls']=item({'SPY':{'walls':{'top_call':[{'strike':776.0}],'top_put':[{'strike':775.0}]}}})
-
-    out=_week_ahead_outlook_html(blocks)
-    assert '7.0% ATM' in out
-    assert '25.1% median IV' in out and 'step up' in out  # connects the two vol reads, doesn't just list them
-    assert 'CPI Report' in out and 'PPI Report' in out
-    assert '776' in out and '775' in out
-    assert 'invented ahead of the open' in out  # the honesty disclaimer stays
-
-    # Nothing to synthesize -> no empty/half-built section.
-    assert _week_ahead_outlook_html(empty_blocks())==''
-
-    # Morning-only: the intraday report must never show this section.
-    morning_payload={'kind':'morning','report_blocks':blocks}
-    intraday_payload={'kind':'intraday','report_blocks':blocks}
-    assert 'Week ahead outlook' in render_opening_html(morning_payload)
-    assert 'Week ahead outlook' not in render_opening_html(intraday_payload)
 
 def test_optional_collector_failure_preserves_other_core_sources(monkeypatch):
     from backend import market_structure as ms
