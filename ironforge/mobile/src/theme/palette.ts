@@ -148,10 +148,6 @@ export const light: ColorTokens = {
   tabBar: '#FFFFFF',
 }
 
-export function getPalette(scheme: Scheme): ColorTokens {
-  return scheme === 'light' ? light : dark
-}
-
 /**
  * Resolve an `AppearancePreference` + the OS's reported scheme into the scheme the
  * app should actually render. 'system' with an unknown/null OS scheme falls back to
@@ -191,8 +187,8 @@ export function resolveScheme(
  * src/components/ui.tsx's OutcomeBadge — the one real caller that feeds a dark
  * agent-color hex (outcomeColor.auto = color.spark, tokens.ts) through resolveTone().
  * Nothing in this codebase feeds `color.accent`/`color.accentText` through
- * resolveTone (they're read directly off the active `getPalette(scheme)` result,
- * never off a dark-canonical function return), so that collision specifically
+ * resolveTone (they're read directly off the active `scheme === 'light' ? light : dark`
+ * result, never off a dark-canonical function return), so that collision specifically
  * remains unexercised — don't add a resolveTone(dark.accent, ...) test/call
  * expecting light.accent back.
  */

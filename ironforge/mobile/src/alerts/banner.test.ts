@@ -11,7 +11,6 @@ function agent(bot: string, overrides: Partial<LiveAgent> = {}): LiveAgent {
     state: null,
     account: null,
     trade: null,
-    stats: null,
     error: null,
     ...overrides,
   }

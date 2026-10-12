@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { color as darkTokens } from './tokens'
-import { dark, light, getPalette, resolveScheme, resolveTone, type ColorTokens } from './palette'
+import { dark, light, resolveScheme, resolveTone, type ColorTokens } from './palette'
 
 const TOKEN_KEYS: (keyof ColorTokens)[] = [
   'bg',
@@ -138,15 +138,6 @@ describe('light palette WCAG AA text contrast (>= 4.5:1 on white card)', () => {
   it('accentText also clears 4.5:1 against --accent-soft, the worst-case tinted badge background', () => {
     const accentSoft = '#FFF0E6'
     expect(contrastRatio(light.accentText, accentSoft)).toBeGreaterThanOrEqual(4.5)
-  })
-})
-
-describe('getPalette', () => {
-  it('returns dark for scheme "dark"', () => {
-    expect(getPalette('dark')).toBe(dark)
-  })
-  it('returns light for scheme "light"', () => {
-    expect(getPalette('light')).toBe(light)
   })
 })
 
