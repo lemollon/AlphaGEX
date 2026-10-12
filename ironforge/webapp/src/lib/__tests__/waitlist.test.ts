@@ -47,4 +47,8 @@ describe('waitlist validation', () => {
   it('the 5 approved ranges are the enum', () => {
     expect(CAPITAL_RANGES.map((r) => r.value)).toEqual(['under_5000', '5000_10000', '10000_25000', '25000_50000', '50000_plus'])
   })
+  it('accepts accented names — regression test, same bug as ironforge/mobile', () => {
+    expect(validateWaitlist({ ...valid, firstName: 'José', lastName: 'François' }).ok).toBe(true)
+    expect(validateWaitlist({ ...valid, firstName: 'Müller', lastName: "O'Neill" }).ok).toBe(true)
+  })
 })

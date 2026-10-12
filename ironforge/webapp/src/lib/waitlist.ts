@@ -26,7 +26,14 @@ export const CAPITAL_RANGES = [
 export type CapitalRange = (typeof CAPITAL_RANGES)[number]['value']
 const CAPITAL_VALUES: readonly string[] = CAPITAL_RANGES.map((r) => r.value)
 
-const NAME_RE = /^[A-Za-z][A-Za-z '-]{0,59}$/
+// \p{L} matches any letter in any script (José, François, Müller), not just A-Z — an
+// ASCII-only class rejected real, common names. Mirrors ironforge/mobile's
+// src/waitlist/validation.ts NAME_RE exactly; keep the two in sync if this changes.
+// Built via the RegExp constructor rather than a /u-flagged literal: this project's
+// tsconfig targets es5, and tsc (TS1501) refuses a `u` flag on a regex LITERAL below
+// es2015 even though the flag itself works fine at runtime on any supported Node
+// version — the constructor form isn't subject to that literal-syntax check.
+const NAME_RE = new RegExp("^[\\p{L}][\\p{L} '-]{0,59}$", 'u')
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export interface WaitlistRaw {

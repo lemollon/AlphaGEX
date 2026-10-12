@@ -97,3 +97,32 @@ describe('POST /api/brokerage/webhook — CONNECTION_FIXED/ADDED/UPDATED', () =>
     expect(connUpdate!.sql).not.toContain('IS NULL OR')
   })
 })
+
+describe('POST /api/brokerage/webhook — CONNECTION_DELETED/REMOVED', () => {
+  it('CONNECTION_DELETED with an authorizationId only marks that one row removed', async () => {
+    await POST(
+      webhookRequest({
+        eventType: 'CONNECTION_DELETED',
+        userId: 'st-user-4',
+        brokerageAuthorizationId: 'auth-4',
+      }),
+    )
+    const connUpdate = executed.find((e) => e.sql.includes('UPDATE brokerage_connections'))
+    expect(connUpdate).toBeDefined()
+    expect(connUpdate!.sql).toContain('authorization_id = $2')
+    expect(connUpdate!.sql).not.toContain('IS NULL OR')
+    expect(connUpdate!.params).toEqual(['st-user-4', 'auth-4', 'removed'])
+  })
+
+  it('CONNECTION_REMOVED with a missing authorizationId does NOT run a blanket update (regression: previously flipped every connection for the user to removed)', async () => {
+    const res = await POST(
+      webhookRequest({
+        eventType: 'CONNECTION_REMOVED',
+        userId: 'st-user-5',
+        // brokerageAuthorizationId intentionally omitted
+      }),
+    )
+    expect(res.status).toBe(200)
+    expect(executed).toHaveLength(0)
+  })
+})
