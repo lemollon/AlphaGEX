@@ -67,12 +67,6 @@ export function agentAccent(bot: string): string {
   return agentColor[bot] ?? color.accent
 }
 
-/** Green for gains, red for losses — never the reverse, never agent colour. */
-export function pnlColor(n: number | null | undefined): string {
-  if (n == null) return color.textDim
-  return n >= 0 ? color.pos : color.neg
-}
-
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 } as const
 
 // 10.4 redesign (handoff/ironforge-10.4-design-spec.md §1 "Radii / spacing / shape"):
