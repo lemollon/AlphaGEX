@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare, LocateFixed } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare, LocateFixed, Newspaper } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -21,6 +21,7 @@ const TalonPage = lazy(() => import('./pages/TalonPage'));
 const WallScannerPage = lazy(() => import('./pages/WallScannerPage'));
 const OpportunityPage = lazy(() => import('./pages/OpportunityPage'));
 const ReflexPage = lazy(() => import('./pages/ReflexPage'));
+const MarketUpdatePage = lazy(() => import('./pages/MarketUpdatePage'));
 
 import useCandles from './hooks/useCandles';
 import useGex from './hooks/useGex';
@@ -201,6 +202,7 @@ function NavBar() {
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
           <RouteBtn to="/reflex"           icon={<ActivitySquare size={14} />} label="Reflex" />
+          <RouteBtn to="/market-update"    icon={<Newspaper size={14} />} label="Market Update" />
         </nav>
       </div>
 
@@ -431,6 +433,7 @@ export default function App() {
             <Route path="/bots/:bot" element={<BotDashboard />} />
             <Route path="/tsunami" element={<TsunamiPage />} />
             <Route path="/reflex" element={<ReflexPage />} />
+            <Route path="/market-update" element={<MarketUpdatePage />} />
           </Routes>
         </Suspense>
       </div>
