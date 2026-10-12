@@ -21,7 +21,6 @@ function agent(bot: string, value: number | null, mode: 'paper' | 'production'):
       disclosure: null,
     },
     trade: null,
-    stats: null,
     error: null,
   }
 }
