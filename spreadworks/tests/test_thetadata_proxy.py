@@ -487,6 +487,70 @@ def test_concurrent_failures_extend_cooldown_after_first_eviction(monkeypatch):
     assert holder._streak == 2
     assert holder._next_build_at == 1021.0
 
+
+# --- 2026-10-12 relogin floor lowered 30s -> 5s (see RELOGIN_MIN_SECONDS comment in app.py) ---
+
+
+def test_default_relogin_min_seconds_is_five_not_thirty():
+    """A single auth hiccup must now cost ~5s, not the old 30s floor that ate
+    most of fetch_trade_quote_flow's 40s collection budget."""
+    assert proxy.RELOGIN_MIN_SECONDS == 5.0
+
+
+def test_single_eviction_sets_a_five_second_cooldown_not_thirty(monkeypatch):
+    clock = {"t": 2000.0}
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: clock["t"])
+    holder = proxy._ClientHolder()
+    holder._client = object()
+    holder.cache_clear()
+    assert holder._streak == 1
+    delta = holder._next_build_at - clock["t"]
+    assert 4.9 <= delta <= 5.1
+
+
+def test_ladder_climbs_from_the_new_five_second_floor_and_still_caps_at_max(monkeypatch):
+    clock = {"t": 3000.0}
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: clock["t"])
+    holder = proxy._ClientHolder()
+    holder._client = object()
+    for expected_wait in (5, 10, 20, 40):          # same ladder shape, new floor
+        holder.cache_clear()
+        assert holder._next_build_at - clock["t"] == expected_wait
+        clock["t"] += expected_wait
+    for _ in range(10):                            # keep failing; must still cap
+        holder.cache_clear()
+    assert holder._next_build_at - clock["t"] == proxy.RELOGIN_MAX_SECONDS
+
+
+def test_request_during_the_new_shorter_cooldown_still_gets_503(monkeypatch):
+    """The cooldown-rejection mechanism itself is untouched -- only the
+    constant feeding its delay changed."""
+    clock = {"t": 4000.0}
+    monkeypatch.setattr(proxy.time, "monotonic", lambda: clock["t"])
+    holder = proxy._ClientHolder()
+    holder._client = object()
+    holder.cache_clear()
+    clock["t"] += 1.0  # still inside the ~5s cooldown
+    with pytest.raises(HTTPException) as exc:
+        holder()
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "ThetaData session recovery cooldown"
+
+
+def test_relogin_min_seconds_env_var_still_overrides_the_new_default(monkeypatch):
+    """THETADATA_RELOGIN_MIN_SECONDS always overrode the floor -- confirm it
+    still overrides the new 5s default the same way it overrode the old 30s one."""
+    import importlib
+    monkeypatch.setenv("THETADATA_RELOGIN_MIN_SECONDS", "12")
+    try:
+        importlib.reload(proxy)
+        assert proxy.RELOGIN_MIN_SECONDS == 12.0
+    finally:
+        monkeypatch.delenv("THETADATA_RELOGIN_MIN_SECONDS", raising=False)
+        importlib.reload(proxy)
+        assert proxy.RELOGIN_MIN_SECONDS == 5.0
+
+
 def test_permission_denied_and_no_data_keep_the_client(monkeypatch):
     class EntitlementClient:
         def stock_snapshot_ohlc(self, **kwargs):

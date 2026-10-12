@@ -1213,12 +1213,19 @@ def render_markdown(payload):
     lines.append("## 🧮 If/then day plan")
     lines.extend("- **"+k+"**: "+v for k,v in if_then_day_plan(blocks))
     mission_side=_side_label((blocks["risk_on_defensive"]["verdict"] or {}).get("value"))
+    # Leron, repeatedly: "a long boring ass scroll of data that means nothing to me." Every
+    # section already gets a narrative summary (SECTION_SUMMARY_SECTIONS covers all 33) -- the
+    # raw field:value dump that used to run first, for every field of every section, was
+    # redundant with it and is exactly what made this unreadable. The real numbers are already
+    # woven into section_summary's sentence; full per-field detail remains available via the
+    # /data JSON endpoint for anyone auditing a specific field.
     for name,fields in REQUIREMENTS.items():
         lines.append("### "+name.replace("_"," ").title())
-        for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
         if name in SECTION_SUMMARY_SECTIONS:
             lines.append("Section summary: "+section_summary(name,blocks[name]))
             lines.append("What it means for the day: "+section_meaning(name,blocks[name],mission_side))
+        else:
+            for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
     for name,url in (payload.get("chart_urls") or {}).items():lines.append("!["+name.replace("_"," ").title()+"]("+url+")")
     lines.extend(['**BOTTOM LINE**',
         'Regime: '+display(blocks['risk_on_defensive']['verdict']),

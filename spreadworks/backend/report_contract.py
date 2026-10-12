@@ -367,7 +367,7 @@ def validate_rendered_report(payload):
     errors = list(check["errors"])
     markdown = payload.get("report_markdown") or ""
     now = datetime.now(timezone.utc)
-    from .report_policy import policy_identity, validate_semantics
+    from .report_policy import policy_identity, validate_semantics, SECTION_SUMMARY_SECTIONS
     if payload.get("report_policy"):
         if payload["report_policy"] != policy_identity():
             errors.append("Report policy version/hash mismatch")
@@ -387,7 +387,13 @@ def validate_rendered_report(payload):
         section = re.split(r"(?m)^#{1,6}\s", tail, maxsplit=1)[0]
         for field in fields:
             item = blocks.get(name, {}).get(field, {})
-            if field not in section:
+            # A section in SECTION_SUMMARY_SECTIONS renders a narrative summary instead of a
+            # per-field bullet, by design (render_markdown / report_view's fields_html branch) --
+            # the literal field NAME is no longer expected to appear as text. Only sections that
+            # still fall through to the raw-field-bullet branch (none today; a defensive fallback
+            # for any future section added to REQUIREMENTS without a matching narrative builder)
+            # are held to this literal-presence check.
+            if name not in SECTION_SUMMARY_SECTIONS and field not in section:
                 errors.append(name + "." + field + ": missing rendered field")
             if item.get("status") == "live":
                 try:
