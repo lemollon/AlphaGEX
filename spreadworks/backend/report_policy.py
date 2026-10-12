@@ -533,18 +533,30 @@ def _narrative_premium_selling(block):
     return " ".join(bits) if bits else None
 
 def _narrative_flow(block):
+    """Live bug, found 2026-10-12 (Leron: "why is flow not working"): calls_bought/calls_sold/
+    puts_bought/puts_sold's real per-symbol shape is {bucket: {'contracts': N, 'premium': P}},
+    not {bucket: premium} -- this summed dicts with _num() (always False for a dict), got 0
+    for every symbol, and silently fell back to the generic mechanical summary. Fixed by
+    pulling each bucket's 'premium' key before summing."""
     conf_val = (block.get("price_vix_confirmation") or {}).get("value")
     cb = (block.get("calls_bought") or {}).get("value") or {}
     cs = (block.get("calls_sold") or {}).get("value") or {}
     pb = (block.get("puts_bought") or {}).get("value") or {}
     ps = (block.get("puts_sold") or {}).get("value") or {}
+    def _bucket_premium(v):
+        if _num(v):
+            return v
+        if isinstance(v, dict) and _num(v.get("premium")):
+            return v.get("premium")
+        return 0
+
     bits = []
     for sym in ("SPY", "QQQ"):
         totals = {}
         for label, src in (("calls bought", cb), ("calls sold", cs), ("puts bought", pb), ("puts sold", ps)):
             row = src.get(sym) if isinstance(src, dict) else None
             if isinstance(row, dict):
-                total = sum(v for v in row.values() if _num(v))
+                total = sum(_bucket_premium(v) for v in row.values())
                 if total:
                     totals[label] = total
         if not totals:
@@ -1055,6 +1067,45 @@ def decision_brief_lines(blocks):
         lines.append("Plan status: changed since this morning -- worth a second look before trusting the old plan.")
     return lines
 
+def _what_changed_today_html(blocks):
+    """What's moved since this morning's baseline and since the prior hourly checkpoint.
+    Leron, 2026-10-12: "share what has changed of the course of the day from morning to the
+    prior hourly reports." Pulls the SAME comparison data horizon_comparison.changes already
+    computes (market_comparison() run against both the morning and prior-hour baselines) --
+    no new data, just a narrative read of it. If a symbol has no comparable baseline yet (the
+    morning report itself, or the first hourly checkpoint of the day), it's skipped rather
+    than showing a fabricated zero."""
+    changes = ((blocks.get("horizon_comparison") or {}).get("changes") or {}).get("value") or {}
+    morning_changes = changes.get("morning") if isinstance(changes.get("morning"), dict) else {}
+    prior_changes = changes.get("prior_hour") if isinstance(changes.get("prior_hour"), dict) else {}
+    regime_shift = ((blocks.get("morning_comparison") or {}).get("regime_shift") or {}).get("value") or {}
+
+    lines = []
+    for sym in ("SPY", "QQQ"):
+        bits = []
+        m = morning_changes.get(sym)
+        if isinstance(m, dict) and _num(m.get("price_change_pct")):
+            pct = m["price_change_pct"]
+            when = ct_str(m.get("morning_timestamp")).split(" ", 1)[-1] if m.get("morning_timestamp") else "this morning"
+            if _num(m.get("morning_spot")) and _num(m.get("current_spot")):
+                bits.append(f"{pct:+.2f}% since the {when} baseline ({m['morning_spot']:g} → {m['current_spot']:g})")
+            else:
+                bits.append(f"{pct:+.2f}% since the {when} baseline")
+        p = prior_changes.get(sym)
+        if isinstance(p, dict) and _num(p.get("price_change_pct")):
+            pct = p["price_change_pct"]
+            when = ct_str(p.get("morning_timestamp")).split(" ", 1)[-1] if p.get("morning_timestamp") else "the prior"
+            bits.append(f"{pct:+.2f}% since the {when} checkpoint")
+        rs = regime_shift.get(sym)
+        if isinstance(rs, dict) and rs.get("status") == "CHANGED" and rs.get("changed"):
+            bits.append("positioning shifted: " + "; ".join(rs["changed"]))
+        if bits:
+            lines.append(f"{sym}: " + ", ".join(bits) + ".")
+
+    if not lines:
+        return ""
+    return '<h2>\U0001f4c8 What changed today</h2><p>' + " ".join(html.escape(l) for l in lines) + "</p>"
+
 def market_story(blocks):
     """Three independent fragments (regime verdict, premium suitability, gamma read) joined
     into one paragraph. A blind join produced run-ons like "...UNAVAILABLE — no timestamped
@@ -1523,6 +1574,7 @@ def render_opening_html(payload):
     brief=decision_brief_lines(blocks)
     out=(('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
          +(_week_ahead_outlook_html(blocks) if payload.get("kind")=="morning" else "")
+         +_what_changed_today_html(blocks)
          +"<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
          "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"

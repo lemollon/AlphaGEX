@@ -13,7 +13,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
-                                   decision_brief_lines, _week_ahead_outlook_html)
+                                   decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -243,6 +243,32 @@ def test_section_summary_narrative_builders_cover_the_money_sections():
     blocks['day_strategy']['status']=item('ENTRY_READY')
     summary=section_summary('day_strategy',blocks['day_strategy'])
     assert 'every box is checked' in summary
+
+def test_narrative_flow_reads_the_real_nested_bucket_shape():
+    """Live bug, found 2026-10-12 (Leron: "why is flow not working"): calls_bought/calls_sold/
+    puts_bought/puts_sold's real per-symbol shape (confirmed against a live report) is
+    {bucket: {'contracts': N, 'premium': P}} -- a dict per bucket, not a flat premium number.
+    _narrative_flow summed row.values() through _num() directly, which is always False for a
+    dict, so every symbol's total came out 0 and the section silently fell back to the generic
+    mechanical summary (provider/timestamp metadata, no actual flow read) on every real report.
+    This exact shape was missing from test_section_summary_narrative_builders_cover_the_money_
+    sections above, which is how it shipped unnoticed."""
+    block={'calls_bought':item({'SPY':{'0dte':{'contracts':2939,'premium':119089.0},
+                                         '1_5dte':{'contracts':7,'premium':2062.0}},
+                                 'QQQ':{'0dte':{'contracts':2781,'premium':171237.0}}}),
+           'calls_sold':item({'SPY':{'0dte':{'contracts':5209,'premium':120240.0}}}),
+           'puts_bought':item({'SPY':{'0dte':{'contracts':3186,'premium':145792.0}}}),
+           'puts_sold':item({'SPY':{'0dte':{'contracts':4488,'premium':294719.0},
+                                     '1_5dte':{'contracts':54,'premium':15413.0},
+                                     '6_20dte':{'contracts':227,'premium':144415.0}}}),
+           'price_vix_confirmation':item({'SPY':{'read':'conflicts'},'QQQ':{'read':'confirms'}})}
+    summary=section_summary('flow',block)
+    assert 'SPY flow is dominated by puts sold' in summary and '$454,547' in summary
+    assert 'fighting the flow' in summary  # SPY read=conflicts
+    assert 'QQQ flow is dominated by calls bought' in summary and '$171,237' in summary
+    assert 'this one' in summary.lower() and 'clean' in summary.lower()  # QQQ read=confirms
+    # Never the old fallback: provider/timestamp metadata is not a flow direction.
+    assert 'provider provenance' not in summary.lower()
 
 def test_section_meaning_risk_on_defensive_reads_side_from_verdict():
     blocks=empty_blocks()
@@ -821,6 +847,38 @@ def test_live_threshold_is_ten_minutes_not_ninety_seconds():
     assert fresh_9min['status'] == 'live'
     stale_11min = observed(1.0, 'test', NOW - timedelta(seconds=660), NOW)
     assert stale_11min['status'] == 'historical'
+
+def test_what_changed_today_reports_morning_and_prior_hour_price_moves():
+    """Leron, 2026-10-12: 'share what has changed of the course of the day from morning to
+    the prior hourly reports.' Pulls the real market_comparison() output horizon_comparison.
+    changes already computes against both baselines -- verified against today's actual live
+    report data, shape included verbatim here (horizon_comparison.changes.value is
+    {'morning': {sym: {...}}, 'prior_hour': {sym: {...}}}, each with price_change_pct,
+    morning_spot/current_spot and a morning_timestamp -- 'morning' in the prior_hour dict
+    means "that baseline's own timestamp", not literally this morning)."""
+    blocks=empty_blocks()
+    blocks['horizon_comparison']['changes']=item({
+        'morning':{'SPY':{'price_change_pct':-0.0565,'morning_spot':778.57,'current_spot':778.13,
+                           'morning_timestamp':'2026-10-12T12:35:05.608853+00:00'},
+                   'QQQ':{'price_change_pct':-0.6036,'morning_spot':751.27,'current_spot':746.735,
+                           'morning_timestamp':'2026-10-12T12:35:05.608853+00:00'}},
+        'prior_hour':{'SPY':{'price_change_pct':-0.0892,'morning_spot':778.825,'current_spot':778.13,
+                              'morning_timestamp':'2026-10-12T16:10:40.386640+00:00'},
+                      'QQQ':{'price_change_pct':-0.1064,'morning_spot':747.53,'current_spot':746.735,
+                             'morning_timestamp':'2026-10-12T16:10:40.386640+00:00'}}})
+    blocks['morning_comparison']['regime_shift']=item({
+        'SPY':{'status':'CHANGED','changed':['control shifted from call_sellers to put_sellers']},
+        'QQQ':{'status':'HOLDING','changed':[]}})
+
+    out=_what_changed_today_html(blocks)
+    assert '-0.06% since the' in out and '778.57' in out and '778.13' in out
+    assert '-0.09% since the' in out and 'checkpoint' in out
+    assert '-0.60%' in out and '-0.11%' in out  # QQQ both deltas present
+    assert 'control shifted from call_sellers to put_sellers' in out  # SPY CHANGED surfaces
+    assert out.count('positioning shifted') == 1  # only SPY (CHANGED), not QQQ (HOLDING)
+
+    # No comparable baseline yet (first report of the day) -> no half-built section.
+    assert _what_changed_today_html(empty_blocks()) == ''
 
 def test_week_ahead_outlook_connects_vol_catalysts_and_positioning():
     """Leron, 2026-10-12: 'the morning report has a lot of information and none of it is
