@@ -22,6 +22,7 @@ import {
   signOut,
 } from '@/auth/session'
 import { nextLockState, INITIAL_LOCK_STATE, type LockPolicy, type LockState } from '@/auth/lock'
+import { isAuthGroupSegment } from '@/auth/gate'
 import { space, font, type } from '@/theme/tokens'
 import { ThemeProvider, useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
@@ -82,6 +83,15 @@ function RootLayoutInner() {
   const [sessionChecked, setSessionChecked] = useState(false)
   const [signedIn, setSignedIn] = useState(false)
   const [lockState, setLockState] = useState<LockState>(INITIAL_LOCK_STATE)
+  /**
+   * Did the cold-start lock decision actually resolve yet? INITIAL_LOCK_STATE is
+   * UNLOCKED, and the real decision (SecureStore read + LocalAuthentication check,
+   * both async) lands a moment later in the effect below. Gating `ready` on this too
+   * — not just on sessionChecked/fontsLoaded — closes the window where a signed-in
+   * cold start briefly rendered the tab screens (which fetch and show real balances
+   * and positions immediately) before the lock overlay had a chance to appear.
+   */
+  const [lockResolved, setLockResolved] = useState(false)
   const [unlocking, setUnlocking] = useState(false)
   const [unlockError, setUnlockError] = useState<string | null>(null)
   const [canUseBiometrics, setCanUseBiometrics] = useState(false)
@@ -117,7 +127,7 @@ function RootLayoutInner() {
     Inter_700Bold,
   })
 
-  const ready = sessionChecked && (fontsLoaded || !!fontError)
+  const ready = sessionChecked && (fontsLoaded || !!fontError) && lockResolved
 
   /**
    * Read the stored session once at cold start, then STAY SUBSCRIBED. The subscription
@@ -149,8 +159,10 @@ function RootLayoutInner() {
     if (!signedIn) {
       policyRef.current = null
       setLockState(INITIAL_LOCK_STATE)
+      setLockResolved(true)
       return
     }
+    setLockResolved(false)
     let cancelled = false
     ;(async () => {
       const stored = await getStoredSessionPolicy()
@@ -174,6 +186,9 @@ function RootLayoutInner() {
       }
       // Consumed: any later sign-in in this process is a fresh one, never a cold start.
       bootHadSessionRef.current = false
+      // The lock decision (locked or not) is now final for this mount — safe to let
+      // the gate render past the loading screen.
+      if (!cancelled) setLockResolved(true)
 
       // Refresh from the server in the background; a stale local policy is fine to
       // start on, it just should not stay stale for the rest of the session.
@@ -195,15 +210,24 @@ function RootLayoutInner() {
         )
         return
       }
+      // Apply the threshold-based re-lock IMMEDIATELY — fail safe, assuming biometrics
+      // can answer it. biometricsUsable() is async (reads a preference + queries
+      // LocalAuthentication), and waiting for it before locking left a window where a
+      // resumed app kept showing whatever was on screen — real balances/positions — past
+      // the foreground-lock threshold. If it turns out biometrics ISN'T usable, this is
+      // corrected a moment later below: a brief flash of the lock screen is a much
+      // smaller problem than a window of showing account data that should be hidden.
+      let preForegroundLocked = false
+      setLockState((prev) => {
+        preForegroundLocked = prev.locked
+        return nextLockState(prev, { type: 'app_foregrounded', nowMs }, signedInRef.current, policyRef.current)
+      })
       // Same rule as cold start: a foreground re-lock is only meaningful when biometrics
-      // can answer it. Re-read the preference each time so a Face ID toggle in Account
-      // takes effect without a relaunch.
+      // can answer it — otherwise it's just a forced re-login, not security (Leron, 9/4).
+      // Re-read the preference each time so a Face ID toggle in Account takes effect
+      // without a relaunch.
       biometricsUsable().then((usable) => {
-        setLockState((prev) =>
-          usable
-            ? nextLockState(prev, { type: 'app_foregrounded', nowMs }, signedInRef.current, policyRef.current)
-            : { locked: prev.locked, backgroundedAtMs: null },
-        )
+        if (!usable) setLockState({ locked: preForegroundLocked, backgroundedAtMs: null })
       })
     })
     return () => sub.remove()
@@ -241,7 +265,7 @@ function RootLayoutInner() {
 
   useEffect(() => {
     if (!ready) return
-    const inAuthGroup = segments[0] === 'sign-in'
+    const inAuthGroup = isAuthGroupSegment(segments[0])
     // 'enroll' is reachable BOTH signed out (create-account, verify — there is no
     // session yet) and signed in (legal onward, once the verify screen auto-signs the
     // customer in). It must never trigger either bounce below: redirecting a signed-out

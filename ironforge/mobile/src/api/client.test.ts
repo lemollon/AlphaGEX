@@ -25,12 +25,18 @@ vi.mock('@/api/storage', () => ({
   AFTER_FIRST_UNLOCK: 'AFTER_FIRST_UNLOCK',
 }))
 
-const { saveTokens, clearTokens, onSessionChange, hasSession } = await import('@/api/client')
+const swrMutateMock = vi.fn(async (_key?: unknown, _data?: unknown, _opts?: unknown) => undefined)
+vi.mock('swr', () => ({ mutate: swrMutateMock }))
+
+const { saveTokens, clearTokens, onSessionChange, hasSession, refreshAccessToken } = await import(
+  '@/api/client'
+)
 
 const PAIR = { accessToken: 'access-1', refreshToken: 'refresh-1' }
 
 beforeEach(() => {
   store.clear()
+  swrMutateMock.mockClear()
 })
 
 describe('onSessionChange', () => {
@@ -102,5 +108,61 @@ describe('onSessionChange', () => {
 
     await expect(saveTokens(PAIR)).resolves.toBeUndefined()
     expect(seen).toEqual([true])
+  })
+})
+
+describe('clearTokens cache hygiene', () => {
+  it('clears the global SWR cache on sign-out, so a different account on the same device never sees the prior one\'s data', async () => {
+    await saveTokens(PAIR)
+    await clearTokens()
+    expect(swrMutateMock).toHaveBeenCalledTimes(1)
+    // No key filter is passed as the data — every cached key gets cleared, not just a
+    // named subset the author remembered to list.
+    const [, data, opts] = swrMutateMock.mock.calls[0]
+    expect(data).toBeUndefined()
+    expect(opts).toMatchObject({ revalidate: false })
+  })
+
+  it('a failure clearing the SWR cache still completes sign-out (tokens gone, listeners notified)', async () => {
+    swrMutateMock.mockRejectedValueOnce(new Error('cache blip'))
+    await saveTokens(PAIR)
+
+    let gateBelievesSignedIn = true
+    onSessionChange((v) => {
+      gateBelievesSignedIn = v
+    })
+
+    await expect(clearTokens()).resolves.toBeUndefined()
+    expect(gateBelievesSignedIn).toBe(false)
+    expect(await hasSession()).toBe(false)
+  })
+})
+
+describe('refreshAccessToken timeout', () => {
+  it('gives up on a hung refresh request instead of blocking every caller forever', async () => {
+    await saveTokens(PAIR)
+    vi.useFakeTimers()
+    const abortedSignals: AbortSignal[] = []
+    const originalFetch = global.fetch
+    // Never resolves on its own — only an abort() on the passed signal ends it, exactly
+    // the hang this fix exists to bound.
+    global.fetch = vi.fn((_url: string, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal
+      abortedSignals.push(signal)
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+    }) as typeof fetch
+
+    try {
+      const pending = refreshAccessToken()
+      await vi.advanceTimersByTimeAsync(15_000)
+      const result = await pending
+      expect(result).toBeNull()
+      expect(abortedSignals[0]?.aborted).toBe(true)
+    } finally {
+      global.fetch = originalFetch
+      vi.useRealTimers()
+    }
   })
 })
