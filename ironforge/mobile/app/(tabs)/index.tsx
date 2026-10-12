@@ -452,6 +452,14 @@ export default function ForgeScreen() {
             )}
           </View>
 
+          {/* 10.4 design: a dashed rule under the chart, then the scrub hint — the
+              hint is instructional copy only (how to use the chart above), never a
+              repeat of a number already shown elsewhere on this card. */}
+          <View style={s.chartDivider} />
+          <Text style={[type.label, { color: color.muted, marginTop: space.sm }]}>
+            Tap a period to chart it · drag the chart to explore
+          </Text>
+
           {/* 2x2 grid, exactly — two fixed rows of two tiles (mobile addendum §2
               Forge tab: "2x2 period tiles"), not a flex-wrap row that happens to
               break after two on most screens. */}
@@ -813,8 +821,14 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     justifyContent: 'center',
   },
+  chartDivider: {
+    borderTopWidth: 1,
+    borderTopColor: color.border,
+    borderStyle: 'dashed',
+    marginTop: space.sm,
+  },
   periodGrid: {
-    marginTop: space.lg,
+    marginTop: space.md,
     gap: space.xs,
   },
   periodRow: {
