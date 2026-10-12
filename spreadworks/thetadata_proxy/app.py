@@ -43,7 +43,16 @@ _health_cache: tuple[float, dict[str, Any]] | None = None
 # connection instead of the same wedged one.
 _CALL_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="theta-call")
 THETA_CALL_TIMEOUT_SECONDS = float(os.getenv("THETADATA_CALL_TIMEOUT_SECONDS", "25"))
-RELOGIN_MIN_SECONDS = float(os.getenv("THETADATA_RELOGIN_MIN_SECONDS", "30"))
+# 2026-10-12: Leron, repeatedly, days of "option flow always breaking" -- traced to this
+# floor. A single transient gRPC UNAUTHENTICATED (ThetaData's session token expiring mid-run,
+# not a real outage) evicts the client and enters this cooldown; every request that lands
+# during it gets an immediate 503 ("session recovery cooldown") without even attempting a
+# retry. fetch_trade_quote_flow's entire collection budget is 40s (market_structure.py) --
+# a 30s floor on the FIRST failure alone ate 75% of that budget before anything could retry,
+# so one routine token hiccup reliably killed the whole report cycle's flow data. Exponential
+# backoff still protects against a genuine sustained outage (5,10,20,40,80,160,300-cap reaches
+# the same 300s ceiling one step later than before); a single blip now costs 5s, not 30.
+RELOGIN_MIN_SECONDS = float(os.getenv("THETADATA_RELOGIN_MIN_SECONDS", "5"))
 RELOGIN_MAX_SECONDS = float(os.getenv("THETADATA_RELOGIN_MAX_SECONDS", "300"))
 
 app = FastAPI(title="ThetaData Private Proxy", docs_url=None, redoc_url=None)

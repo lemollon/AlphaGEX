@@ -1,5 +1,5 @@
 from datetime import datetime,timedelta,timezone
-import io,json
+import html,io,json
 from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine,text
@@ -225,7 +225,10 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     # Preparing delivery again preserves embeds; callers cannot bypass rendered checks.
     from backend.report_contract import prepare_report_delivery
     assert prepare_report_delivery(result)['publishable']
-    assert result['report_markdown'].count(result['chart_urls']['smile_term'])==2  # field value plus image
+    # "visuals" is in SECTION_SUMMARY_SECTIONS: the raw per-field URL bullet is gone by design
+    # (2026-10-12 fix, Leron: "a long boring ass scroll of data"), so the chart URL now appears
+    # exactly once -- as the embedded image markdown, not duplicated as a raw field value too.
+    assert result['report_markdown'].count(result['chart_urls']['smile_term'])==1
 
 
 @pytest.mark.asyncio
@@ -634,3 +637,62 @@ async def test_regime_label_shift_wires_through_comparable_from_stored_morning_r
     assert shift['changed_since_morning'] is True
     assert shift['prior_hour_label'] is None
     assert shift['changed_since_prior_hour'] is False
+
+def _store_report(payload):
+    """Insert a crafted payload straight into sw_full_reports -- lighter-weight than running
+    the full async assemble_report pipeline when the test only cares about report_view's
+    per-section fields_html branch, not the producer/chart pipeline."""
+    with report.engine.begin() as c:
+        c.execute(text('INSERT INTO sw_full_reports (report_id,kind,generated_at,payload_json) VALUES (:id,:kind,:date,:payload)'),
+            {'id':payload['report_id'],'kind':payload['kind'],'date':NOW.replace(tzinfo=None),'payload':json.dumps(payload)})
+    return payload['report_id']
+
+@freeze_time(NOW)
+def test_report_view_section_summary_sections_get_narrative_divs_not_raw_field_rows(db):
+    """2026-10-12 fix, same bug as the markdown renderer: 'surface' is in SECTION_SUMMARY_SECTIONS,
+    so its <section class="card"> block on the live /view page must carry the "Section summary" /
+    "What it means for the day" decision divs, not a raw `_field_row` <div class="field"> per
+    field. Also confirms the chart image slot (VISUAL DELIVERY FAILED, since no chart is actually
+    persisted here) renders the same regardless of which fields_html branch fired."""
+    from backend.report_policy import SECTION_SUMMARY_SECTIONS, section_summary, observed
+    assert 'surface' in SECTION_SUMMARY_SECTIONS
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+    blocks['risk_on_defensive']['verdict']=observed('Risk-on price confirmation','Observed provider feed',NOW,NOW)
+    blocks['surface']['atm_iv']=observed({'SPY':{'atm_iv':.088},'QQQ':{'atm_iv':.091}},'Observed IV provider',NOW,NOW)
+    blocks['surface']['term_0dte']=observed({'SPY':{'iv_0dte':.15},'QQQ':{'iv_0dte':.14}},'Observed IV provider',NOW,NOW)
+    blocks['surface']['term_21plus']=observed({'SPY':{'iv_21_365dte':.12},'QQQ':{'iv_21_365dte':.11}},'Observed IV provider',NOW,NOW)
+    report_id='a'*24
+    chart_ref='https://example.test/api/spreadworks/reports/charts/'+'b'*32+'.png'
+    payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
+             'report_blocks':blocks,'chart_urls':{'surface':chart_ref}}
+    _store_report(payload)
+    view=report.report_view(report_id)
+    surface_card=view.split('id="sec-surface"')[1].split('</section>')[0]
+    assert 'Section summary' in surface_card and 'What it means for the day' in surface_card
+    assert '<div class="field decision">' in surface_card
+    assert '<div class="field"><div class="fieldtop">' not in surface_card  # no raw _field_row div
+    assert html.escape(section_summary('surface',blocks['surface'])) in surface_card
+    # Chart slot renders (as a failure notice, since no PNG bytes are actually persisted in this
+    # test) regardless of the fields_html branch -- it is built from chart_urls/groups, not from
+    # whether the section is narrative-only or raw-field.
+    assert 'VISUAL DELIVERY FAILED' in surface_card
+
+def test_report_view_raw_field_branch_still_used_for_a_section_outside_summary_sections(monkeypatch,db):
+    """Defensive fallback check: if a section is NOT in SECTION_SUMMARY_SECTIONS (none are,
+    today -- this is the hypothetical "future section added to REQUIREMENTS without a narrative
+    builder" case the else branch exists for), report_view must still fall back to the raw
+    `_field_row` per-field dump rather than silently rendering nothing."""
+    from backend import report_policy as rp
+    monkeypatch.setattr(rp,'SECTION_SUMMARY_SECTIONS',tuple(n for n in rp.SECTION_SUMMARY_SECTIONS if n!='scanner'))
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+    blocks['scanner']['minute_cadence']=rp.observed(5,'Observed provider feed',NOW,NOW)
+    report_id='c'*24
+    payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
+             'report_blocks':blocks,'chart_urls':{}}
+    _store_report(payload)
+    view=report.report_view(report_id)
+    scanner_card=view.split('id="sec-scanner"')[1].split('</section>')[0]
+    assert '<div class="field"><div class="fieldtop">' in scanner_card  # raw _field_row, not narrative
+    assert 'Section summary' not in scanner_card

@@ -1089,3 +1089,53 @@ def test_plain_value_caps_per_symbol_chain_list_not_raw_dump():
     assert text.count('"expiration"')==0  # readable "key value" pairs, not raw json.dumps
     assert text.count('strike')==5  # exactly the 5 shown chain points, not all 80
     assert '+75 more' in text
+
+def test_render_markdown_section_summary_sections_read_as_prose_not_raw_field_dump():
+    """2026-10-12 fix, Leron repeatedly: "a long boring ass scroll of data that means nothing
+    to me." The raw "- **field**: value" bullet for every field of every section used to print
+    BEFORE the one-line narrative summary each section already had; now a section in
+    SECTION_SUMMARY_SECTIONS gets only the narrative + "What it means for the day" line, no
+    raw per-field wall underneath it."""
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':.088},'QQQ':{'atm_iv':.091}})
+    blocks['surface']['term_0dte']=item({'SPY':{'iv_0dte':.15},'QQQ':{'iv_0dte':.14}})
+    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':.12},'QQQ':{'iv_21_365dte':.11}})
+    blocks['smile']['atm_iv']=item({'SPY':{'atm_iv':.088}})
+    blocks['smile']['put_25d_iv']=item({'SPY':{'put_25d_iv':.1}})
+    blocks['smile']['call_25d_iv']=item({'SPY':{'call_25d_iv':.09}})
+    payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
+    markdown=render_markdown(payload)
+
+    surface_section=markdown.split('### Surface')[1].split('###')[0]
+    assert 'Section summary: '+section_summary('surface',blocks['surface']) in surface_section
+    assert 'What it means for the day: ' in surface_section
+    assert "ATM IV 8.8%" in surface_section  # the real narrative sentence, not a field dump
+    assert '- **atm_iv**:' not in surface_section
+    assert '- **term_0dte**:' not in surface_section
+
+    smile_section=markdown.split('### Smile')[1].split('###')[0]
+    assert 'Section summary: '+section_summary('smile',blocks['smile']) in smile_section
+    assert '- **atm_iv**:' not in smile_section
+    assert '- **put_25d_iv**:' not in smile_section
+
+    # Every one of the 33 REQUIREMENTS sections is currently in SECTION_SUMMARY_SECTIONS, so
+    # the raw-field-bullet `else` branch never fires anywhere -- the old dump pattern should
+    # not survive in ANY "### "-headed section. (The "## Ifthen day plan" bullets use the same
+    # "- **" markdown syntax but a different, unrelated, untouched loop over adaptation_rules
+    # keys -- that text sits in the chunk BEFORE the first "### " split, never inside one.)
+    assert set(SECTION_SUMMARY_SECTIONS)==set(REQUIREMENTS)
+    for chunk in markdown.split('### ')[1:]:
+        assert '- **' not in chunk
+    assert len(markdown) < 20000  # a real populated report used to run 250k+ chars on this dump
+
+def test_render_markdown_empty_section_gets_generic_fallback_not_unavailable_wall():
+    """A section with zero populated data must still read as one honest sentence via
+    _generic_narrative_summary's fallback, never a wall of "UNAVAILABLE" bullets -- the whole
+    point of the fix was removing exactly that wall."""
+    blocks=empty_blocks()
+    payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
+    markdown=render_markdown(payload)
+    profile_section=markdown.split('### Profile')[1].split('###')[0]
+    assert 'No verified observation yet this checkpoint.' in profile_section
+    assert 'UNAVAILABLE' not in profile_section
+    assert '- **' not in profile_section

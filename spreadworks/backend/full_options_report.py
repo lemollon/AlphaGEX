@@ -947,12 +947,16 @@ def report_view(report_id:str):
         title=name.replace('_',' ').title()
         nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
         shared_meta=_shared_section_meta(block)
-        fields_html=''.join(_field_row(field,item,img_map,show_meta=(shared_meta is None)) for field,item in block.items())
+        # Leron, repeatedly: "a long boring ass scroll of data." Same fix as the markdown
+        # renderer -- lead with the narrative, drop the raw per-field wall it used to sit under.
+        # Full per-field detail remains at the /data JSON endpoint.
         if name in SECTION_SUMMARY_SECTIONS:
-            fields_html+=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
+            fields_html=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
                           f'<div class="field decision"><div class="fieldname">What it means for the day</div>'
                           f'<div class="fieldval">{html.escape(section_meaning(name,block,mission_side))}</div></div>')
+        else:
+            fields_html=''.join(_field_row(field,item,img_map,show_meta=(shared_meta is None)) for field,item in block.items())
         chart_names=[groups.get(name)]
         if name=='surface':chart_names+=['term_structure']
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
