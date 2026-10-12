@@ -48,6 +48,12 @@ export default function VerifyScreen() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [resendCooldown, setResendCooldown] = useState(0)
+  // `verify-code` is one-shot server-side (it marks the code consumed the moment it
+  // succeeds). If sign-in or resumeEnrollment then fail afterward — offline, a
+  // mistyped fallback password — a retry must NOT call verify-code again: that would
+  // fail with "Invalid or expired code" even though the email was genuinely verified,
+  // stranding the customer with no way forward short of requesting a brand new code.
+  const [codeVerified, setCodeVerified] = useState(false)
 
   useEffect(() => {
     if (resendCooldown <= 0) return
@@ -62,7 +68,10 @@ export default function VerifyScreen() {
 
   async function continueToApp() {
     if (busy) return
-    if (!isValidVerifyCode(code)) {
+    // Once verify-code has already succeeded this session, the code itself is no
+    // longer the thing being retried — skip its validation and go straight to
+    // sign-in/resume below.
+    if (!codeVerified && !isValidVerifyCode(code)) {
       setError('Enter the 6-digit code from your email.')
       return
     }
@@ -72,8 +81,16 @@ export default function VerifyScreen() {
     }
     setBusy(true)
     setError(null)
+    // Local copy, not just the `codeVerified` state — `setCodeVerified(true)` below
+    // won't be visible on `codeVerified` until the next render, but the catch block
+    // below needs to know WITHIN this same call whether verify-code just succeeded.
+    let justVerified = codeVerified
     try {
-      await apiPublic('/api/auth/verify-code', { email, code })
+      if (!codeVerified) {
+        await apiPublic('/api/auth/verify-code', { email, code })
+        justVerified = true
+        setCodeVerified(true)
+      }
       await signIn(email, password, {
         deviceId: Device.osInternalBuildId ?? undefined,
         platform: 'mobile',
@@ -85,7 +102,14 @@ export default function VerifyScreen() {
       const canonical = routeForNextStep(d.next_step, d.enrollment.selected_plan)
       router.replace(canonical.route as never)
     } catch (e) {
-      setError((e as Error).message)
+      // After verify-code has already succeeded, a failure here is sign-in/resume
+      // stalling, not a bad code — say so, since "Invalid or expired code" would be
+      // actively wrong and send the customer looking for a new code they don't need.
+      setError(
+        justVerified
+          ? 'Verified — finishing sign-in is taking a moment. Tap Continue to retry.'
+          : (e as Error).message,
+      )
     } finally {
       setBusy(false)
     }

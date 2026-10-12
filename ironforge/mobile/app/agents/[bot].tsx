@@ -27,6 +27,7 @@ import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { formatPnl } from '@/components/chart-geometry'
+import { periodTone, type PeriodTone } from '@/live/period-stats'
 import { Mascot } from '@/components/Brand'
 import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Confetti } from '@/components/Confetti'
@@ -412,6 +413,20 @@ function KpiTile({ label, value }: { label: string; value: number | null }) {
   )
 }
 
+/** Same zero/pos/neg split and color mapping as the Forge tab's period stats
+ *  (`periodTone`/`periodToneColor` in `app/(tabs)/index.tsx`) — a flat $0 day
+ *  (no trade, or a scratch) is its own neutral case, never colored the same
+ *  as a win. */
+function dailyBarColor(tone: PeriodTone, color: ColorTokens): string {
+  const map: Record<PeriodTone, string> = {
+    pos: color.pos,
+    neg: color.neg,
+    zero: color.muted,
+    na: color.muted,
+  }
+  return map[tone]
+}
+
 /** A minimal up/down bar chart, oldest to newest left-to-right, centered on a
  *  zero line — plain Views (no SVG) since every bar is a flat rectangle. */
 function DailyBars({ days, accent }: { days: Array<{ date: string; pnl: number }>; accent: string }) {
@@ -428,15 +443,16 @@ function DailyBars({ days, accent }: { days: Array<{ date: string; pnl: number }
     >
       {days.map((d) => {
         const pct = Math.max(4, (Math.abs(d.pnl) / maxAbs) * 100)
-        const up = d.pnl >= 0
+        const tone = periodTone(d.pnl)
+        const barColor = dailyBarColor(tone, color)
         return (
           <View key={d.date} style={s.barCol}>
             <View style={s.barHalfTop}>
-              {up ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: color.pos }]} /> : null}
+              {tone !== 'neg' ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: barColor }]} /> : null}
             </View>
             <View style={s.barZero} />
             <View style={s.barHalfBottom}>
-              {!up ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: color.neg }]} /> : null}
+              {tone === 'neg' ? <View style={[s.bar, { height: `${pct}%`, backgroundColor: barColor }]} /> : null}
             </View>
           </View>
         )
@@ -759,6 +775,12 @@ function ActivationFlow({
   // auto-fetch effect below from re-firing for the account it already fetched, while
   // still re-firing the moment a multi-account picker changes the selection.
   const previewedFor = useRef<string | null>(null)
+  // The account id the MOST RECENT loadPreview() call was fired for. Tapping account A
+  // then quickly account B queues two in-flight requests; if A's network response is
+  // slower and lands after B's, it must not be allowed to overwrite B's configId/preview
+  // just because it resolved later — only a response that still matches the currently
+  // in-flight (i.e. still-selected) account id is applied to state.
+  const latestRequestFor = useRef<string | null>(null)
 
   useEffect(() => {
     trackEvent('add_agent_start', { agent: bot })
@@ -770,6 +792,7 @@ function ActivationFlow({
   }
 
   async function loadPreview(id: string) {
+    latestRequestFor.current = id
     setBusy(true)
     setFailure(null)
     try {
@@ -777,16 +800,24 @@ function ActivationFlow({
         method: 'POST',
         body: { agent_code: bot, broker_account_id: id, config: {} },
       })
+      if (latestRequestFor.current !== id) return // superseded by a newer account pick
       setConfigId(cfg.id)
       const prev = await api<ActivationPreviewResponse>('/api/v1/activations/preview', {
         method: 'POST',
         body: { config_id: cfg.id },
       })
+      if (latestRequestFor.current !== id) return
       setPreview(prev)
     } catch (e) {
+      if (latestRequestFor.current !== id) return
       setFailure(e instanceof ApiError ? e.humanMessage : (e as Error).message)
+      // Allow a retry: `previewedFor` would otherwise keep blocking the auto-fetch
+      // effect from re-firing for this same account (e.g. re-tapping it in a
+      // multi-account picker), and the explicit Retry button below re-fetches directly
+      // regardless, but clearing this keeps the two retry paths consistent.
+      if (previewedFor.current === id) previewedFor.current = null
     } finally {
-      setBusy(false)
+      if (latestRequestFor.current === id) setBusy(false)
     }
   }
 
@@ -901,9 +932,23 @@ function ActivationFlow({
       ) : null}
 
       {!preview ? (
-        <Text style={[type.body, { color: color.muted, marginTop: space.lg }]}>
-          {busy ? 'Loading your trial details…' : 'Choose an account to continue.'}
-        </Text>
+        failure ? (
+          <View style={{ marginTop: space.lg }}>
+            <Text style={[type.body, { color: color.neg }]}>{failure}</Text>
+            <Pressable
+              onPress={() => accountId && void loadPreview(accountId)}
+              style={[s.actionBtn, { borderColor: color.accent, marginTop: space.md }]}
+            >
+              <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
+                Retry
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={[type.body, { color: color.muted, marginTop: space.lg }]}>
+            {busy ? 'Loading your trial details…' : 'Choose an account to continue.'}
+          </Text>
+        )
       ) : (
         <>
           <ReviewRow
