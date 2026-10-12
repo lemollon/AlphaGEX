@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { SnaptradeError } from 'snaptrade-typescript-sdk'
 import { requireIdentityWithStepUp } from '@/lib/auth/mobile-step-up'
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { decryptSecret } from '@/lib/crypto/secret-box'
@@ -53,11 +54,20 @@ export async function DELETE(req: NextRequest) {
     }
 
     const snaptrade = getSnapTrade()
-    await snaptrade.connections.removeBrokerageAuthorization({
-      authorizationId,
-      userId: user.snaptrade_user_id,
-      userSecret: decryptSecret(user.snaptrade_user_secret),
-    })
+    try {
+      await snaptrade.connections.removeBrokerageAuthorization({
+        authorizationId,
+        userId: user.snaptrade_user_id,
+        userSecret: decryptSecret(user.snaptrade_user_secret),
+      })
+    } catch (e) {
+      // SnapTrade 404s when it already has no record of this authorization — the customer
+      // disconnected directly at the broker, a CONNECTION_DELETED webhook already processed it,
+      // or similar. That is not a failure from the customer's perspective: proceed to the same
+      // local cleanup as the success path instead of surfacing a 500 for an already-gone row.
+      const alreadyGone = e instanceof SnaptradeError && e.status === 404
+      if (!alreadyGone) throw e
+    }
 
     await customerExecute(
       `UPDATE brokerage_connections SET status = 'removed', updated_at = now()
