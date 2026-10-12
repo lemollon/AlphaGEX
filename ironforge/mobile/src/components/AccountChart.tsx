@@ -11,7 +11,7 @@
  */
 import { useMemo, useRef, useState } from 'react'
 import { View, StyleSheet, type LayoutChangeEvent } from 'react-native'
-import Svg, { Polyline, Line, Circle } from 'react-native-svg'
+import Svg, { Polyline, Polygon, Line, Circle, Defs, LinearGradient, Stop } from 'react-native-svg'
 import * as Haptics from 'expo-haptics'
 import { accountChartGeometry, nearestAccountIndex } from '@/components/account-chart-geometry'
 import type { AccountPoint } from '@/live/account-series'
@@ -95,6 +95,21 @@ export function AccountChart({
     >
       {geom ? (
         <Svg width={width} height={HEIGHT}>
+          {/* Mountain fill under the line (10.4 design's hero chart) — a gradient
+              from the line colour down to transparent, closed at the chart's
+              bottom edge. Decorative only: the line above it is still the one
+              thing a screen reader or a scrub touch reads a value from. */}
+          <Defs>
+            <LinearGradient id="accountChartFill" x1="0" y1="0" x2="0" y2="1">
+              <Stop offset="0" stopColor={lineColor} stopOpacity={0.35} />
+              <Stop offset="1" stopColor={lineColor} stopOpacity={0.02} />
+            </LinearGradient>
+          </Defs>
+          <Polygon
+            points={`${geom.points} ${width.toFixed(2)},${HEIGHT} 0,${HEIGHT}`}
+            fill="url(#accountChartFill)"
+            stroke="none"
+          />
           <Polyline
             points={geom.points}
             fill="none"

@@ -25,7 +25,7 @@
  */
 import { useMemo, useRef, useState } from 'react'
 import { Animated, View, Text, StyleSheet, type LayoutChangeEvent } from 'react-native'
-import Svg, { Polyline, Line, Circle, Rect, Text as SvgText } from 'react-native-svg'
+import Svg, { Polyline, Polygon, Line, Circle, Rect, Defs, LinearGradient, Stop, Text as SvgText } from 'react-native-svg'
 import {
   chartGeometry,
   timeChartGeometry,
@@ -203,6 +203,21 @@ export function PnlChart({
       >
         {timeGeom ? (
           <Svg width={width} height={HEIGHT}>
+            {/* Fill under the line (10.4 design's trade chart) — from the line down
+                to the zero baseline, same accent as the line. Purely decorative;
+                every value a customer can read still comes from the line/dots/
+                tooltip above it, never from the shape of the fill. */}
+            <Defs>
+              <LinearGradient id="pnlChartFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={accent} stopOpacity={0.3} />
+                <Stop offset="1" stopColor={accent} stopOpacity={0.02} />
+              </LinearGradient>
+            </Defs>
+            <Polygon
+              points={`${series.map((p, i) => `${px(i).toFixed(2)},${py(i).toFixed(2)}`).join(' ')} ${px(series.length - 1).toFixed(2)},${zeroY.toFixed(2)} ${px(0).toFixed(2)},${zeroY.toFixed(2)}`}
+              fill="url(#pnlChartFill)"
+              stroke="none"
+            />
             {/* Rest of session — the untraded remainder up to the scheduled close
                 (10.4 design `drawTradeChart`'s shaded rect). Never drawn when the
                 close has already passed "now". */}
@@ -289,6 +304,17 @@ export function PnlChart({
           </Svg>
         ) : indexGeom ? (
           <Svg width={width} height={HEIGHT}>
+            <Defs>
+              <LinearGradient id="pnlChartFill" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={accent} stopOpacity={0.3} />
+                <Stop offset="1" stopColor={accent} stopOpacity={0.02} />
+              </LinearGradient>
+            </Defs>
+            <Polygon
+              points={`${indexGeom.points} ${indexGeom.x(series.length - 1).toFixed(2)},${indexGeom.zeroY.toFixed(2)} ${indexGeom.x(0).toFixed(2)},${indexGeom.zeroY.toFixed(2)}`}
+              fill="url(#pnlChartFill)"
+              stroke="none"
+            />
             {/* Breakeven $0 */}
             <Line
               x1={0}
