@@ -15,6 +15,7 @@
  * shared by all callers, is a correctness requirement rather than an optimisation.
  */
 import Constants from 'expo-constants'
+import { mutate as swrMutate } from 'swr'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
 import { ApiError } from '@/api/errors'
 import { reportNetworkSuccess, reportNetworkFailure } from '@/live/connectivity'
@@ -103,6 +104,14 @@ export async function saveTokens(pair: TokenPair): Promise<void> {
 export async function clearTokens(): Promise<void> {
   await deleteItem(ACCESS_KEY).catch(() => {})
   await deleteItem(REFRESH_KEY).catch(() => {})
+  // No SWRConfig provider is set up anywhere in this app, so every useSWR() call shares
+  // one process-lifetime global cache keyed only by path (e.g. '/api/live/agents') —
+  // never by user. Without this, signing out and a DIFFERENT account signing in on the
+  // same device would render the first account's balances/positions until each screen's
+  // own revalidation happened to complete. Clearing every key's DATA (not re-fetching —
+  // there's nothing to authenticate the re-fetch with yet, and the sign-in screen is
+  // about to unmount every screen that held these keys anyway) closes that window.
+  await swrMutate(() => true, undefined, { revalidate: false }).catch(() => {})
   notifySession(false)
 }
 
@@ -117,15 +126,33 @@ export async function hasSession(): Promise<boolean> {
 /** Shared in-flight refresh — see the single-flight note above. */
 let refreshInFlight: Promise<string | null> | null = null
 
+/**
+ * Bounded so a hung connection can't block every waiting caller (this is the shared
+ * single-flight promise — Forge/Ledger/Community all await it) for an unbounded time.
+ *
+ * This does NOT close the deeper race where the server successfully rotates the
+ * refresh token but the response is lost in transit: the client still holds the
+ * now-already-consumed old refresh token, and the NEXT refresh attempt reads as reuse
+ * server-side, revoking the whole device family. Fixing that needs a grace period on
+ * the server's reuse-detection window (mobile-session.ts) — a deliberate security
+ * change, not a client-only fix, and out of scope here.
+ */
+const REFRESH_TIMEOUT_MS = 15_000
+
 async function doRefresh(): Promise<string | null> {
   const refreshToken = await getItem(REFRESH_KEY)
   if (!refreshToken) return null
 
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), REFRESH_TIMEOUT_MS)
   const res = await fetch(`${API_BASE}/api/auth/mobile/refresh`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
-  }).catch(() => null)
+    signal: controller.signal,
+  })
+    .catch(() => null)
+    .finally(() => clearTimeout(timeout))
 
   if (!res || !res.ok) {
     // 401 here means invalid / expired / idle / REUSE-DETECTED. In every one of those
