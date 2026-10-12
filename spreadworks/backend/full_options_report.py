@@ -137,6 +137,20 @@ def market_comparison(core,baseline):
              'current_source_timestamp':row.get('source_timestamp')}
     return result
 
+def vix_comparison(core,baseline):
+    """Same shape as market_comparison's per-symbol rows, but for VIX itself. The morning/prior
+    baseline snapshot already persists the full core dict under 'evidence' (see assemble_report),
+    so VIX's own level at baseline time is already stored -- no new table or contract field needed,
+    just read the same spot the pv_confirmation code already pulls at report time."""
+    now_vix=((core.get('volatility') or {}).get('indices') or {}).get('VIX') or {}
+    old_vix=(((baseline.get('evidence') or {}).get('volatility') or {}).get('indices') or {}).get('VIX') or {}
+    spot,ref=number(now_vix.get('price')),number(old_vix.get('price'))
+    return {'price_change_pct':(spot/ref-1)*100 if spot and ref else None,
+         'morning_timestamp':baseline.get('generated_at'),'morning_spot':ref,'current_spot':spot,
+         'baseline_source_timestamp':old_vix.get('source_timestamp'),
+         'baseline_session_matches':bool(ms._parse_ts(old_vix.get('source_timestamp')) and ms._parse_ts(now_vix.get('source_timestamp')) and ms._parse_ts(old_vix['source_timestamp']).astimezone(CT).date()==ms._parse_ts(now_vix['source_timestamp']).astimezone(CT).date()),
+         'current_source_timestamp':now_vix.get('source_timestamp')}
+
 def scheduled_events(now):
     """BLS official iCalendar for verified release times; local estimates retained as such."""
     from .economic_events import ECONOMIC_EVENTS_2026,is_market_holiday
@@ -533,7 +547,9 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     refresh_attempts.extend(core_attempts)
     now=datetime.now(UTC)
     comparison=market_comparison(core,morning)
+    comparison['VIX']=vix_comparison(core,morning)
     prior_comparison=market_comparison(core,prior)
+    prior_comparison['VIX']=vix_comparison(core,prior)
     def comparable(baseline):
         b=baseline.get('report_blocks') or {};result={}
         for field,section,key in [('move_usage','expected_move','budget_used'),('chop_status','range_stall','chop_low'),('stall_risk','range_stall','actual_rejection'),('setup_status','entry_watches','status')]:
@@ -557,6 +573,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     if kind=='morning' and not morning:
         morning={'generated_at':now.isoformat(),'evidence':core,'report_blocks':blocks}
         comparison=market_comparison(core,morning)
+        comparison['VIX']=vix_comparison(core,morning)
         core['comparison']=comparison
     prior_stamp=prior.get('generated_at')
     if prior_stamp:
