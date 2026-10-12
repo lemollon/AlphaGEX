@@ -31,24 +31,41 @@ export function StepUpHost() {
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Requests that arrived while one was already pending (Face ID check in flight, or
+  // the password modal open) — a second `requestStepUp()` call must never overwrite
+  // `req`/the in-flight biometric check, which would leave the FIRST caller's promise
+  // unresolved forever. Queued requests are processed one at a time below.
+  const [queue, setQueue] = useState<StepUpRequest[]>([])
+  const [checkingBiometric, setCheckingBiometric] = useState(false)
 
   useEffect(() => {
     return subscribeStepUp((next) => {
-      setPassword('')
-      setError(null)
-      setBusy(false)
-      // Face ID happens before the password modal even appears. A failed/cancelled
-      // check resolves the whole request as null; only biometrics being off/unavailable
-      // lets it through to the password step below.
-      void biometricPresenceCheck().then((passed) => {
-        if (!passed) {
-          next.resolve(null)
-          return
-        }
-        setReq(next)
-      })
+      setQueue((q) => [...q, next])
     })
   }, [])
+
+  // Drains the queue one request at a time: only starts the next request's Face ID
+  // check once nothing is currently displayed AND no biometric check is in flight.
+  useEffect(() => {
+    if (req || checkingBiometric || queue.length === 0) return
+    const [next, ...rest] = queue
+    setQueue(rest)
+    setPassword('')
+    setError(null)
+    setBusy(false)
+    setCheckingBiometric(true)
+    // Face ID happens before the password modal even appears. A failed/cancelled
+    // check resolves the whole request as null; only biometrics being off/unavailable
+    // lets it through to the password step below.
+    void biometricPresenceCheck().then((passed) => {
+      setCheckingBiometric(false)
+      if (!passed) {
+        next.resolve(null)
+        return
+      }
+      setReq(next)
+    })
+  }, [req, checkingBiometric, queue])
 
   function cancel() {
     req?.resolve(null)

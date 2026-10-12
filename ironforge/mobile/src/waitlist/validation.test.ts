@@ -34,6 +34,12 @@ describe('validateWaitlist', () => {
     expect(validateWaitlist({ ...VALID, firstName: '1eron' }).firstName).toBeTruthy()
   })
 
+  it('accepts accented Latin names', () => {
+    expect(validateWaitlist({ ...VALID, firstName: 'José' }).firstName).toBeUndefined()
+    expect(validateWaitlist({ ...VALID, lastName: 'François' }).lastName).toBeUndefined()
+    expect(validateWaitlist({ ...VALID, lastName: 'Müller' }).lastName).toBeUndefined()
+  })
+
   it('rejects a malformed email', () => {
     expect(validateWaitlist({ ...VALID, email: 'not-an-email' }).email).toBeTruthy()
   })

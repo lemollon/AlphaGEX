@@ -14,6 +14,7 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { space, radius, type, font, outcomeColor } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
+import { formatMoney } from './money-format'
 
 /**
  * Dynamic Type ceiling (mobile fidelity #281 — "no clipping" up to 200% system
@@ -51,25 +52,21 @@ export function Money({
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
-  if (value == null) {
+  const formatted = formatMoney(value)
+  if (!formatted) {
     return (
       <Text style={[s.dim, type[size]]} maxFontSizeMultiplier={MAX_FONT_SCALE}>
         —
       </Text>
     )
   }
-  const sign = value >= 0 ? '+' : '-'
-  const text = `${sign}$${Math.abs(value).toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`
-  const tone = value >= 0 ? color.pos : color.neg
+  const tone = formatted.tone === 'pos' ? color.pos : color.neg
   return (
     <Text
       style={[type[size], { color: tone, fontFamily: font.bodyBold }]}
       maxFontSizeMultiplier={MAX_FONT_SCALE}
     >
-      {text}
+      {formatted.text}
     </Text>
   )
 }

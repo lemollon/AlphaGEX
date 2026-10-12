@@ -24,7 +24,9 @@ export const CAPITAL_RANGES = [
 export type CapitalRange = (typeof CAPITAL_RANGES)[number]['value']
 const CAPITAL_VALUES: readonly string[] = CAPITAL_RANGES.map((r) => r.value)
 
-const NAME_RE = /^[A-Za-z][A-Za-z '-]{0,59}$/
+// Unicode-aware so real names like "José", "François", or "Müller" are not
+// rejected — \p{L} matches any letter in any script, not just A-Z.
+const NAME_RE = /^[\p{L}][\p{L} '-]{0,59}$/u
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export interface WaitlistFields {
