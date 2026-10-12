@@ -3,6 +3,15 @@ import { NextRequest } from 'next/server'
 
 // ---- mocks (brokers + DB + session) so the route's orchestration is testable offline ----
 vi.mock('@/lib/auth/customer-session-server', () => ({ getCustomerSession: vi.fn() }))
+// requireIdentityWithStepUp() calls next/headers directly once there's no cookie-sourced
+// identity (see mobile-step-up.ts) — next/headers throws outside a real Next.js request
+// scope, so it needs a stub here the same way mobile-step-up.test.ts stubs it. Its own
+// pending/step-up/unauthorized branching is unit-tested there, not re-derived here.
+vi.mock('next/headers', () => ({ headers: vi.fn(() => ({ get: () => null })) }))
+vi.mock('@/lib/auth/mobile-step-up', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/auth/mobile-step-up')>('@/lib/auth/mobile-step-up')
+  return { ...actual, requireIdentityWithStepUp: vi.fn(actual.requireIdentityWithStepUp) }
+})
 vi.mock('@/lib/customers-db', () => ({
   isCustomersDbConfigured: vi.fn(() => true),
   customerQuery: vi.fn(),
@@ -20,6 +29,7 @@ vi.mock('@/lib/crypto/secret-box', () => ({ decryptSecret: vi.fn(() => 'plain-to
 vi.mock('@/lib/brokerage/snaptrade-user', () => ({ loadSnapTradeCreds: vi.fn() }))
 
 import { getCustomerSession } from '@/lib/auth/customer-session-server'
+import { requireIdentityWithStepUp } from '@/lib/auth/mobile-step-up'
 import { customerQuery, customerExecute } from '@/lib/customers-db'
 import { getSnapTrade } from '@/lib/snaptrade'
 import { placeOrder as tradierPlaceOrder } from '@/lib/tradier-oauth'
@@ -114,5 +124,47 @@ describe('POST /api/brokerage/trades/[id]/approve', () => {
     const res = await call()
     expect(res.status).toBe(502)
     expect(lastStatusWrites().some((s: string) => s.includes("'failed'"))).toBe(true)
+  })
+
+  it('non-market order type: refused, never claims or places (no price is ever captured)', async () => {
+    ;(customerQuery as any).mockResolvedValueOnce([approval({ order_type: 'Limit' })])
+    const res = await call()
+    expect(res.status).toBe(409)
+    expect((getSnapTrade as any)).not.toHaveBeenCalled()
+    expect(lastStatusWrites()).toHaveLength(0)
+  })
+
+  it('concurrent approve: loses the atomic claim, gets 409, never places a second order', async () => {
+    ;(customerQuery as any).mockResolvedValueOnce([approval()])
+    // The claim UPDATE (`... WHERE status='pending' ...`) is the only customerExecute call
+    // before placeOrder would run — a concurrent request already won it, so rowCount is 0.
+    ;(customerExecute as any).mockResolvedValueOnce(0)
+    const res = await call()
+    expect(res.status).toBe(409)
+    // getSnapTrade() is only called AFTER a successful claim — losing the race means it's
+    // never reached, so the broker is never touched by this request.
+    expect((getSnapTrade as any)).not.toHaveBeenCalled()
+  })
+
+  it('order placed but the status write fails: reports success with a warning, not 502 (order is real and live)', async () => {
+    ;(customerQuery as any).mockResolvedValueOnce([approval()])
+    ;(customerExecute as any)
+      .mockResolvedValueOnce(1) // claim succeeds
+      .mockRejectedValueOnce(new Error('db blip')) // the post-placement 'placed' write fails
+      .mockResolvedValueOnce(1) // the audit_events insert (best-effort, wrapped in .catch)
+    const res = await call()
+    const body = await res.json()
+    expect(res.status).toBe(200)
+    expect(body).toMatchObject({ ok: true, status: 'placed', orderId: 'ORD-1' })
+    expect(body.warning).toBeTruthy()
+  })
+
+  it('step-up required (new mobile client, plain token but no step-up token): 401, never reaches the DB', async () => {
+    ;(requireIdentityWithStepUp as any).mockResolvedValueOnce({ identity: null, error: 'step_up_required' })
+    const res = await call()
+    const body = await res.json()
+    expect(res.status).toBe(401)
+    expect(body.error).toBe('step_up_required')
+    expect((customerQuery as any)).not.toHaveBeenCalled()
   })
 })
