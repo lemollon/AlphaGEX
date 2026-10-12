@@ -641,29 +641,53 @@ export async function upgradeSubscriptionToBundle(opts: {
   })
 }
 
+/** Stripe's own documented webhook tolerance — reject signed payloads older/newer than this. */
+export const STRIPE_SIGNATURE_TOLERANCE_SECONDS = 5 * 60
+
 /**
- * Verifies a Stripe webhook signature. Header format: `t=<ts>,v1=<sig>,...`. We recompute
- * HMAC-SHA256 of `${t}.${rawBody}` with the endpoint secret and constant-time compare against
- * any provided v1 signature. Returns false on any malformation rather than throwing.
+ * Verifies a Stripe webhook signature. Header format: `t=<ts>,v1=<sig>,...`, and during a
+ * signing-secret ROTATION, Stripe sends BOTH the old and new signature as two `v1=` entries in
+ * the same header for the overlap window — every value is collected (not just the last) and the
+ * payload is accepted if the computed HMAC matches ANY of them, same as Stripe's own libraries.
+ * We recompute HMAC-SHA256 of `${t}.${rawBody}` with the endpoint secret and constant-time
+ * compare. Also enforces Stripe's documented ~5 minute timestamp tolerance so a captured signed
+ * payload can't be replayed indefinitely. Returns false on any malformation rather than throwing.
  */
-export function verifyStripeSignature(rawBody: string, sigHeader: string | null, secret: string): boolean {
+export function verifyStripeSignature(
+  rawBody: string,
+  sigHeader: string | null,
+  secret: string,
+  opts: { now?: Date; toleranceSeconds?: number } = {},
+): boolean {
   if (!sigHeader || !secret) return false
-  const parts = Object.fromEntries(
-    sigHeader.split(',').map((kv) => {
-      const idx = kv.indexOf('=')
-      return [kv.slice(0, idx).trim(), kv.slice(idx + 1).trim()]
-    }),
-  ) as Record<string, string>
-  const t = parts['t']
-  const v1 = parts['v1']
-  if (!t || !v1) return false
+
+  let t: string | undefined
+  const v1s: string[] = []
+  for (const kv of sigHeader.split(',')) {
+    const idx = kv.indexOf('=')
+    if (idx === -1) continue
+    const key = kv.slice(0, idx).trim()
+    const value = kv.slice(idx + 1).trim()
+    if (key === 't') t = value
+    else if (key === 'v1') v1s.push(value)
+  }
+  if (!t || v1s.length === 0) return false
+
+  const ts = Number(t)
+  if (!Number.isFinite(ts)) return false
+  const nowSec = Math.floor((opts.now ?? new Date()).getTime() / 1000)
+  const tolerance = opts.toleranceSeconds ?? STRIPE_SIGNATURE_TOLERANCE_SECONDS
+  if (Math.abs(nowSec - ts) > tolerance) return false
 
   const expected = crypto.createHmac('sha256', secret).update(`${t}.${rawBody}`, 'utf8').digest('hex')
-  try {
-    const a = Buffer.from(expected, 'hex')
-    const b = Buffer.from(v1, 'hex')
-    return a.length === b.length && crypto.timingSafeEqual(a, b)
-  } catch {
-    return false
+  const expectedBuf = Buffer.from(expected, 'hex')
+  for (const v1 of v1s) {
+    try {
+      const candidate = Buffer.from(v1, 'hex')
+      if (candidate.length === expectedBuf.length && crypto.timingSafeEqual(candidate, expectedBuf)) return true
+    } catch {
+      continue
+    }
   }
+  return false
 }

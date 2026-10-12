@@ -100,11 +100,11 @@ export async function POST(req: NextRequest) {
 
   // Map SnapTrade events → our connection status. CONNECTION_BROKEN is handled separately below —
   // it is the reauthorization signal the Brokerage Issues view depends on, so it also needs the
-  // error columns and a CRM event, not just a status flip.
+  // error columns and a CRM event, not just a status flip. CONNECTION_FIXED/ADDED/UPDATED are
+  // handled separately too (below) — they need to clear the reauthorization flag/error columns
+  // that CONNECTION_BROKEN set, and need the authorizationId guard, so they aren't in this map.
+  const reactivatingEvents = new Set(['CONNECTION_ADDED', 'CONNECTION_UPDATED', 'CONNECTION_FIXED'])
   const statusByEvent: Record<string, string> = {
-    CONNECTION_ADDED: 'active',
-    CONNECTION_UPDATED: 'active',
-    CONNECTION_FIXED: 'active',
     CONNECTION_DELETED: 'removed',
     CONNECTION_REMOVED: 'removed',
   }
@@ -175,6 +175,38 @@ export async function POST(req: NextRequest) {
             })
           }
         }
+      }
+    } else if (reactivatingEvents.has(eventType) && snaptradeUserId) {
+      // The connection is good again — clear exactly what CONNECTION_BROKEN set, in reverse.
+      // Guard: SnapTrade can send CONNECTION_ADDED with a null/missing authorizationId. Without
+      // a specific id to match, a blanket UPDATE across this user's connections could flip an
+      // unrelated, previously-`removed` row back to `active`. Skip rather than guess.
+      if (!authorizationId) {
+        console.error(
+          '[brokerage/webhook] missing authorizationId on',
+          eventType,
+          '— skipping update for user',
+          snaptradeUserId,
+        )
+      } else {
+        await customerExecute(
+          `UPDATE brokerage_connections
+              SET status = 'active', updated_at = now(),
+                  reauthorization_required = FALSE, last_error_code = NULL, last_error_summary = NULL
+            WHERE user_id = (SELECT id FROM users WHERE snaptrade_user_id = $1)
+              AND authorization_id = $2`,
+          [snaptradeUserId, authorizationId],
+        )
+        // Mirror of the CONNECTION_BROKEN flag clear below, flipped: restore the user flag once
+        // an active connection actually exists again.
+        await customerExecute(
+          `UPDATE users SET brokerage_connected = TRUE, updated_at = now()
+             WHERE snaptrade_user_id = $1
+               AND EXISTS (
+                 SELECT 1 FROM brokerage_connections bc
+                  WHERE bc.user_id = users.id AND bc.status = 'active')`,
+          [snaptradeUserId],
+        )
       }
     } else if (statusByEvent[eventType] && snaptradeUserId) {
       const newStatus = statusByEvent[eventType]
