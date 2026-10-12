@@ -153,10 +153,21 @@ export function handlePurchaseError(error: ListenerError, onError?: (message: st
 
 let listenersAttached = false
 
+/** The callbacks the currently-mounted billing screen wants. Read indirectly by the
+ *  listener closures below (never captured directly) so a NEW screen mount can claim
+ *  them on every initIap() call without re-attaching the underlying native listener. */
+let currentCallbacks: {
+  onError?: (message: string) => void
+  onVerified?: () => void
+} = {}
+
 /**
  * Connect to the store and attach the purchase-updated / purchase-error listeners.
- * Idempotent — safe to call on every mount of the billing screen; the listeners are
- * only attached once per app session.
+ * Idempotent — safe to call on every mount of the billing screen; the underlying native
+ * listeners are only attached once per app session, but the CALLBACKS are re-claimed on
+ * every call (bug fix: open billing, back out — teardownIap() leaves the listeners
+ * attached — reopen and buy, and the stale closure from the UNMOUNTED screen used to fire
+ * instead, calling setState/router.push through a dead component).
  *
  * `onVerified` fires after a purchase has been verified AND finished, so the caller
  * can refresh membership state and continue the enrollment flow exactly like
@@ -167,21 +178,22 @@ export async function initIap(callbacks: {
   onVerified?: () => void
 } = {}): Promise<void> {
   await initConnection()
+  currentCallbacks = callbacks
   if (listenersAttached) return
   listenersAttached = true
 
   purchaseUpdatedListener((purchase) => {
-    handlePurchaseUpdated(purchase, callbacks.onError)
+    handlePurchaseUpdated(purchase, currentCallbacks.onError)
       .then((result) => {
-        if (result.ok) callbacks.onVerified?.()
+        if (result.ok) currentCallbacks.onVerified?.()
       })
       .catch(() => {
-        callbacks.onError?.('Something went wrong finishing your purchase. Please contact support.')
+        currentCallbacks.onError?.('Something went wrong finishing your purchase. Please contact support.')
       })
   })
 
   purchaseErrorListener((error) => {
-    handlePurchaseError(error, callbacks.onError)
+    handlePurchaseError(error, currentCallbacks.onError)
   })
 }
 

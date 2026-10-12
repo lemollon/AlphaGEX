@@ -62,6 +62,7 @@ const {
   pickNewestPerProduct,
   purchase,
   loadProducts,
+  initIap,
 } = await import('@/billing/apple-iap')
 const { ApiError } = await import('@/api/client')
 
@@ -237,5 +238,38 @@ describe('loadProducts', () => {
     expect(products).toEqual([
       { productId: 'ironforge.spark.monthly', title: 'IronForge Spark', displayPrice: '$50.00' },
     ])
+  })
+})
+
+describe('initIap — callback re-claim across remounts', () => {
+  const flush = () => new Promise((resolve) => setImmediate(resolve))
+
+  it('a second initIap() call updates which callbacks fire, without re-attaching the native listener', async () => {
+    const onVerifiedA = vi.fn()
+    const onErrorA = vi.fn()
+    const onVerifiedB = vi.fn()
+    const onErrorB = vi.fn()
+
+    // Screen A mounts first.
+    await initIap({ onVerified: onVerifiedA, onError: onErrorA })
+    expect(mocks.purchaseUpdatedListener).toHaveBeenCalledTimes(1)
+
+    // Screen A unmounts (teardownIap only closes the connection — the listener stays
+    // attached per expo-iap convention), then screen B mounts and claims the callbacks.
+    await initIap({ onVerified: onVerifiedB, onError: onErrorB })
+    // Idempotent: the underlying native listener is attached exactly once per app session.
+    expect(mocks.purchaseUpdatedListener).toHaveBeenCalledTimes(1)
+
+    // Simulate the native layer firing the purchase-updated event now, after both mounts.
+    mocks.api.mockResolvedValueOnce({ ok: true })
+    const listener = mocks.purchaseUpdatedListener.mock.calls[0][0] as (p: unknown) => void
+    listener(makePurchase())
+    await flush()
+
+    // The CURRENT (B) screen's callback fires — not the stale one from the unmounted A.
+    expect(onVerifiedB).toHaveBeenCalledTimes(1)
+    expect(onVerifiedA).not.toHaveBeenCalled()
+    expect(onErrorA).not.toHaveBeenCalled()
+    expect(onErrorB).not.toHaveBeenCalled()
   })
 })

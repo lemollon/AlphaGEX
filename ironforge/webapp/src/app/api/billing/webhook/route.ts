@@ -59,6 +59,33 @@ function botsFor(meta: Record<string, any> | undefined): { bots: string[]; bundl
 // emitMembershipEvent live in lib/billing/membership-sync so the Apple IAP rail (verify +
 // server notifications) writes through the exact same functions.
 
+/**
+ * Ordering guard (bug fix: out-of-order delivery). Stripe delivers events at-least-once,
+ * NOT necessarily in order — a delayed/retried event can arrive AFTER a newer one that
+ * already advanced this subscription's row (e.g. a redelivered subscription.updated(active)
+ * landing after subscription.deleted, which would otherwise resurrect a canceled sub). The
+ * existing eventId dedupe above only blocks re-processing the SAME event; this is the
+ * separate guard for a DIFFERENT, OLDER event showing up late.
+ *
+ * Tracks the latest event.created actually applied per subscription id. The UPDATE's WHERE
+ * clause is the race-free compare-and-set: it only takes effect when the incoming event is
+ * NOT older than what's on file (>=, so same-second events — e.g. checkout.session.completed
+ * and customer.subscription.created, which commonly share a timestamp — are never wrongly
+ * skipped). Returns false exactly when the incoming event is strictly older and must be
+ * skipped (logged, never erred — an old event is not a failure).
+ */
+async function shouldApplyStripeEvent(subscriptionId: string | null, eventCreatedIso: string | null): Promise<boolean> {
+  if (!subscriptionId || !eventCreatedIso) return true // nothing to order against; fail open
+  const applied = await customerExecute(
+    `INSERT INTO stripe_subscription_event_order (stripe_subscription_id, last_event_created)
+     VALUES ($1, $2)
+     ON CONFLICT (stripe_subscription_id) DO UPDATE SET last_event_created = EXCLUDED.last_event_created
+       WHERE EXCLUDED.last_event_created >= stripe_subscription_event_order.last_event_created`,
+    [subscriptionId, eventCreatedIso],
+  ).catch(() => 1) // if the ordering table itself is unavailable, fall through and process
+  return applied > 0
+}
+
 /** Which bots (spark/flame/community) a given Stripe subscription currently grants. */
 async function botsForSubscription(userId: string, subscriptionId: string): Promise<{ bots: string[]; bundle: boolean }> {
   const rows = await customerQuery<{ bot: string; price_lookup_key: string | null }>(
@@ -144,6 +171,13 @@ export async function POST(req: NextRequest) {
         const { bots, bundle } = botsFor(obj.metadata)
         if (userId && bots.length) {
           const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : null
+          if (!(await shouldApplyStripeEvent(subscriptionId, unix(event.created)))) {
+            console.warn(
+              `[billing/webhook] stale checkout.session.completed for sub ${subscriptionId} — ` +
+                `a newer event already applied, skipping`,
+            )
+            break
+          }
           for (const bot of bots) {
             await upsertSubscription({
               userId,
@@ -197,6 +231,12 @@ export async function POST(req: NextRequest) {
         if (userId && bots.length) {
           const status = event.type === 'customer.subscription.deleted' ? 'canceled' : String(obj.status ?? 'active')
           const subscriptionId = typeof obj.id === 'string' ? obj.id : null
+          if (!(await shouldApplyStripeEvent(subscriptionId, unix(event.created)))) {
+            console.warn(
+              `[billing/webhook] stale ${event.type} for sub ${subscriptionId} — a newer event already applied, skipping`,
+            )
+            break
+          }
           for (const bot of bots) {
             await upsertSubscription({
               userId,
@@ -264,6 +304,10 @@ export async function POST(req: NextRequest) {
         const userId = await resolveUserId(obj.metadata, obj.customer)
         const subId = typeof obj.subscription === 'string' ? obj.subscription : null
         if (userId && subId) {
+          if (!(await shouldApplyStripeEvent(subId, unix(event.created)))) {
+            console.warn(`[billing/webhook] stale invoice.payment_failed for sub ${subId} — a newer event already applied, skipping`)
+            break
+          }
           // Mark every bot on this subscription past_due. Scoped by subscription id so a
           // customer with two separate subscriptions only has the failing one paused.
           await customerExecute(
@@ -299,6 +343,10 @@ export async function POST(req: NextRequest) {
         const userId = await resolveUserId(obj.metadata, obj.customer)
         const subId = typeof obj.subscription === 'string' ? obj.subscription : null
         if (userId && subId) {
+          if (!(await shouldApplyStripeEvent(subId, unix(event.created)))) {
+            console.warn(`[billing/webhook] stale invoice.paid for sub ${subId} — a newer event already applied, skipping`)
+            break
+          }
           await customerExecute(
             `UPDATE customer_bot_subscriptions
                 SET status = 'active', updated_at = now()

@@ -596,6 +596,28 @@ CREATE TABLE IF NOT EXISTS stripe_webhook_events (
   error TEXT
 );
 
+-- Ordering guard for Stripe subscription events (bug fix: out-of-order delivery). One
+-- row per subscription id; the webhook compares an incoming event's 'created' timestamp
+-- against last_event_created and skips (never applies) an older/stale event — e.g. a
+-- delayed, retried subscription.updated(active) arriving after subscription.deleted.
+CREATE TABLE IF NOT EXISTS stripe_subscription_event_order (
+  stripe_subscription_id TEXT PRIMARY KEY,
+  last_event_created TIMESTAMPTZ NOT NULL
+);
+
+-- Apple Server Notifications replay/dedupe guard + dead-letter — same shape and purpose
+-- as stripe_webhook_events above, now that notification handler errors are no longer
+-- swallowed into a 200 (bug fix: a transient DB failure must make Apple retry, not
+-- silently drop a REFUND/EXPIRED/REVOKE forever). notification_uuid is Apple's own
+-- notificationUUID, stable across a redelivery of the same notification.
+CREATE TABLE IF NOT EXISTS apple_notification_events (
+  notification_uuid TEXT PRIMARY KEY,
+  notification_type TEXT NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  processed_at TIMESTAMPTZ,
+  error TEXT
+);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Phase B: customer order executor (lib/customer-executor). One row per
 -- (master position × customer) — simultaneously the durable idempotency record

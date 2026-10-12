@@ -83,6 +83,7 @@ async function stripeRequest<T = any>(
   method: 'GET' | 'POST' | 'DELETE',
   path: string,
   params?: Record<string, unknown>,
+  opts?: { idempotencyKey?: string },
 ): Promise<T> {
   const key = secretKey()
   if (!key) throw new StripeNotConfiguredError()
@@ -91,6 +92,9 @@ async function stripeRequest<T = any>(
     Authorization: `Bearer ${key}`,
     'Stripe-Version': STRIPE_VERSION,
   }
+  // A retried POST with the SAME key returns the result of the first attempt instead of
+  // creating a second live object. Only meaningful on POST (Stripe ignores it otherwise).
+  if (opts?.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey
   let url = `${API_BASE}${path}`
   let body: string | undefined
   const encoded = params ? encodeForm(params).join('&') : ''
@@ -455,6 +459,13 @@ export async function getDefaultPaymentMethod(
  *
  * Called ONLY from the activation transaction — this is the moment §7 permits the trial
  * clock to start.
+ *
+ * `idempotencyKey` (bug fix): the caller's own Idempotency-Key header only dedupes the
+ * CLIENT's HTTP retry of /api/v1/activations — it never reached Stripe itself. Without a
+ * Stripe-level key, a retry after this call succeeds but a LATER step in the same request
+ * throws (e.g. the DB write) creates a genuinely second live subscription on the next
+ * attempt. Passing it here makes a retried call with the same key return the subscription
+ * already created on the first attempt instead.
  */
 export async function createTrialingSubscription(opts: {
   customerId: string
@@ -463,18 +474,24 @@ export async function createTrialingSubscription(opts: {
   bot: string
   /** Generous upper bound; the ledger ends it earlier. */
   holdDays?: number
+  idempotencyKey?: string
 }): Promise<{ id: string; status: string }> {
   const holdDays = opts.holdDays ?? TRIAL_HOLD_DAYS
   const trialEnd = Math.floor(Date.now() / 1000) + holdDays * 24 * 60 * 60
-  return stripeRequest<{ id: string; status: string }>('POST', '/subscriptions', {
-    customer: opts.customerId,
-    items: [{ price: opts.priceId }],
-    trial_end: trialEnd,
-    // Without this Stripe may void the subscription when the trial ends with no
-    // default payment method; we want it to charge the card captured at enrollment.
-    trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
-    metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
-  })
+  return stripeRequest<{ id: string; status: string }>(
+    'POST',
+    '/subscriptions',
+    {
+      customer: opts.customerId,
+      items: [{ price: opts.priceId }],
+      trial_end: trialEnd,
+      // Without this Stripe may void the subscription when the trial ends with no
+      // default payment method; we want it to charge the card captured at enrollment.
+      trial_settings: { end_behavior: { missing_payment_method: 'cancel' } },
+      metadata: { ironforge_user_id: opts.userId, bot: opts.bot },
+    },
+    opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : undefined,
+  )
 }
 
 /** End the trial NOW — the ledger reached five eligible trading days; bill it (§7). */
