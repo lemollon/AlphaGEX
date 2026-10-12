@@ -210,6 +210,33 @@ real contradiction (gated on `regime_side != neutral`, a same-session
 baseline, and a >3% VIX move to filter noise) — never fabricated from a
 missing or stale VIX reading.
 
+## Flat regime label (2026-10-12.2)
+
+Leron, repeatedly: "come out and say if its risk on day, choppy day, defensive
+day" and "if thing changed from choppy to risk on say it" -- the existing
+`risk_on_defensive.verdict` text ("Risk-on price confirmation" / "Defensive
+price confirmation" / "Mixed price confirmation") required inference. Two new
+fields fix this with zero new evidence, just a relabel of the same
+risk/defensive/mixed computation plus a stored-baseline comparison, same
+pattern as every other morning/prior-hour field here:
+
+- `risk_on_defensive.regime_label` -- `"RISK-ON"`, `"DEFENSIVE"`, or
+  `"CHOPPY"` (CHOPPY is the existing "mixed" state: SPY and QQQ returns
+  disagree in sign). Same gate as `verdict` -- both SPY and QQQ must have a
+  valid return, or the field is unavailable, never guessed.
+- `morning_comparison.regime_label_shift` -- `{morning_label,
+  prior_hour_label, current_label, changed_since_morning,
+  changed_since_prior_hour}`. Reads the label out of the stored
+  morning/prior-hour report the same way `regime_shift` already reads
+  net-GEX/control-side/suitability off the baseline's `report_blocks`.
+
+`decision_brief_lines` (`report_policy.py`) opens every report with this
+label as line one -- `"CHOPPY."` or, when it flipped,
+`"CHOPPY -- changed from RISK-ON since this morning."` -- instead of the
+former hedge ("price is leaning defensive"). Falls back to the old hedged
+phrasing only if `regime_label` itself is unavailable (degraded evidence),
+never fabricating a label SPY/QQQ returns don't support.
+
 ## Integrity and failure behavior
 
 Source timestamps require a timezone and cannot be in the future. Age is

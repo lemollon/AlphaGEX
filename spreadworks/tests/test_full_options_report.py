@@ -535,3 +535,102 @@ def test_fmt_value_item_fields_still_render_as_kv_not_raw_json():
     assert 'kvblock' in html
     assert 'fieldname' not in html or True  # kv rows use .k/.v classes, not a raw dump
     assert '<pre class="raw">{\n  "expiration"' not in html
+
+
+def cross_asset(spy_price,qqq_price):
+    return {'assets':{'SPY':{'price':spy_price,'prev_close':100,'source_timestamp':NOW.isoformat()},
+                       'QQQ':{'price':qqq_price,'prev_close':100,'source_timestamp':NOW.isoformat()}}}
+
+def test_regime_label_covers_risk_on_defensive_and_choppy_signs():
+    """Leron, 2026-10-12: "come out and say if its risk on day, choppy day, defensive day" --
+    a flat label, not a hedge, same risk/defensive sign-agreement logic the verdict text
+    already used (single source of truth), just named the way he actually thinks about it."""
+    cases=[(102,101,'RISK-ON','Risk-on price confirmation'),
+           (98,99,'DEFENSIVE','Defensive price confirmation'),
+           (102,99,'CHOPPY','Mixed price confirmation'),
+           (98,101,'CHOPPY','Mixed price confirmation')]
+    for spy_price,qqq_price,label,verdict_text in cases:
+        current=core();current['cross_asset']=cross_asset(spy_price,qqq_price)
+        blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+        assert blocks['risk_on_defensive']['regime_label']['value']==label
+        assert blocks['risk_on_defensive']['verdict']['value']==verdict_text
+
+def test_regime_label_unavailable_when_only_one_symbol_has_a_return():
+    """regime_label requires BOTH SPY and QQQ returns -- with only one available it must stay
+    an explicit, disclosed unavailable, never a fabricated single-symbol guess."""
+    current=core()
+    current['cross_asset']={'assets':{'SPY':{'price':102,'prev_close':100,'source_timestamp':NOW.isoformat()}}}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    assert blocks['risk_on_defensive']['regime_label']['status']=='unavailable'
+
+def test_morning_comparison_vix_never_leaks_into_spy_qqq_shaped_fields():
+    """comparison (built in assemble_report) always carries a 'VIX' row for the
+    change_vs_baselines contradiction-calling path -- but every other morning_comparison
+    field is SPY/QQQ-shaped and must never pick up a VIX entry just because the per-symbol
+    loop iterates over comparison.items()."""
+    row={'morning_timestamp':NOW.isoformat(),'morning_spot':100,'current_spot':101,'price_change_pct':1.0,
+         'baseline_source_timestamp':NOW.isoformat(),'current_source_timestamp':NOW.isoformat(),
+         'baseline_session_matches':True,'frozen_expected_move':None,'frozen_lower':None,'frozen_upper':None}
+    comparison={'SPY':dict(row),'QQQ':dict(row,current_spot=99,price_change_pct=-1.0),
+                'VIX':dict(row,morning_spot=20,current_spot=21,price_change_pct=5.0)}
+    blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},comparison,[],NOW)
+    for field in ('morning_timestamp','price_location','move_usage','chop_status','stall_risk','setup_status','regime_shift'):
+        value=blocks['morning_comparison'][field]['value']
+        assert value is None or 'VIX' not in value
+        assert value is None or {'SPY','QQQ'}>=set(value)
+
+def test_regime_label_shift_reports_change_since_morning_and_prior_hour():
+    """Direct report_blocks-level check of the regime_label_shift field logic: morning/prior
+    labels come from core['baseline_blocks']/['prior_blocks']['regime_label'] (plain strings,
+    the one key in those dicts that is NOT per-symbol), compared against today's freshly
+    computed label."""
+    current=core();current['cross_asset']=cross_asset(102,99)  # today = CHOPPY
+    current['baseline_blocks']={'regime_label':'RISK-ON'}
+    current['prior_blocks']={'regime_label':'RISK-ON'}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    shift=blocks['morning_comparison']['regime_label_shift']['value']
+    assert shift=={'morning_label':'RISK-ON','prior_hour_label':'RISK-ON','current_label':'CHOPPY',
+                   'changed_since_morning':True,'changed_since_prior_hour':True}
+
+def test_regime_label_shift_no_change_case():
+    current=core();current['cross_asset']=cross_asset(102,101)  # today = RISK-ON
+    current['baseline_blocks']={'regime_label':'RISK-ON'}
+    current['prior_blocks']={'regime_label':'RISK-ON'}
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    shift=blocks['morning_comparison']['regime_label_shift']['value']
+    assert shift['changed_since_morning'] is False
+    assert shift['changed_since_prior_hour'] is False
+
+def test_regime_label_shift_no_baseline_case_degrades_without_exception():
+    """First report of the day: no morning/prior baseline at all. morning_label/prior_hour_label
+    must come back None, with no exception, rather than a false claim of change."""
+    current=core();current['cross_asset']=cross_asset(102,99)  # today = CHOPPY
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    shift=blocks['morning_comparison']['regime_label_shift']['value']
+    assert shift['morning_label'] is None and shift['prior_hour_label'] is None
+    assert shift['current_label']=='CHOPPY'
+    assert shift['changed_since_morning'] is False and shift['changed_since_prior_hour'] is False
+
+
+@pytest.mark.asyncio
+@freeze_time(NOW)
+async def test_regime_label_shift_wires_through_comparable_from_stored_morning_report(db,monkeypatch):
+    """End-to-end: comparable() (inside assemble_report) must unwrap a stored morning report's
+    nested risk_on_defensive.regime_label.value into core['baseline_blocks']['regime_label']
+    (a plain string, unlike every other key in that dict which is per-symbol SPY/QQQ), and
+    morning_comparison.regime_label_shift must then report the real change against today's
+    freshly computed label."""
+    current=core();current['cross_asset']=cross_asset(102,98)  # today = CHOPPY
+    monkeypatch.setattr(report,'cached_core',lambda now:current)
+    monkeypatch.setattr(report,'_plan_and_runtime',lambda now:({},{}))
+    monkeypatch.setattr(report,'scheduled_events',lambda now:([now.date()],[]))
+    morning={'generated_at':(NOW-timedelta(hours=3)).isoformat(),
+             'report_blocks':{'risk_on_defensive':{'regime_label':{'status':'live','value':'RISK-ON'}}}}
+    monkeypatch.setattr(report,'previous_reports',lambda now:(morning,{}))
+    result=await report.assemble_report(SimpleNamespace(),kind='intraday')
+    shift=result['report_blocks']['morning_comparison']['regime_label_shift']['value']
+    assert shift['morning_label']=='RISK-ON'
+    assert shift['current_label']=='CHOPPY'
+    assert shift['changed_since_morning'] is True
+    assert shift['prior_hour_label'] is None
+    assert shift['changed_since_prior_hour'] is False

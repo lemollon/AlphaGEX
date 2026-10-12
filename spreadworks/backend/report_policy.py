@@ -1013,10 +1013,26 @@ def decision_brief_lines(blocks):
     verdict = verdict_item.get("value")
     if not isinstance(verdict, str) or verdict_item.get("status") == "unavailable":
         return []
-    regime_side = _side_label(verdict)
-    mood = {"defensive": "leaning defensive", "risk-on": "leaning bullish",
-            "neutral": "mixed, no clean lean"}[regime_side]
-    lines = [f"Regime: price is {mood}."]
+    # Leron, 2026-10-12 (asked repeatedly): "come out and say if its risk on day, choppy day,
+    # defensive day... if thing changed from choppy to risk on say it." A flat label, line one,
+    # not a hedge -- and the change itself stated in plain words when it flipped.
+    label_item = (blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
+    regime_label = label_item.get("value") if isinstance(label_item.get("value"), str) else None
+    regime_side = {"RISK-ON": "risk-on", "DEFENSIVE": "defensive", "CHOPPY": "neutral"}.get(regime_label) or _side_label(verdict)
+    if regime_label:
+        shift_val = ((blocks.get("morning_comparison") or {}).get("regime_label_shift") or {}).get("value") or {}
+        morning_label = shift_val.get("morning_label")
+        prior_label = shift_val.get("prior_hour_label")
+        if shift_val.get("changed_since_morning") and morning_label:
+            lines = [f"{regime_label} -- changed from {morning_label} since this morning."]
+        elif shift_val.get("changed_since_prior_hour") and prior_label:
+            lines = [f"{regime_label} -- changed from {prior_label} last hour."]
+        else:
+            lines = [f"{regime_label}."]
+    else:
+        mood = {"defensive": "leaning defensive", "risk-on": "leaning bullish",
+                "neutral": "mixed, no clean lean"}[regime_side]
+        lines = [f"Regime: price is {mood}."]
 
     net_val = ((blocks.get("gamma") or {}).get("net_gex") or {}).get("value") or {}
     suit_val = ((blocks.get("premium_selling") or {}).get("suitability") or {}).get("value") or {}
