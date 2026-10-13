@@ -548,11 +548,42 @@ def test_bookkeeping_sections_get_real_counts_not_boilerplate_meaning():
     blocks['trigger_accountability']['registered_triggers']=item([{'setup_id':'s1'},{'setup_id':'s2'}])
     blocks['trigger_accountability']['verified_occurrence']=item(1)
     blocks['trigger_accountability']['loss_clusters']=item([[{'a':1},{'a':2}]])
-    assert '1 of 2 registered triggers' in section_meaning('trigger_accountability',blocks['trigger_accountability'])
+    # verified_occurrence is a cumulative all-time count, not bounded to today's n registered
+    # triggers -- live production showed 8 verified alerts against only 5 registered (verified
+    # > registered), so the meaning line must not phrase this as an "X of N" fraction.
+    assert '2 registered triggers on file; 1 verified alert' in section_meaning('trigger_accountability',blocks['trigger_accountability'])
     assert '1 verified ENTRY_READY alert' in section_summary('trigger_accountability',blocks['trigger_accountability'])
 
     blocks['entry_watches']['trigger']=item([{'state':'ENTRY_READY'},{'state':'WATCH'}])
     assert '1 of 2 registered setups just confirmed ENTRY_READY' in section_meaning('entry_watches',blocks['entry_watches'])
+
+def test_entry_watches_never_dumps_a_corrupted_nonscalar_state():
+    """Live bug, found 2026-10-13 on a real intraday report: the watcher's persisted
+    per_symbol_state occasionally carries a non-scalar 'state' (the raw tick-history list)
+    instead of one row's enum string. str(state) on that blob produced the exact "wall of
+    words" complaint -- a run-on dump of nested confirmation-evidence bars. Any non-string
+    state must degrade to "status unclear", never get stringified."""
+    blocks=empty_blocks()
+    corrupted_state=[{'confirmation_evidence':[{'close':741.7,'timestamp':'2026-10-13T15:05:00+00:00'}],
+                       'option_strike_selection':None,'reason':'waiting','setup_id':'x','state':'NEAR_TRIGGER'}]
+    blocks['entry_watches']['trigger']=item([{'symbol':'QQQ','setup_id':'s1','state':corrupted_state}])
+    summary=section_summary('entry_watches',blocks['entry_watches'])
+    assert 'status unclear' in summary
+    assert 'confirmation_evidence' not in summary and 'NEAR_TRIGGER' not in summary
+    meaning=section_meaning('entry_watches',blocks['entry_watches'])
+    assert 'status is unclear' in meaning
+
+def test_futures_context_unwraps_the_extra_observation_layer_some_producer_paths_leave():
+    """Live bug, found 2026-10-13 on a real intraday report: the macro-fallback producer path
+    (used when stored_futures() has no quality quote) leaves one extra observation()-wrapper
+    layer on each symbol's row -- {'es': {'value': {'price':...}, 'status':...}} -- instead of
+    the single-wrapped {'ES': {'price':...}} shape stored_futures() produces. Both must read."""
+    blocks=empty_blocks()
+    blocks['futures_context']['es_mes']=item({'es':{'value':{'symbol':'ES=F','price':7844.0},
+        'status':'historical','source':'Yahoo Finance delayed 5-minute bars','confidence':'MEDIUM'}})
+    summary=section_summary('futures_context',blocks['futures_context'])
+    assert '7844.00' in summary
+    assert 'symbol' not in summary.lower() and 'confidence' not in summary.lower()
 
 @freeze_time(NOW)
 def test_ct_str_converts_raw_utc_to_central_time_not_bare_iso():
