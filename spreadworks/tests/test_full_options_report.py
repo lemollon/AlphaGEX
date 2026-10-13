@@ -217,9 +217,16 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     assert assets['complete'];assert len(assets['images'])==11
     assert all(row['validated'] and row['sha256'][:32]==row['chart_id'] for row in assets['images'])
     assert report.get_chart_pdf(result['report_id']).body.startswith(b'%PDF-')
+    # The full narrative report (section summaries/meanings, scoreboard, edge board) as its
+    # own downloadable PDF -- distinct from charts.pdf, which is chart images only.
+    report_pdf=report.get_report_pdf(result['report_id'])
+    assert report_pdf.body.startswith(b'%PDF-')
+    assert 'Full Report PDF' in view
+    assert f"{result['report_id']}/report.pdf" in view
     import zipfile
     archive=zipfile.ZipFile(io.BytesIO(report.get_portable_report(result['report_id']).body))
-    assert {'report.html','report.md','manifest.json','charts.pdf'}<=set(archive.namelist())
+    assert {'report.html','report.md','report.pdf','manifest.json','charts.pdf'}<=set(archive.namelist())
+    assert archive.read('report.pdf').startswith(b'%PDF-')
     assert 'src="https://' not in archive.read('report.html').decode()
     assert len([name for name in archive.namelist() if name.endswith('.png')])==11
     # Preparing delivery again preserves embeds; callers cannot bypass rendered checks.
