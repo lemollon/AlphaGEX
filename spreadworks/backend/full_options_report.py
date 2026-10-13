@@ -16,7 +16,7 @@ from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_ren
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
 from .report_ledger import scorecard, qualify_package, mark_open_positions
 from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
-from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip
+from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip, markdown_report_pdf
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
 CT=ZoneInfo('America/Chicago')
@@ -749,6 +749,15 @@ def stored_report(report_id):
 @router.get('/{report_id}.md')
 def get_markdown(report_id:str):return Response(stored_report(report_id)['report_markdown'],media_type='text/markdown')
 
+@router.get('/{report_id}/report.pdf')
+def get_report_pdf(report_id:str):
+    """The full narrative report (every section's summary/meaning, scoreboard,
+    edge board) as one downloadable PDF -- distinct from charts.pdf, which is
+    chart images only."""
+    markdown=stored_report(report_id)['report_markdown']
+    return Response(markdown_report_pdf(markdown),media_type='application/pdf',
+                    headers={'Content-Disposition':f'attachment; filename="options-report-{report_id}.pdf"'})
+
 @router.get('/{report_id}/data')
 def report_data(report_id: str):
     """Immutable original evidence for the web reader; retrieval never refreshes it."""
@@ -980,7 +989,8 @@ def report_view(report_id:str):
                'Opportunity / premium: '+display(payload['report_blocks']['premium_selling']['suitability']),
                'Next test: recorded entry confirmation plus fresh per-leg BBO; dated context alone cannot activate a trade.'])
            +'</section>')
-    downloads=(f'<a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Chart PDF</a>'
+    downloads=(f'<a href="{PUBLIC_BASE}/{report_id}/report.pdf">Full Report PDF</a>'
+              f'<a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Chart PDF</a>'
               f'<a href="{PUBLIC_BASE}/{report_id}/portable.zip">Offline ZIP</a>'
               f'<a href="{payload["markdown_url"]}">Markdown</a>')
     style='''
