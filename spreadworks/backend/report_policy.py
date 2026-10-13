@@ -804,6 +804,11 @@ def _narrative_contract_packages(block):
     return " ".join(bits) if bits else None
 
 def _narrative_entry_watches(block):
+    """Live bug, found 2026-10-13 on a real intraday report: the watcher's persisted
+    per_symbol_state sometimes carries a non-scalar 'state' (the worker's raw tick-history
+    list, not one row's enum) for a given setup_id -- a producer-side bug, separate from and
+    not fixed by this file. str(state) on that blob is exactly the "wall of words" the reader
+    complained about; this only stops rendering it, it does not fix why it's wrong upstream."""
     trigger_item = block.get("trigger") or {}
     rows = trigger_item.get("value")
     if not isinstance(rows, list) or not rows:
@@ -814,8 +819,7 @@ def _narrative_entry_watches(block):
         if not isinstance(row, dict):
             continue
         sym, sid, state = row.get("symbol"), row.get("setup_id"), row.get("state")
-        state_key = state if isinstance(state, str) else None
-        word = state_word.get(state_key, (str(state).replace("_", " ").lower() if state else "status unclear"))
+        word = state_word.get(state, state.replace("_", " ").lower()) if isinstance(state, str) else "status unclear"
         bits.append(f"{sym} setup {sid} is {word}.")
     return " ".join(bits) if bits else None
 
@@ -854,10 +858,18 @@ def _narrative_macro(block):
 def _narrative_futures_context(block):
     """Same fix as macro: real ES/NQ levels and overnight range in prose instead of a raw
     per-contract observation dump. Never derives a futures-vs-cash basis here -- that
-    comparison is explicitly, permanently unavailable by design (see futures_context.basis)."""
+    comparison is explicitly, permanently unavailable by design (see futures_context.basis).
+
+    Live bug, found 2026-10-13 on a real intraday report: the macro-fallback producer path
+    (used when stored_futures() has no quality quote) leaves one extra observation()-wrapper
+    layer on each symbol's row -- {'es': {'value': {'symbol','price',...}, 'status','source',...}}
+    -- instead of the single-wrapped {'ES': {'price',...}} shape stored_futures() produces.
+    _unwrap() below accepts either."""
+    def _unwrap(row):
+        return row.get("value") if isinstance(row, dict) and isinstance(row.get("value"), dict) else row
     def _first(container, *keys):
         for k in keys:
-            row = (container or {}).get(k) if isinstance(container, dict) else None
+            row = _unwrap((container or {}).get(k)) if isinstance(container, dict) else None
             if isinstance(row, dict):
                 return row
         return None
@@ -1118,10 +1130,13 @@ def section_meaning(name, block, mission_side=None):
         if not states:
             return "No registered setups this checkpoint — nothing to watch yet."
         ready = sum(1 for s in states if s == "ENTRY_READY")
+        watch = sum(1 for s in states if s == "WATCH")
         if ready:
             return (f"{ready} of {len(states)} registered setup{'s' if len(states) != 1 else ''} just confirmed "
                      "ENTRY_READY — check the matching plan above before anything else.")
-        return f"All {len(states)} registered setup{'s' if len(states) != 1 else ''} are still on watch — nothing has confirmed yet."
+        if watch == len(states):
+            return f"All {len(states)} registered setup{'s' if len(states) != 1 else ''} are still on watch — nothing has confirmed yet."
+        return f"{len(states)} registered setup{'s' if len(states) != 1 else ''} on file; status is unclear for some this checkpoint."
     if name == "candidate_analysis":
         symbols = val("symbols")
         packages = val("liquidity")
@@ -1144,9 +1159,13 @@ def section_meaning(name, block, mission_side=None):
         if isinstance(registered, list):
             n = len(registered)
             verified = val("verified_occurrence")
+            # verified_occurrence is a cumulative count across the whole paper ledger's
+            # history, not bounded to today's n registered triggers -- it can exceed n, so
+            # an "X of N" fraction would misread as today's hit rate. Two separate facts
+            # instead, same as the section_summary line above it.
             v = int(verified) if _num(verified) else 0
-            return (f"{v} of {n} registered trigger{'s' if n != 1 else ''} have fired a verified alert "
-                     "this report cycle — a track record, not today's signal.")
+            return (f"{n} registered trigger{'s' if n != 1 else ''} on file; {v} verified alert{'s' if v != 1 else ''} "
+                     "fired across this system's full history — a track record, not today's signal.")
     return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
 
 def decision_brief_lines(blocks):
