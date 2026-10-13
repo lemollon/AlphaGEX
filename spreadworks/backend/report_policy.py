@@ -819,6 +819,114 @@ def _narrative_entry_watches(block):
         bits.append(f"{sym} setup {sid} is {word}.")
     return " ".join(bits) if bits else None
 
+def _narrative_macro(block):
+    """Leron: macro reads as "a wall of words" -- it fell to _generic_narrative_summary, which
+    recited raw per-symbol observation dicts (symbol/price/unit/observation_date for five
+    Treasury tenors alone) as a run-on "key value" sentence. Pulls the same real numbers into
+    plain prose instead; never computes a lean from them (macro stays context-only by design)."""
+    def _price(container, key):
+        row = (container or {}).get(key) if isinstance(container, dict) else None
+        return row.get("price") if isinstance(row, dict) else None
+    rates_item = block.get("rates") or {}
+    rates_val = rates_item.get("value")
+    if not isinstance(rates_val, dict) or rates_item.get("status") == "unavailable":
+        return None
+    r10 = _price(rates_val, "rates_10y")
+    curve_val = (block.get("curve") or {}).get("value") or {}
+    curve = curve_val.get("10y_minus_2y_basis_points") if isinstance(curve_val, dict) else None
+    move_val = (block.get("move") or {}).get("value") or {}
+    move_level = _price(move_val, "move")
+    dollar_val = (block.get("dollar") or {}).get("value") or {}
+    dollar_level = _price(dollar_val, "dollar")
+    bits = []
+    if _num(r10):
+        bits.append(f"the 10-year yield is {r10:.2f}%")
+    if _num(curve):
+        bits.append(f"the 2s10s curve is {'inverted' if curve < 0 else 'normal'} at {curve:+.0f}bps")
+    if _num(move_level):
+        bits.append(f"MOVE (bond vol) reads {move_level:.1f}")
+    if _num(dollar_level):
+        bits.append(f"the dollar index is at {dollar_level:.2f}")
+    if not bits:
+        return None
+    return "Macro backdrop: " + "; ".join(bits) + "."
+
+def _narrative_futures_context(block):
+    """Same fix as macro: real ES/NQ levels and overnight range in prose instead of a raw
+    per-contract observation dump. Never derives a futures-vs-cash basis here -- that
+    comparison is explicitly, permanently unavailable by design (see futures_context.basis)."""
+    def _first(container, *keys):
+        for k in keys:
+            row = (container or {}).get(k) if isinstance(container, dict) else None
+            if isinstance(row, dict):
+                return row
+        return None
+    def _level(row):
+        if not isinstance(row, dict):
+            return None
+        for k in ("price", "midpoint", "last_trade"):
+            if _num(row.get(k)):
+                return row[k]
+        return None
+    es_val = (block.get("es_mes") or {}).get("value") or {}
+    es_level = _level(_first(es_val, "ES", "MES", "es"))
+    nq_val = (block.get("nq") or {}).get("value") or {}
+    nq_level = _level(_first(nq_val, "NQ", "MNQ", "nq"))
+    overnight_val = (block.get("overnight_range") or {}).get("value") or {}
+    es_over = _first(overnight_val, "ES", "MES", "es")
+    lo, hi = (es_over or {}).get("overnight_low"), (es_over or {}).get("overnight_high")
+    bits = []
+    if _num(es_level):
+        sentence = f"ES is at {es_level:.2f}"
+        if _num(lo) and _num(hi):
+            sentence += f", inside an overnight range of {lo:.2f}-{hi:.2f}"
+        bits.append(sentence + ".")
+    if _num(nq_level):
+        bits.append(f"NQ is at {nq_level:.2f}.")
+    return " ".join(bits) if bits else None
+
+def _narrative_candidate_analysis(block):
+    symbols_item = block.get("symbols") or {}
+    symbols = symbols_item.get("value")
+    if not isinstance(symbols, list) or not symbols:
+        return None
+    sentence = f"Tracking {len(symbols)} symbol{'s' if len(symbols) != 1 else ''}: {', '.join(str(s) for s in symbols)}."
+    packages = (block.get("liquidity") or {}).get("value")
+    if isinstance(packages, list) and packages:
+        sentence += f" {len(packages)} qualified contract package{'s' if len(packages) != 1 else ''} currently live."
+    triggers = (block.get("conditional_triggers") or {}).get("value")
+    if isinstance(triggers, list) and triggers:
+        sentence += f" {len(triggers)} registered conditional trigger{'s' if len(triggers) != 1 else ''} on file."
+    return sentence
+
+def _narrative_position_management(block):
+    risk = (block.get("risk_exposure") or {}).get("value")
+    if not isinstance(risk, dict):
+        return None
+    max_risk = risk.get("open_max_defined_risk")
+    if not _num(max_risk):
+        return None
+    sentence = ("No paper capital currently at risk — nothing open right now." if max_risk <= 0
+                else f"${max_risk:,.0f} of paper capital is at risk across open positions right now.")
+    exceptions = ((block.get("chain_qualification") or {}).get("value") or {}).get("exceptions")
+    if isinstance(exceptions, list) and exceptions:
+        sentence += f" {len(exceptions)} unresolved quote exception{'s' if len(exceptions) != 1 else ''} on the books."
+    return sentence
+
+def _narrative_trigger_accountability(block):
+    registered = (block.get("registered_triggers") or {}).get("value")
+    if not isinstance(registered, list):
+        return None
+    verified = (block.get("verified_occurrence") or {}).get("value")
+    sentence = f"{len(registered)} registered trigger{'s' if len(registered) != 1 else ''} on file"
+    if _num(verified):
+        sentence += f", {int(verified)} verified ENTRY_READY alert{'s' if verified != 1 else ''} fired"
+    sentence += "."
+    clusters = (block.get("loss_clusters") or {}).get("value")
+    if isinstance(clusters, list) and clusters:
+        sentence += f" {len(clusters)} flagged loss cluster{'s' if len(clusters) != 1 else ''} in the audit trail."
+    return sentence
+
 _NARRATIVE_BUILDERS = {
     "risk_on_defensive": _narrative_risk_on_defensive,
     "gamma": _narrative_gamma,
@@ -836,6 +944,11 @@ _NARRATIVE_BUILDERS = {
     "forward_strategy": _narrative_strategy,
     "contract_packages": _narrative_contract_packages,
     "entry_watches": _narrative_entry_watches,
+    "macro": _narrative_macro,
+    "futures_context": _narrative_futures_context,
+    "candidate_analysis": _narrative_candidate_analysis,
+    "position_management": _narrative_position_management,
+    "trigger_accountability": _narrative_trigger_accountability,
 }
 
 def _generic_narrative_summary(block):
@@ -999,6 +1112,41 @@ def section_meaning(name, block, mission_side=None):
     if name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
         status = val("status")
         return _STATUS_MEANING.get(status, "Status is " + str(status) + "; apply the adaptation rules before acting.")
+    if name == "entry_watches":
+        rows = val("trigger")
+        states = [r.get("state") for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+        if not states:
+            return "No registered setups this checkpoint — nothing to watch yet."
+        ready = sum(1 for s in states if s == "ENTRY_READY")
+        if ready:
+            return (f"{ready} of {len(states)} registered setup{'s' if len(states) != 1 else ''} just confirmed "
+                     "ENTRY_READY — check the matching plan above before anything else.")
+        return f"All {len(states)} registered setup{'s' if len(states) != 1 else ''} are still on watch — nothing has confirmed yet."
+    if name == "candidate_analysis":
+        symbols = val("symbols")
+        packages = val("liquidity")
+        n_sym = len(symbols) if isinstance(symbols, list) else 0
+        n_pkg = len(packages) if isinstance(packages, list) else 0
+        if n_pkg:
+            return (f"{n_pkg} contract package{'s' if n_pkg != 1 else ''} qualified right now across "
+                     f"{n_sym} tracked symbol{'s' if n_sym != 1 else ''} — a roster, not a ranked pick.")
+        return f"{n_sym} symbol{'s' if n_sym != 1 else ''} tracked; no qualified contract package yet this checkpoint."
+    if name == "position_management":
+        risk = val("risk_exposure") or {}
+        max_risk = risk.get("open_max_defined_risk") if isinstance(risk, dict) else None
+        if _num(max_risk):
+            if max_risk > 0:
+                return f"${max_risk:,.0f} of paper capital is currently at risk — manage it, don't add to it from this section."
+            return "No paper capital currently at risk — nothing open to manage right now."
+        return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
+    if name == "trigger_accountability":
+        registered = val("registered_triggers")
+        if isinstance(registered, list):
+            n = len(registered)
+            verified = val("verified_occurrence")
+            v = int(verified) if _num(verified) else 0
+            return (f"{v} of {n} registered trigger{'s' if n != 1 else ''} have fired a verified alert "
+                     "this report cycle — a track record, not today's signal.")
     return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
 
 def decision_brief_lines(blocks):
@@ -1162,11 +1310,18 @@ def market_story_html(blocks):
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 
 def edge_board(blocks):
+    """Leron: "the edge board is not providing strike or expirations." The qualified contract
+    packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
+    already shown for day_strategy alone in the 30-second scoreboard's "Best underlying /
+    structure" row -- the Edge Board itself, the one place a trader actually reads trigger vs
+    invalidation vs status together, never carried it for any of the three horizons. Zero new
+    producer fields; this only wires existing data into the table that was missing it."""
     rows = []
     for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
         row = blocks[name]
         rows.append((name.replace("_", " "), display(row["trigger"], compact=True),
-                     display(row["invalidation"], compact=True), display(row["status"], compact=True)))
+                     display(row["invalidation"], compact=True), display(row["status"], compact=True),
+                     display(row.get("contracts", {}), compact=True)))
     return rows
 
 def biggest_traps(blocks):
@@ -1206,9 +1361,9 @@ def render_markdown(payload):
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(row["thesis"]).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
     lines.extend(["## 🧭 Market story",market_story(blocks)])
-    lines.extend(["## 🧩 Edge board","| Horizon | Trigger | Invalidation | Status |","|---|---|---|---|"])
-    for horizon,trigger,invalid,status in edge_board(blocks):
-        lines.append("| "+horizon+" | "+trigger.replace("|","\\|")+" | "+invalid.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
+    lines.extend(["## 🧩 Edge board","| Horizon | Trigger | Invalidation | Status | Contracts |","|---|---|---|---|---|"])
+    for horizon,trigger,invalid,status,contracts in edge_board(blocks):
+        lines.append("| "+horizon+" | "+trigger.replace("|","\\|")+" | "+invalid.replace("|","\\|")+" | "+status.replace("|","\\|")+" | "+contracts.replace("|","\\|")+" |")
     lines.append("## ⚠️ Biggest traps")
     lines.extend("- "+t for t in biggest_traps(blocks))
     lines.append("## 🧮 If/then day plan")
@@ -1665,11 +1820,12 @@ def render_opening_html(payload):
         out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks))+"</p>"
-    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th></tr>'
+    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th><th>Contracts</th></tr>'
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks.get(name) or {}
         out+=("<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+item_cell_html(row.get("trigger",{}))+"</td>"
-              "<td>"+item_cell_html(row.get("invalidation",{}))+"</td><td>"+item_cell_html(row.get("status",{}))+"</td></tr>")
+              "<td>"+item_cell_html(row.get("invalidation",{}))+"</td><td>"+item_cell_html(row.get("status",{}))+"</td>"
+              "<td>"+item_cell_html(row.get("contracts",{}))+"</td></tr>")
     out+="</table>"
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
     out+="<h2>🧮 If/then day plan</h2><table>"

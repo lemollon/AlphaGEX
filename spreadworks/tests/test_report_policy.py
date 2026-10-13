@@ -493,6 +493,67 @@ def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     plan=if_then_day_plan(blocks)
     assert any(k=='Activate' and 'Require the registered trigger' in v for k,v in plan)
 
+def test_edge_board_carries_the_qualified_contract_strike_and_expiration():
+    """Leron: "the edge board is not providing strike or expirations." Each horizon's
+    build_strategy_blocks()-computed contracts field already carries the qualified package;
+    the Edge Board table (markdown and HTML) just never rendered it."""
+    blocks=empty_blocks()
+    blocks['day_strategy']['trigger']=item('No registered trigger')
+    blocks['day_strategy']['invalidation']=item('No observed setup')
+    blocks['day_strategy']['status']=item('WATCH')
+    blocks['day_strategy']['contracts']=item([{'strategy':'put_credit_spread','expiration':'2026-10-06',
+        'legs':[{'strike':580,'action':'sell'},{'strike':575,'action':'buy'}],'natural_credit':1.25}])
+    rows=edge_board(blocks)
+    assert len(rows)==3 and len(rows[0])==5
+    assert '580' in rows[0][4] and '575' in rows[0][4]
+    html_out=render_opening_html({'kind':'intraday','generated_at':NOW.isoformat(),'report_blocks':blocks})
+    assert '<th>Contracts</th>' in html_out
+
+def test_macro_and_futures_context_summaries_use_real_numbers_not_a_field_dump():
+    """Leron: macro/futures read as "a wall of words." Both sections had no bespoke narrative
+    builder and fell to the generic field:value recap, which recited the raw nested
+    observation dicts (symbol/price/unit/observation_date per tenor) as a run-on sentence."""
+    blocks=empty_blocks()
+    blocks['macro']['rates']=item({'rates_10y':{'symbol':'DGS10','price':4.12,'unit':'percent annual yield'}})
+    blocks['macro']['curve']=item({'10y_minus_2y_basis_points':-25})
+    blocks['macro']['move']=item({'move':{'symbol':'^MOVE','price':95.3}})
+    blocks['macro']['dollar']=item({'dollar':{'symbol':'DX-Y.NYB','price':103.2}})
+    macro_summary=section_summary('macro',blocks['macro'])
+    assert '4.12' in macro_summary and 'inverted' in macro_summary and '95.3' in macro_summary and '103.2' in macro_summary
+    assert 'symbol' not in macro_summary.lower()  # no raw field-name leakage from the old generic fallback
+
+    blocks['futures_context']['es_mes']=item({'ES':{'price':5820.25}})
+    blocks['futures_context']['overnight_range']=item({'ES':{'overnight_low':5800.0,'overnight_high':5840.0}})
+    blocks['futures_context']['nq']=item({'NQ':{'price':20500.5}})
+    futures_summary=section_summary('futures_context',blocks['futures_context'])
+    assert '5820.25' in futures_summary and '5800.00' in futures_summary and '20500.50' in futures_summary
+
+def test_bookkeeping_sections_get_real_counts_not_boilerplate_meaning():
+    """Leron: candidate_analysis/position_management/trigger_accountability "tell me nothing."
+    Their section_meaning always fell straight to the fixed role sentence, never the section's
+    own real values, even though real counts (open risk, registered triggers, confirmed
+    setups) were already computed and sitting right there."""
+    blocks=empty_blocks()
+    blocks['candidate_analysis']['symbols']=item(['SPY','QQQ'])
+    blocks['candidate_analysis']['liquidity']=item([{'strategy':'put_credit_spread'}])
+    blocks['candidate_analysis']['conditional_triggers']=item([{'setup_id':'s1'}])
+    assert '2 tracked symbols' in section_meaning('candidate_analysis',blocks['candidate_analysis'])
+    assert 'Tracking 2 symbols: SPY, QQQ' in section_summary('candidate_analysis',blocks['candidate_analysis'])
+
+    blocks['position_management']['risk_exposure']=item({'open_max_defined_risk':420.0,'quantity_model':'x'})
+    blocks['position_management']['chain_qualification']=item({'rule':'x','exceptions':[{'reason':'y'}]})
+    assert '$420' in section_meaning('position_management',blocks['position_management'])
+    assert '$420' in section_summary('position_management',blocks['position_management'])
+
+    blocks['trigger_accountability']['registered_triggers']=item([{'setup_id':'s1'},{'setup_id':'s2'}])
+    blocks['trigger_accountability']['verified_occurrence']=item(1)
+    blocks['trigger_accountability']['loss_clusters']=item([[{'a':1},{'a':2}]])
+    assert '1 of 2 registered triggers' in section_meaning('trigger_accountability',blocks['trigger_accountability'])
+    assert '1 verified ENTRY_READY alert' in section_summary('trigger_accountability',blocks['trigger_accountability'])
+
+    blocks['entry_watches']['trigger']=item([{'state':'ENTRY_READY'},{'state':'WATCH'}])
+    assert '1 of 2 registered setups just confirmed ENTRY_READY' in section_meaning('entry_watches',blocks['entry_watches'])
+
 @freeze_time(NOW)
 def test_ct_str_converts_raw_utc_to_central_time_not_bare_iso():
     """Leron (Texas, Central Time) read a report's top-of-page timestamp
