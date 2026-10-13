@@ -44,6 +44,12 @@ import { canReadProductionBalance } from '@/lib/tradier'
  * trading — at which point the page must stop showing the paper badge and start
  * reading the production ledger. Resolving here keeps the badge honest in both
  * directions instead of drifting out of sync with the arm switch.
+ *
+ * SPARK is now declared 'paper' too and has no runtime branch, because its live
+ * account does not live in env — it lived in `ironforge_accounts`, and that row
+ * was deactivated on 2026-08-23. There is nothing synchronous to key on here, so
+ * `live-bots.test.ts` pins the declaration against `describeLiveGate('spark')`
+ * instead. See the note on LIVE_BOT_MODE in bots.ts.
  */
 export function resolveAccountMode(bot: LiveBot): LiveAccountMode {
   // 🚨 KEYED ON CREDENTIALS, NOT THE ARM SWITCH (2026-08-17).
@@ -68,9 +74,11 @@ export function resolvePaperBots(bots: LiveBot[]): LiveBot[] {
 /**
  * Ledger filter for a bot's customer-facing queries.
  *
- * Production bots (SPARK) read only account_type='production' rows.
- * Paper bots (FLAME) have no production rows by construction — they read the
- * complement, so their pages show the paper ledger instead of rendering empty.
+ * A production read takes only account_type='production' rows.
+ * A paper read takes the complement, so the page shows the paper ledger instead
+ * of rendering empty. Both live bots are paper as of 2026-08-28; the production
+ * branch is still reached by FLAME whenever its creds are present, and by an
+ * explicit modeOverride from the Paper/Live switch.
  * NULL account_type is treated as sandbox/paper by the same COALESCE the
  * production filter uses, so the two branches partition the table exactly.
  *
@@ -159,6 +167,15 @@ export function scopeFilter(
 }
 
 /** Bots that genuinely have both ledgers, so a Paper/Live switch is meaningful. */
+/**
+ * Does this bot have BOTH ledgers worth showing, i.e. does it earn a Paper/Live
+ * switch on the customer page?
+ *
+ * FLAME only. SPARK's production row exists but is `is_active=false` with zero
+ * trades and an untouched $5,000 starting balance — a switch to it would offer a
+ * customer a dead account and imply real money that is not there. When SPARK is
+ * given a live account again, add it here in the same commit.
+ */
 export function hasBothLedgers(bot: LiveBot): boolean {
   return bot === 'flame' && canReadProductionBalance('flame')
 }

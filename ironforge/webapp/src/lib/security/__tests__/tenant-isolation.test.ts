@@ -10,6 +10,10 @@
  * signed-in customer's Live page rendered the SPARK production account (person
  * 'Logan', a real Tradier account) as "your account" — balance, P&L, open position.
  * The "customer with no person mapping" case below is that incident as a test.
+ *
+ * The tenants swapped bots on 2026-08-28: the PRODUCTION tenant is now FLAME, not
+ * SPARK. Nothing about the invariant changed — see harness.ts for why the bot A
+ * points at has to be a production one for any of this to mean anything.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { TENANT_A, TENANT_B, makeSqlSpy, expectEveryLedgerQueryScoped, expectNeverMentions } from './harness'
@@ -23,6 +27,11 @@ vi.mock('@/lib/tradier', async (importOriginal) => {
   return {
     ...actual,
     isFlameLiveArmed: () => false,
+    // 🚨 FORCES TENANT_A (flame) ONTO THE PRODUCTION LEDGER. Owner scoping is a
+    // production-branch property; resolveAccountMode('flame') keys on this, and
+    // without it no bot resolves to production in the test env and every
+    // assertion below passes vacuously. See the note on TENANT_A in harness.ts.
+    canReadProductionBalance: (name: string) => name === 'flame',
     getTradierBalances: async () => null,
     getPositionMtm: async () => null,
     getProductionPauseState: async () => ({ paused: false }),
@@ -129,6 +138,30 @@ describe('one tenant can never surface another tenant', () => {
     for (const c of ledger) {
       expect(c.sql).toContain("person = 'x'' OR ''1''=''1'")
       expect(c.sql).not.toMatch(/OR\s+'1'\s*=\s*'1'/)
+    }
+  })
+})
+
+describe('a paper bot is unscoped ON PURPOSE — do not "fix" this back', () => {
+  // The mirror of the leak guard, and the reason SPARK's real book was invisible
+  // on ironforge.trade for five days. A paper bot has ONE simulated house ledger
+  // per (bot, dte_mode); every sandbox paper_account row has person = NULL,
+  // because the scanner's sandbox writes never mention person. Scoping a paper
+  // read by owner therefore matches zero rows and renders "isn't connected to
+  // your account yet" over a book that is trading normally (PR #2898).
+  //
+  // This is NOT the 2026-07-27 incident: that leaked a real Tradier account.
+  // Simulated house money that nobody owns is not another tenant's money.
+  it('reads the sandbox ledger with no owner filter and no AND FALSE', async () => {
+    await getLiveSummary(TENANT_B.bot, { allowAggregate: false, person: null })
+    const ledger = spy.calls.filter((c) =>
+      /_(positions|equity_snapshots|paper_account|daily_perf)\b/i.test(c.sql),
+    )
+    expect(ledger.length).toBeGreaterThan(0)
+    for (const c of ledger) {
+      expect(c.sql).toContain("COALESCE(account_type, 'sandbox') <> 'production'")
+      expect(c.sql).not.toMatch(/\bAND\s+FALSE\b/i)
+      expect(c.sql).not.toMatch(/\bperson\s*=/i)
     }
   })
 })
