@@ -400,6 +400,18 @@ def test_engine_consensus_no_longer_carries_risk_session_hunt():
     blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},{},[],NOW)
     assert set(blocks['engine_consensus'])=={'squeeze','trading_volatility_status','contradictions'}
 
+def test_build_strategy_blocks_appends_structure_family_hint_without_losing_the_safety_line():
+    """Leron, 2026-10-13: "what are the option strateiges to trade today based on market
+    condition." The existing no-fabricated-direction warning must survive alongside the new
+    textbook vol-regime hint, not get replaced by it."""
+    current=core()
+    blocks=report.report_blocks(current,{},{},{},ledger_empty(),{},{},[],NOW)
+    blocks['premium_selling']['suitability']={'status':'live','value':{'SPY':'PREMIUM_CHEAP'}}
+    report.build_strategy_blocks(blocks,current,{},{},ledger_empty(),{},{},NOW)
+    structure=blocks['day_strategy']['structure']['value']
+    assert 'no structure invented from directional pressure' in structure
+    assert 'debit spread' in structure
+
 def test_trade_volatility_scan_wires_the_collected_fields_into_blocks():
     """Leron, 2026-10-13: TradingVolatility's ranked long/short opportunities, income setups
     and put/call-ratio read now flow from the scan collector (report_trading_volatility_scan.py,
@@ -739,6 +751,29 @@ def test_report_view_section_summary_sections_get_narrative_divs_not_raw_field_r
     # test) regardless of the fields_html branch -- it is built from chart_urls/groups, not from
     # whether the section is narrative-only or raw-field.
     assert 'VISUAL DELIVERY FAILED' in surface_card
+
+@freeze_time(NOW)
+def test_report_view_sections_are_collapsible_but_keep_every_field_in_the_dom(db):
+    """Leron, repeatedly: "a long boring ass scroll." Collapsing bookkeeping sections by
+    default must not drop a single required field from the page -- <details> without the
+    open attribute still renders its content in the HTML, just not expanded on first paint."""
+    from backend.report_policy import observed
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+    blocks['risk_on_defensive']['verdict']=observed('Risk-on price confirmation','Observed provider feed',NOW,NOW)
+    blocks['scanner']['minute_cadence']=observed(5,'Observed provider feed',NOW,NOW)
+    report_id='d'*24
+    payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
+             'report_blocks':blocks,'chart_urls':{}}
+    _store_report(payload)
+    view=report.report_view(report_id)
+    mission_card=view.split('id="sec-risk-on-defensive"')[1].split('</section>')[0]
+    scanner_card=view.split('id="sec-scanner"')[1].split('</section>')[0]
+    assert '<details open>' in mission_card  # decision-relevant section opens by default
+    assert '<details>' in scanner_card  # bookkeeping section collapsed by default
+    # Collapsed or not, the content is still fully present in the HTML -- <details> without
+    # the open attribute hides nothing from the page source, only from first paint.
+    assert 'Section summary' in mission_card and 'Section summary' in scanner_card
 
 def test_report_view_raw_field_branch_still_used_for_a_section_outside_summary_sections(monkeypatch,db):
     """Defensive fallback check: if a section is NOT in SECTION_SUMMARY_SECTIONS (none are,

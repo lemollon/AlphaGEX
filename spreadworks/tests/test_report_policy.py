@@ -15,7 +15,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    narrative_package_html, item_cell_html, narrative_setup_html,
                                    decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html,
                                    _control_side_narrative, _narrative_entry_watches,
-                                   catalyst_vol_narrative, catalyst_vol_narrative_html)
+                                   catalyst_vol_narrative, catalyst_vol_narrative_html,
+                                   _structure_family_hint)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -517,6 +518,16 @@ def test_edge_board_carries_the_qualified_contract_strike_and_expiration():
     assert '580' in rows[0][4] and '575' in rows[0][4]
     html_out=render_opening_html({'kind':'intraday','generated_at':NOW.isoformat(),'report_blocks':blocks})
     assert '<th>Contracts</th>' in html_out
+
+def test_macro_yield_shows_day_over_day_change_not_just_a_snapshot():
+    """Leron, 2026-10-13: "what is the yield on treasury how has it changed... what does it
+    mean for today and the future" -- a bare level answers "what" but not "changed". Reuses
+    the same 14-day FRED window collect_macro() already fetches; no new data source."""
+    blocks=empty_blocks()
+    blocks['macro']['rates']=item({'rates_10y':{'symbol':'DGS10','price':4.12,'unit':'percent annual yield',
+        'change_1day_bp':3.0,'prior_observation_date':'2026-10-10'}})
+    summary=section_summary('macro',blocks['macro'])
+    assert 'up 3bp day-over-day' in summary
 
 def test_macro_and_futures_context_summaries_use_real_numbers_not_a_field_dump():
     """Leron: macro/futures read as "a wall of words." Both sections had no bespoke narrative
@@ -1329,6 +1340,39 @@ def test_trade_volatility_scan_narrative_and_meaning_surface_tv_ranked_opportuni
     meaning=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'])
     assert 'AUPH' in meaning and 'CANE' in meaning
     assert "not this report's own signal" in meaning  # third-party attribution, never claimed as our call
+
+def test_structure_family_hint_is_textbook_vol_regime_not_a_fabricated_edge():
+    """Leron, 2026-10-13: "what are the option strateiges to trade today based on market
+    condition butterflies, calendar, ircon condor, debit or credit spreads." Standard
+    options-theory correspondence only (rich+contained -> defined-risk premium selling,
+    cheap -> long premium) -- never a directional pick, never a backtested claim."""
+    blocks = empty_blocks()
+    # No premium_selling data at all -> no hint, not a guess.
+    assert _structure_family_hint(blocks) is None
+
+    blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_RICH'})
+    blocks['profile']['acceptance_rejection'] = item({'SPY': {'location': 'inside value'}})
+    hint = _structure_family_hint(blocks)
+    assert 'iron condor' in hint and 'contained range' in hint
+
+    blocks['profile']['acceptance_rejection'] = item({'SPY': {'location': 'above value'}})
+    hint = _structure_family_hint(blocks)
+    assert 'directional credit spread' in hint and "isn't contained" in hint
+
+    blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_CHEAP'})
+    assert 'debit spread' in _structure_family_hint(blocks)
+
+def test_trade_volatility_scan_meaning_ties_put_call_ratio_to_the_mission_call():
+    """Leron, 2026-10-13: "put call ratio does is support the read on the markets future
+    positioning" -- same cross-section tie-in pattern market_control already does against
+    mission_side, applied to SPY's put/call ratio."""
+    blocks=empty_blocks()
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.4}})
+    tension=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side='risk-on')
+    assert 'put-heavy' in tension and 'in tension with' in tension
+
+    agree=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side='defensive')
+    assert 'put-heavy' in agree and 'agreeing with' in agree
 
 def test_trade_volatility_scan_is_honest_when_vendor_unavailable():
     blocks=empty_blocks()  # every field unavailable, as if TV credentials/data are missing

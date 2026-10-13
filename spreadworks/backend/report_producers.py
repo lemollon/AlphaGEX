@@ -218,11 +218,20 @@ def collect_macro(now):
         r=requests.get('https://fred.stlouisfed.org/graph/fredgraph.csv',params={'id':'DGS2,DGS5,DGS10,DGS30','cosd':(now-timedelta(days=14)).date().isoformat()},timeout=8)
         r.raise_for_status();rows=list(csv.DictReader(io.StringIO(r.text)))
         for name,key in [('rates_2y','DGS2'),('rates_5y','DGS5'),('rates_10y','DGS10'),('rates_30y','DGS30')]:
-            row=next((r for r in reversed(rows) if number(r.get(key)) is not None),None)
+            valid=[r for r in rows if number(r.get(key)) is not None]
+            row=valid[-1] if valid else None
             if row:
                 date=row.get('DATE') or row.get('observation_date')
                 ts=datetime.fromisoformat(date).replace(tzinfo=UTC)
-                data[name]=observation({'symbol':key,'price':float(row[key]),'unit':'percent annual yield','observation_date':date},
+                value={'symbol':key,'price':float(row[key]),'unit':'percent annual yield','observation_date':date}
+                # Leron, 2026-10-13: "how has it changed, what does it mean for today and the
+                # future" -- same already-fetched 14-day FRED window just had its SECOND-to-last
+                # valid row sitting unused; no new API call needed for a real day-over-day read.
+                prior=valid[-2] if len(valid)>=2 else None
+                if prior:
+                    value['change_1day_bp']=round((float(row[key])-float(prior[key]))*100,1)
+                    value['prior_observation_date']=prior.get('DATE') or prior.get('observation_date')
+                data[name]=observation(value,
                     'Federal Reserve FRED daily Treasury observation date; not an intraday exchange clock',ts,now,delayed=True)
     except Exception:pass
     for name,symbol in symbols.items():
