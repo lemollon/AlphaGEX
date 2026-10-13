@@ -241,6 +241,8 @@ def business_dates(today, count):
         if day.weekday()<5 and not is_market_holiday(day):dates.append(day)
     return dates
 
+_STRUCTURE_DISCLAIMER = "Use the matching registered, freshly qualified defined-risk package; no structure invented from directional pressure."
+
 def _structure_family_hint(blocks):
     """Leron, 2026-10-13: "what are the option strateiges to trade today based on market
     condition butterflies, calendar, ircon condor, debit or credit spreads" -- a textbook
@@ -282,8 +284,7 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
     lifecycle=[{"setup_id":r.get("setup_id"),"state":r.get("state")} for r in state_rows]
     source="Deterministic registered strategy rules"
     structure_family_hint=_structure_family_hint(blocks)
-    structure_text=("Use the matching registered, freshly qualified defined-risk package; no structure invented from directional pressure."
-                    +(" "+structure_family_hint if structure_family_hint else ""))
+    structure_text=(_STRUCTURE_DISCLAIMER+(" "+structure_family_hint if structure_family_hint else ""))
     for name,(lo,hi) in horizons.items():
         forward=name!="day_strategy";points={};prints={};stamps=[]
         for symbol,row in core.get("surface",{}).items():
@@ -796,6 +797,17 @@ def _narrative_strategy(block):
         mood = ("leaning bullish" if "Risk-on" in thesis else "leaning defensive" if "Defensive" in thesis
                 else "mixed, no clean lean")
         sentence += f" Today's price read is {mood}."
+    # Leron, 2026-10-13: "what are the option strateiges to trade today... butterflies,
+    # calendar, ircon condor, debit or credit spreads." The structure field carries a dynamic
+    # textbook hint appended after the fixed disclaimer (_structure_family_hint, set in
+    # build_strategy_blocks); day_strategy/near_forward_strategy/forward_strategy all render
+    # through this narrative builder on both the HTML and markdown pages, so without surfacing
+    # it here the hint exists only in the raw /data JSON, never where a reader actually looks.
+    structure_val = (block.get("structure") or {}).get("value")
+    if isinstance(structure_val, str) and structure_val.startswith(_STRUCTURE_DISCLAIMER):
+        hint = structure_val[len(_STRUCTURE_DISCLAIMER):].strip()
+        if hint:
+            sentence += " " + hint
     trigger = (block.get("trigger") or {}).get("value")
     if isinstance(trigger, list) and trigger:
         sentence += f" {len(trigger)} registered setup{'s' if len(trigger) != 1 else ''} on watch."
