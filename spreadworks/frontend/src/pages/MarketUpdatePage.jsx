@@ -182,6 +182,11 @@ export default function MarketUpdatePage() {
                   <a style={S.link} href={selected.report_url} target="_blank" rel="noreferrer">
                     <ExternalLink size={13} /> Open full page
                   </a>
+                  {selected.report_pdf_url && (
+                    <a style={S.link} href={selected.report_pdf_url} target="_blank" rel="noreferrer">
+                      <FileDown size={13} /> Download PDF
+                    </a>
+                  )}
                   {selected.pdf_url && (
                     <a style={S.link} href={selected.pdf_url} target="_blank" rel="noreferrer">
                       <FileDown size={13} /> Charts PDF

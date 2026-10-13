@@ -23,6 +23,15 @@ def test_archive_excludes_verification_and_pages_stably(archive_db):
     assert not page['reports'][0]['readable']
     assert load_archive(archive_db,1,1)['reports'][0]['report_id']=='b'*24
 
+def test_archive_item_links_the_full_report_pdf_distinct_from_charts_pdf(archive_db):
+    # Live bug, 2026-10-13: the Market Update page's own toolbar (outside the report
+    # iframe) builds its download links from these archive fields, not from the iframed
+    # HTML -- report_pdf_url has to be here or the "Download PDF" button never appears.
+    row=load_archive(archive_db,1,1)['reports'][0]
+    assert row['report_pdf_url']==f"https://spreadworks-backend.onrender.com/api/spreadworks/reports/{'b'*24}/report.pdf"
+    assert row['pdf_url']==f"https://spreadworks-backend.onrender.com/api/spreadworks/reports/{'b'*24}/charts.pdf"
+    assert row['report_pdf_url']!=row['pdf_url']
+
 def test_date_uses_central_midnight_and_preserves_original_clock(archive_db):
     page=load_archive(archive_db,24,0,'morning','2026-10-06')
     assert page['total']==2

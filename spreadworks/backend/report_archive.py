@@ -18,7 +18,8 @@ def archive_item(report_id, generated_at, kind, raw):
     item = {'report_id': report_id, 'kind': kind, 'generated_at': stamp.isoformat(),
             'trading_date': clock.date().isoformat(), 'time_ct': clock.strftime('%H:%M'),
             'report_url': f'{BASE}/{report_id}/view', 'data_url': f'{BASE}/{report_id}/data',
-            'assets_url': f'{BASE}/{report_id}/assets', 'pdf_url': f'{BASE}/{report_id}/charts.pdf',
+            'assets_url': f'{BASE}/{report_id}/assets',
+            'report_pdf_url': f'{BASE}/{report_id}/report.pdf', 'pdf_url': f'{BASE}/{report_id}/charts.pdf',
             'offline_url': f'{BASE}/{report_id}/portable.zip'}
     try:
         payload = json.loads(raw)
