@@ -1424,7 +1424,7 @@ def biggest_traps(blocks):
     if isinstance(cv, list):
         for c in cv:
             if isinstance(c, dict) and str(c.get("impact")).upper() == "HIGH":
-                traps.append(str(c.get("name")) + " on " + str(c.get("datetime")))
+                traps.append(str(c.get("name")) + " on " + ct_str(c.get("datetime")))
     if not traps:
         traps.append("No flagged high-impact catalysts this checkpoint.")
     return traps

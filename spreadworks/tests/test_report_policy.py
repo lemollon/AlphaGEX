@@ -492,6 +492,12 @@ def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     # here) — biggest_traps is market-risk catalysts only now.
     assert any('CPI Report' in t for t in traps)
     assert not any('unavailable this checkpoint' in t for t in traps)
+    # Leron (Texas): "the report should be on central time." biggest_traps() used a raw
+    # str() on the catalyst datetime, leaking the unlabeled ISO offset ("...-05:00") straight
+    # onto the page instead of the same "HH:MM AM/PM CT" format every other clock in the
+    # report uses.
+    assert any('2026-10-14 07:30:00 AM CT' in t for t in traps)
+    assert not any('-05:00' in t for t in traps)
     blocks['adaptation_rules']['activate']=item('Require the registered trigger')
     plan=if_then_day_plan(blocks)
     assert any(k=='Activate' and 'Require the registered trigger' in v for k,v in plan)
