@@ -389,7 +389,8 @@ async def _cboe(client: httpx.AsyncClient, sym: str) -> dict[date, float]:
     if hit and (now - hit[0]).total_seconds() < _CBOE_TTL:
         return hit[1]
     r = await client.get(CBOE_URL.format(sym=sym),
-                         headers={"User-Agent": "Mozilla/5.0"})
+                         headers={"User-Agent": "Mozilla/5.0"},
+                         follow_redirects=True)
     r.raise_for_status()
     out: dict[date, float] = {}
     lines = r.text.splitlines()
