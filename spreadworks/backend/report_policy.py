@@ -241,6 +241,36 @@ def business_dates(today, count):
         if day.weekday()<5 and not is_market_holiday(day):dates.append(day)
     return dates
 
+def _structure_family_hint(blocks):
+    """Leron, 2026-10-13: "what are the option strateiges to trade today based on market
+    condition butterflies, calendar, ircon condor, debit or credit spreads" -- a textbook
+    volatility-regime-to-structure-FAMILY correspondence (rich/contained premium favors
+    defined-risk premium selling; cheap premium favors long premium), never a backtested
+    edge and never a directional pick -- that stays the existing, deliberate
+    "no structure invented from directional pressure" rule below. Built entirely from
+    premium_selling.suitability and profile.acceptance_rejection, both already computed and
+    rendered elsewhere on the page; this adds no new signal, only a standard-options-theory
+    reading of signals that already exist."""
+    suit_val = ((blocks.get("premium_selling") or {}).get("suitability") or {}).get("value") or {}
+    if not isinstance(suit_val, dict) or not suit_val:
+        return None
+    accept_val = ((blocks.get("profile") or {}).get("acceptance_rejection") or {}).get("value") or {}
+    locations = ([row.get("location") for row in accept_val.values() if isinstance(row, dict) and row.get("location")]
+                 if isinstance(accept_val, dict) else [])
+    contained = bool(locations) and all(loc == "inside value" for loc in locations)
+    labels = set(str(v) for v in suit_val.values())
+    if "PREMIUM_RICH" in labels and contained:
+        return ("Rich premium in a contained range textbook-favors defined-risk premium-selling "
+                "structures (iron condor, credit spread, calendar) over long premium.")
+    if "PREMIUM_RICH" in labels:
+        return ("Premium is rich but price isn't contained — a directional credit spread fits a "
+                "trending, rich-premium tape better than a symmetric iron condor.")
+    if "PREMIUM_CHEAP" in labels:
+        return "Premium is too cheap to sell — a debit spread or long option pays less time-decay drag than usual."
+    if "PREMIUM_FAIR" in labels:
+        return "Premium is fairly priced; structure choice here is about risk tolerance, not an edge from IV level alone."
+    return None
+
 def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, now):
     """Forward reads require actual expiry-specific observations, never 0DTE proxies."""
     today=now.astimezone(CT).date();sessions=business_dates(today,5)
@@ -251,6 +281,9 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
     packages=blocks["contract_packages"]["legs"]
     lifecycle=[{"setup_id":r.get("setup_id"),"state":r.get("state")} for r in state_rows]
     source="Deterministic registered strategy rules"
+    structure_family_hint=_structure_family_hint(blocks)
+    structure_text=("Use the matching registered, freshly qualified defined-risk package; no structure invented from directional pressure."
+                    +(" "+structure_family_hint if structure_family_hint else ""))
     for name,(lo,hi) in horizons.items():
         forward=name!="day_strategy";points={};prints={};stamps=[]
         for symbol,row in core.get("surface",{}).items():
@@ -321,7 +354,7 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         else:catalysts_for_horizon=raw_catalysts
         values={"horizon":{"from":lo.isoformat(),"through":hi.isoformat(),"unit":"Trading-session dates" if name=="near_forward_strategy" else "Calendar dates"},
             "conflicts":{"market_conflicts":blocks["risk_on_defensive"].get("conflicts"),"source_limits":"Prior OI, representative flow, partial calendars; fresh quotes do not prove predictive edge."},
-            "structure":"Use the matching registered, freshly qualified defined-risk package; no structure invented from directional pressure.",
+            "structure":structure_text,
             "trigger":setup_list or "No registered trigger; wait for a recorded rule and observed confirmation.",
             "invalidation":[{"setup_id":s.get("setup_id"),"invalidation":s.get("invalidation")} for s in setup_list] or "No observed setup; no inferred invalidation level.",
             "status":status,"quote_qualification":"Every selected leg requires source BBO ≤90s and valid executable side; historical chains are watch-only.",
@@ -832,11 +865,15 @@ def _narrative_macro(block):
     def _price(container, key):
         row = (container or {}).get(key) if isinstance(container, dict) else None
         return row.get("price") if isinstance(row, dict) else None
+    def _row(container, key):
+        row = (container or {}).get(key)
+        return row if isinstance(row, dict) else {}
     rates_item = block.get("rates") or {}
     rates_val = rates_item.get("value")
     if not isinstance(rates_val, dict) or rates_item.get("status") == "unavailable":
         return None
     r10 = _price(rates_val, "rates_10y")
+    r10_change = _row(rates_val, "rates_10y").get("change_1day_bp")
     curve_val = (block.get("curve") or {}).get("value") or {}
     curve = curve_val.get("10y_minus_2y_basis_points") if isinstance(curve_val, dict) else None
     move_val = (block.get("move") or {}).get("value") or {}
@@ -845,7 +882,14 @@ def _narrative_macro(block):
     dollar_level = _price(dollar_val, "dollar")
     bits = []
     if _num(r10):
-        bits.append(f"the 10-year yield is {r10:.2f}%")
+        sentence = f"the 10-year yield is {r10:.2f}%"
+        # Leron, 2026-10-13: "how has it changed, what does it mean for today and the
+        # future" -- a snapshot alone doesn't answer "changed"; this is the same FRED
+        # window's own prior valid day, not a new data source.
+        if _num(r10_change):
+            sentence += (f" ({'up' if r10_change > 0 else 'down' if r10_change < 0 else 'flat'} "
+                         f"{abs(r10_change):.0f}bp day-over-day)")
+        bits.append(sentence)
     if _num(curve):
         bits.append(f"the 2s10s curve is {'inverted' if curve < 0 else 'normal'} at {curve:+.0f}bps")
     if _num(move_level):
@@ -1211,19 +1255,37 @@ def section_meaning(name, block, mission_side=None):
             return "No paper capital currently at risk — nothing open to manage right now."
         return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
     if name == "trade_volatility_scan":
+        # Leron, 2026-10-13: "put call ratio does is support the read on the markets future
+        # positioning" -- same cross-section tie-in pattern market_control already uses against
+        # mission_side. Conventional reading only (elevated PCR = defensive put hedging, low PCR
+        # = call-heavy positioning); never a new signal, just whether two independent reads agree.
+        pcr_bits = []
+        pcr = val("put_call_ratio")
+        spy_pcr = (pcr or {}).get("SPY", {}).get("pcr_oi") if isinstance(pcr, dict) else None
+        if _num(spy_pcr) and mission_side in ("risk-on", "defensive"):
+            if spy_pcr >= 1.2:
+                agree = mission_side == "defensive"
+                pcr_bits.append(f"SPY's put/call ratio ({spy_pcr:.2f}) is running put-heavy — "
+                                 + ("agreeing with" if agree else "in tension with") + " the defensive/risk-on mission call above.")
+            elif spy_pcr <= 0.8:
+                agree = mission_side == "risk-on"
+                pcr_bits.append(f"SPY's put/call ratio ({spy_pcr:.2f}) is running call-heavy — "
+                                 + ("agreeing with" if agree else "in tension with") + " the defensive/risk-on mission call above.")
         longs = val("top_long_setups")
         shorts = val("top_short_setups")
         top_long = max((r for r in longs if _num(r.get("opportunity_score"))), key=lambda r: r["opportunity_score"], default=None) if isinstance(longs, list) else None
         top_short = max((r for r in shorts if _num(r.get("opportunity_score"))), key=lambda r: r["opportunity_score"], default=None) if isinstance(shorts, list) else None
         if top_long and top_short:
-            return (f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10), "
+            pcr_bits.append(f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10), "
                      f"{top_short['ticker']} its top short call ({top_short['opportunity_score']}/10) — their engine's "
                      "read, not this report's own signal; check caution flags before acting.")
-        if top_long:
-            return f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10) — their engine's read, not this report's own signal."
-        if top_short:
-            return f"{top_short['ticker']} is TradingVolatility's top short call ({top_short['opportunity_score']}/10) — their engine's read, not this report's own signal."
-        return "No TradingVolatility opportunities cleared this checkpoint."
+        elif top_long:
+            pcr_bits.append(f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10) — their engine's read, not this report's own signal.")
+        elif top_short:
+            pcr_bits.append(f"{top_short['ticker']} is TradingVolatility's top short call ({top_short['opportunity_score']}/10) — their engine's read, not this report's own signal.")
+        elif not pcr_bits:
+            return "No TradingVolatility opportunities cleared this checkpoint."
+        return " ".join(pcr_bits)
     if name == "trigger_accountability":
         registered = val("registered_triggers")
         if isinstance(registered, list):

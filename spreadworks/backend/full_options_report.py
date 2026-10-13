@@ -966,6 +966,16 @@ def report_view(report_id:str):
             'surface':'surface',
             'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
             'morning_comparison':'baseline_comparison','profile':'volume_profile'}
+    # Leron, repeatedly: "a long boring ass scroll." Every section now reads as 2 narrative
+    # lines instead of a field dump (see SECTION_SUMMARY_SECTIONS above), but 34 of them
+    # stacked is still a long page. Collapsed-by-default for sections that are honestly
+    # bookkeeping/audit (same classification report_policy.py's _SECTION_ROLE already uses);
+    # open by default for the sections a trader actually reads for today's call. Collapsing
+    # removes nothing from the DOM -- every required field is still fully present and found
+    # by in-page search, just not forced onto the screen before scrolling.
+    _OPEN_BY_DEFAULT = {'risk_on_defensive', 'market_control', 'gamma', 'flow', 'premium_selling',
+                         'day_strategy', 'near_forward_strategy', 'forward_strategy',
+                         'entry_watches', 'trade_volatility_scan'}
     for name,block in _ordered_blocks(payload['report_blocks']):
         anchor='sec-'+name.replace('_','-')
         title=name.replace('_',' ').title()
@@ -987,9 +997,10 @@ def report_view(report_id:str):
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
         section_meta_html=f'<div class="meta section-meta">{shared_meta}</div>' if shared_meta else ''
-        parts.append(f'<section class="card" id="{anchor}"><h2>{html.escape(title)}</h2>{section_meta_html}'
+        open_attr=' open' if name in _OPEN_BY_DEFAULT else ''
+        parts.append(f'<section class="card" id="{anchor}"><details{open_attr}><summary>{html.escape(title)}</summary>{section_meta_html}'
                      f'{"<div class=\'chart\'>"+image+"</div>" if image else ""}'
-                     f'<div class="fields">{fields_html}</div></section>')
+                     f'<div class="fields">{fields_html}</div></details></section>')
     from .report_policy import display
     bottom=('<section class="card bottomline"><h2>Bottom line</h2>'
            +''.join('<p>'+html.escape(line)+'</p>' for line in [
@@ -1019,9 +1030,20 @@ header.top h1{font-size:1.05rem;margin:0}
 nav.jump{display:flex;flex-wrap:wrap;gap:6px 10px;padding:14px 0;margin-bottom:8px;border-bottom:1px solid var(--border)}
 nav.jump a{color:var(--muted);text-decoration:none;font-size:.78rem;border:1px solid var(--border);border-radius:5px;padding:3px 8px}
 nav.jump a:hover{color:var(--accent);border-color:var(--accent)}
+.toggle-all{display:flex;gap:8px;margin:-4px 0 10px}
+.toggle-all button{font:inherit;font-size:.78rem;color:var(--muted);background:transparent;
+border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer}
+.toggle-all button:hover{color:var(--accent);border-color:var(--accent)}
 h1,h2{font-weight:700}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin:14px 0}
 .card h2{font-size:1.02rem;margin:0 0 12px}
+.card details{margin:0}
+.card summary{font-size:1.02rem;font-weight:700;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+.card summary::-webkit-details-marker{display:none}
+.card summary::before{content:'▸';color:var(--muted);font-size:.8rem;transition:transform .15s}
+.card details[open] summary::before{transform:rotate(90deg)}
+.card details>*:not(summary){margin-top:12px}
+.card summary{margin-bottom:0}
 .chart{margin-bottom:14px}
 .chart img{max-width:100%;border-radius:6px;display:block;background:#0b0e13}
 .chart p[role=alert]{color:var(--warn);font-size:.85rem}
@@ -1086,7 +1108,11 @@ h2{display:flex;align-items:center;gap:8px}
            f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}">{html.escape(payload["report_completeness"])}</span>'
            f'<span class="chip">immutable snapshot</span></div></header>'
            f'<div class="downloads">{downloads}</div>')
-    body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>'
+    toggle_all=('<div class="toggle-all">'
+                '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=true)">Expand all</button>'
+                '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
+                '</div>')
+    body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
          f'{render_opening_html(payload)}{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 

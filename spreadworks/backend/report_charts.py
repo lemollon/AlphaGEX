@@ -84,18 +84,28 @@ def chart_png(kind,evidence):
                 if low and high and spot:
                     y=0 if symbol=='SPY' else 1
                     ax.plot([low,high],[y,y],linewidth=12,alpha=.35,color=CYAN)
-                    ax.scatter([spot],[y],color=TEXT,s=80);ax.annotate(f'{dated(symbol,row)}\nEM {low:.2f} | spot {spot:.2f} | EM {high:.2f}',(spot,y),xytext=(0,32),textcoords='offset points',color=TEXT,ha='center');plotted=True
+                    ax.scatter([spot],[y],color=TEXT,s=80);ax.annotate(f'{dated(symbol,row)}\nEM {low:.2f} | spot {spot:.2f} | EM {high:.2f}',(spot,y),xytext=(0,46),textcoords='offset points',color=TEXT,ha='center');plotted=True
                     profile=profiles.get(symbol) or {}
                     val,vah,poc=(number(profile.get(k)) for k in ('val','vah','poc'))
                     if val is not None and vah is not None:
                         ax.plot([val,vah],[y-.12,y-.12],linewidth=7,color=GREEN,alpha=.5,label=dated(symbol+' observed value area; chop unconfirmed',profile))
                     if poc is not None:ax.scatter([poc],[y-.12],marker='D',color=GREEN,s=40)
                     gamma=(evidence.get('gamma') or {}).get(symbol) or {}
+                    wall_levels=[]
                     for key,label,color in [('gamma_flip','flip','#FBBF24'),('call_wall','call wall',RED),('put_wall','put wall',CYAN)]:
                         level=number(gamma.get(key))
                         if level is not None:
                             ax.plot([level,level],[y-.25,y+.25],color=color,linestyle='--')
-                            ax.annotate(f'{label} {level:.2f}',(level,y-.25),xytext=(0,-20),textcoords='offset points',color=color,ha='center',fontsize=8)
+                            wall_levels.append((level,label,color))
+                    # Live bug, found 2026-10-13 (Leron: "expected move visuals is hard to
+                    # read"): flip/call-wall/put-wall often sit within a few points of each
+                    # other (narrow gamma regimes, SPY especially), and every label used the
+                    # SAME fixed (0,-20) offset -- three price labels rendered stacked on top
+                    # of each other, unreadable. Sort by x and fan each label out one row
+                    # further down than the last so they never collide regardless of spacing.
+                    for rank,(level,label,color) in enumerate(sorted(wall_levels,key=lambda w:w[0])):
+                        ax.annotate(f'{label} {level:.2f}',(level,y-.25),xytext=(0,-20-14*rank),
+                                    textcoords='offset points',color=color,ha='center',fontsize=8)
             ax.set_yticks([]);ax.set_xlabel('Underlying price; observed expected-move bounds')
         elif kind=='baseline_comparison':
             current=evidence.get('comparison') or {}
