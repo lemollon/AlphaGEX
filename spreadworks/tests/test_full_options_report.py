@@ -291,6 +291,35 @@ def test_missing_clocks_never_become_live_context():
     assert blocks['breadth']['advance_decline']['status']=='unavailable'
     assert blocks['macro']['rates']['status']=='unavailable'
 
+def test_entry_watches_attaches_each_setups_own_state_not_the_whole_symbol_list():
+    """Production bug, 2026-10-13: runtime['per_symbol_state'][symbol] is a LIST of per-setup
+    state rows (one per registered setup for that symbol) -- the producer was doing
+    states.get(s['symbol']) and dumping that whole list into the field named 'state' for EVERY
+    setup on that symbol, instead of each setup's own scalar state. Confirmed in production
+    Render logs: this fed a list into report_policy._narrative_entry_watches's dict lookup and
+    500'd GET /api/spreadworks/reports/{id}/view with `TypeError: cannot use 'list' as a dict
+    key`. SPY has two setups here with two DIFFERENT states -- the old code would give both the
+    same object (the full two-row list); the fix must give each its own scalar string."""
+    plan={'generated_at':NOW.isoformat(),'setups':[
+        {'setup_id':'s1','symbol':'SPY','entry':{'type':'touch'},'invalidation':{'type':'close_below'}},
+        {'setup_id':'s2','symbol':'SPY','entry':{'type':'touch'},'invalidation':{'type':'close_below'}}]}
+    runtime={'per_symbol_state':{'SPY':[
+        {'setup_id':'s1','state':'ENTRY_READY'},
+        {'setup_id':'s2','state':'WATCH'}]}}
+    blocks=report.report_blocks(core(),{},plan,runtime,ledger_empty(),{},{},[],NOW)
+    rows=blocks['entry_watches']['status']['value']
+    by_setup={row['setup_id']:row['state'] for row in rows}
+    assert by_setup=={'s1':'ENTRY_READY','s2':'WATCH'}
+    # Neither row's state is ever the raw per-symbol list -- the exact shape of the bug.
+    assert all(not isinstance(row['state'],list) for row in rows)
+
+def test_entry_watches_state_is_none_when_setup_has_no_matching_runtime_row():
+    plan={'generated_at':NOW.isoformat(),'setups':[{'setup_id':'orphan','symbol':'SPY','entry':{},'invalidation':{}}]}
+    runtime={'per_symbol_state':{'SPY':[{'setup_id':'other','state':'WATCH'}]}}
+    blocks=report.report_blocks(core(),{},plan,runtime,ledger_empty(),{},{},[],NOW)
+    rows=blocks['entry_watches']['status']['value']
+    assert rows[0]['state'] is None
+
 def ledger_empty():
     return {'entry_ready_alerts':0,'trade_details':[],'exceptions':[],'fill_rules':'test','loss_clusters':[]}
 
