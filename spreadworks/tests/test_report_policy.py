@@ -26,9 +26,11 @@ def item(value=1,age=0):
     return observed(value,'Observed provider feed',NOW-timedelta(seconds=age),NOW)
 
 def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
-    assert len(REQUIREMENTS)==33
-    # 243 + regime_label (risk_on_defensive) + regime_label_shift (morning_comparison), 2026-10-12.
-    assert sum(map(len,REQUIREMENTS.values()))==245
+    assert len(REQUIREMENTS)==34
+    # 243 + regime_label (risk_on_defensive) + regime_label_shift (morning_comparison), 2026-10-12,
+    # + 5 trade_volatility_scan fields (top_long_setups, top_short_setups, income_setups,
+    # put_call_ratio, expected_move_trend), 2026-10-13.
+    assert sum(map(len,REQUIREMENTS.values()))==250
     assert 'regime_shift' in REQUIREMENTS['morning_comparison']
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
@@ -1289,6 +1291,43 @@ def test_catalyst_vol_narrative_names_the_catalyst_and_favors_selling_premium_wh
 
     html_out=catalyst_vol_narrative_html(blocks)
     assert 'Catalyst' in html_out and 'CPI Report' in html_out
+
+def test_trade_volatility_scan_narrative_and_meaning_surface_tv_ranked_opportunities():
+    """Leron, 2026-10-13: "which stock show the best opprotunity to go long... what are the
+    strikes and expirations", "put call ratio does is support the read", "is it widenening or
+    collapsing". Confirms the new trade_volatility_scan section reads as prose with real
+    TradingVolatility numbers, and is clearly attributed as their engine's call, not this
+    report's own signal."""
+    blocks=empty_blocks()
+    blocks['trade_volatility_scan']['top_long_setups']=item([
+        {'ticker':'AUPH','opportunity_score':7.3,'opportunity_tier':'moderate',
+         'structures':['long_equity','long_calls'],'entry_trigger':'Buy pullbacks toward the 20-day average while it holds'},
+    ])
+    blocks['trade_volatility_scan']['top_short_setups']=item([
+        {'ticker':'CANE','opportunity_score':6.7,'opportunity_tier':'moderate',
+         'structures':['long_puts'],'entry_trigger':'As momentum stalls and the stretch starts to fade'},
+    ])
+    blocks['trade_volatility_scan']['income_setups']=item([
+        {'ticker':'GME','strategy':'csp','strike':21.5,'dte':30,'annualized_yield':0.249,'income_score':9},
+    ])
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.36,'change_30day':-0.43}})
+    blocks['trade_volatility_scan']['expected_move_trend']=item({'SPY':{'trend':'collapsing','iv_rank_now':9.1,'iv_rank_30d_ago':16.2}})
+
+    summary=section_summary('trade_volatility_scan',blocks['trade_volatility_scan'])
+    assert 'AUPH' in summary and '7.3/10' in summary and 'long equity' in summary
+    assert 'CANE' in summary and 'long puts' in summary
+    assert 'GME 21.5 CSP' in summary and '24.9% annualized yield' in summary
+    assert 'put/call ratio' in summary.lower() and '1.36' in summary and 'down 0.43' in summary
+    assert 'collapsing' in summary
+
+    meaning=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'])
+    assert 'AUPH' in meaning and 'CANE' in meaning
+    assert "not this report's own signal" in meaning  # third-party attribution, never claimed as our call
+
+def test_trade_volatility_scan_is_honest_when_vendor_unavailable():
+    blocks=empty_blocks()  # every field unavailable, as if TV credentials/data are missing
+    assert section_summary('trade_volatility_scan',blocks['trade_volatility_scan']) is not None
+    assert 'No TradingVolatility opportunities cleared this checkpoint.' in section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'])
 
 def test_catalyst_vol_narrative_is_honest_when_nothing_favors_selling():
     blocks=empty_blocks()

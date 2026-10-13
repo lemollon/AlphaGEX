@@ -232,8 +232,16 @@ REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside
     "existing_positions", "reassessment"]
 REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "historical_fields",
     "unavailable_fields", "producer_failures", "model_prose_policy", "execution_scope", "format", "refresh_attempts"]
+# Leron, 2026-10-13: "which stock show the best opprotunity to go long in the short term
+# bullish or bearish... what are the strikes and expirations", "put call ratio does is
+# support the read", "is it widenening or collapsing". TradingVolatility v2's own deterministic
+# engine already computes all of this, cross-ticker, versioned; this section surfaces its
+# ranked long/short setups, income (CC/CSP) setups and index put/call-ratio + IV-trend reads.
+# Every value here is TradingVolatility's own output, clearly sourced -- nothing invented.
+REQUIREMENTS["trade_volatility_scan"] = ["top_long_setups", "top_short_setups", "income_setups",
+    "put_call_ratio", "expected_move_trend"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-12.2"
+CONTRACT_VERSION = "2026-10-13.1"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 # Display/completeness freshness only -- how old a field's own observation may be before it
 # stops counting as "live" for the reader and for report_completeness. Leron, 2026-10-12: "i

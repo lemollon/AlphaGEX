@@ -16,7 +16,7 @@ from .report_contract import LIVE_MAX_AGE_SECONDS
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-08.3"
+POLICY_VERSION = "2026-10-13.1"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward",
                 "Market story", "Edge board", "Biggest traps", "If/then day plan")
 HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
@@ -410,6 +410,7 @@ SECTION_SUMMARY_SECTIONS = (
     "contract_packages", "entry_watches", "candidate_analysis", "position_management",
     "trigger_accountability", "paper_scorecard", "scanner", "event_study", "engine_consensus",
     "morning_comparison", "horizon_comparison", "adaptation_rules", "visuals", "data_integrity",
+    "trade_volatility_scan",
 )
 
 def _num(x):
@@ -939,6 +940,59 @@ def _narrative_trigger_accountability(block):
         sentence += f" {len(clusters)} flagged loss cluster{'s' if len(clusters) != 1 else ''} in the audit trail."
     return sentence
 
+def _tv_structure_phrase(row):
+    structures = row.get("structures") or []
+    structure = str(structures[0]).replace("_", " ") if structures else "no specific structure flagged"
+    return structure
+
+def _narrative_trade_volatility_scan(block):
+    """Leron, 2026-10-13: "which stock show the best opprotunity to go long... what are the
+    strikes and expirations", "put call ratio does is support the read", "is it widenening or
+    collapsing". Every number here is TradingVolatility's own deterministic, versioned output
+    (see report_trading_volatility_scan.py) -- clearly sourced, never fabricated by this file."""
+    bits = []
+    longs = (block.get("top_long_setups") or {}).get("value")
+    if isinstance(longs, list) and longs:
+        top = longs[0]
+        sentence = f"Best long setup: {top.get('ticker')} ({top.get('opportunity_score')}/10, {top.get('opportunity_tier')})"
+        sentence += f" — {_tv_structure_phrase(top)}"
+        if top.get("entry_trigger"):
+            sentence += f"; entry: {top['entry_trigger']}"
+        bits.append(sentence + ".")
+    shorts = (block.get("top_short_setups") or {}).get("value")
+    if isinstance(shorts, list) and shorts:
+        top = shorts[0]
+        sentence = f"Best short setup: {top.get('ticker')} ({top.get('opportunity_score')}/10, {top.get('opportunity_tier')})"
+        sentence += f" — {_tv_structure_phrase(top)}"
+        if top.get("entry_trigger"):
+            sentence += f"; entry: {top['entry_trigger']}"
+        bits.append(sentence + ".")
+    income = (block.get("income_setups") or {}).get("value")
+    if isinstance(income, list) and income:
+        top = max((r for r in income if _num(r.get("income_score"))), key=lambda r: r["income_score"], default=None)
+        if top:
+            bits.append(
+                f"Best income idea: {top.get('ticker')} {top.get('strike')} {str(top.get('strategy')).upper()}, "
+                f"{top.get('dte')} DTE, {top.get('annualized_yield', 0) * 100:.1f}% annualized yield."
+                if _num(top.get("annualized_yield")) else
+                f"Best income idea: {top.get('ticker')} {top.get('strike')} {str(top.get('strategy')).upper()}, {top.get('dte')} DTE."
+            )
+    pcr = (block.get("put_call_ratio") or {}).get("value")
+    if isinstance(pcr, dict) and pcr.get("SPY"):
+        row = pcr["SPY"]
+        sentence = f"SPY put/call ratio (OI) is {row.get('pcr_oi')}"
+        change = row.get("change_30day")
+        if _num(change):
+            sentence += f", {'up' if change > 0 else 'down'} {abs(change):.2f} over 30 days"
+        bits.append(sentence + ".")
+    trend = (block.get("expected_move_trend") or {}).get("value")
+    if isinstance(trend, dict) and trend.get("SPY"):
+        row = trend["SPY"]
+        t = row.get("trend")
+        if t:
+            bits.append(f"SPY's expected move is {t} (IV rank {row.get('iv_rank_now')} vs {row.get('iv_rank_30d_ago')} 30 days ago).")
+    return " ".join(bits) if bits else None
+
 _NARRATIVE_BUILDERS = {
     "risk_on_defensive": _narrative_risk_on_defensive,
     "gamma": _narrative_gamma,
@@ -961,6 +1015,7 @@ _NARRATIVE_BUILDERS = {
     "candidate_analysis": _narrative_candidate_analysis,
     "position_management": _narrative_position_management,
     "trigger_accountability": _narrative_trigger_accountability,
+    "trade_volatility_scan": _narrative_trade_volatility_scan,
 }
 
 def _generic_narrative_summary(block):
@@ -1037,6 +1092,7 @@ _SECTION_ROLE = {
     "adaptation_rules": "The explicit rules for activating, cancelling or switching a plan — same rules as the If/Then Day Plan above, in full.",
     "visuals": "Chart delivery and integrity status — confirms the panels above are genuine renders, not decoration.",
     "data_integrity": "Report pipeline health and source-clock audit — confirms what you're reading is real and current; never itself a market signal.",
+    "trade_volatility_scan": "TradingVolatility's own cross-ticker ranked opportunities, income setups and put/call-ratio read — a third-party engine's call, clearly sourced, not this report's own signal.",
 }
 
 def _per_symbol_floats(value):
@@ -1154,6 +1210,20 @@ def section_meaning(name, block, mission_side=None):
                 return f"${max_risk:,.0f} of paper capital is currently at risk — manage it, don't add to it from this section."
             return "No paper capital currently at risk — nothing open to manage right now."
         return _SECTION_ROLE.get(name, "Supporting evidence for the sections above; not a standalone signal.")
+    if name == "trade_volatility_scan":
+        longs = val("top_long_setups")
+        shorts = val("top_short_setups")
+        top_long = max((r for r in longs if _num(r.get("opportunity_score"))), key=lambda r: r["opportunity_score"], default=None) if isinstance(longs, list) else None
+        top_short = max((r for r in shorts if _num(r.get("opportunity_score"))), key=lambda r: r["opportunity_score"], default=None) if isinstance(shorts, list) else None
+        if top_long and top_short:
+            return (f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10), "
+                     f"{top_short['ticker']} its top short call ({top_short['opportunity_score']}/10) — their engine's "
+                     "read, not this report's own signal; check caution flags before acting.")
+        if top_long:
+            return f"{top_long['ticker']} is TradingVolatility's top long call ({top_long['opportunity_score']}/10) — their engine's read, not this report's own signal."
+        if top_short:
+            return f"{top_short['ticker']} is TradingVolatility's top short call ({top_short['opportunity_score']}/10) — their engine's read, not this report's own signal."
+        return "No TradingVolatility opportunities cleared this checkpoint."
     if name == "trigger_accountability":
         registered = val("registered_triggers")
         if isinstance(registered, list):
