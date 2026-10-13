@@ -411,6 +411,13 @@ def test_build_strategy_blocks_appends_structure_family_hint_without_losing_the_
     structure=blocks['day_strategy']['structure']['value']
     assert 'no structure invented from directional pressure' in structure
     assert 'debit spread' in structure
+    # The hint must actually reach the page a reader looks at (section_summary), not just
+    # sit in the raw structure field that only /data JSON exposes -- found live 2026-10-13:
+    # day_strategy renders through its narrative builder on both HTML and markdown, so the
+    # hint was computed correctly but invisible everywhere a human actually reads the report.
+    from backend.report_policy import section_summary
+    summary=section_summary('day_strategy',blocks['day_strategy'])
+    assert 'debit spread' in summary
 
 def test_trade_volatility_scan_wires_the_collected_fields_into_blocks():
     """Leron, 2026-10-13: TradingVolatility's ranked long/short opportunities, income setups
