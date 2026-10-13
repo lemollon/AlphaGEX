@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "trade.ironforge.app",
+      "sha256_cert_fingerprints": [
+        "1F:EF:CC:08:43:3C:FF:47:75:27:10:FD:AC:1B:4B:18:3D:2F:C1:04:C0:3C:3F:5E:B8:49:CA:97:9A:E9:70:E2"
+      ]
+    }
+  }
+]
