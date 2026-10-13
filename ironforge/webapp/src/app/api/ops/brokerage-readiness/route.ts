@@ -4,6 +4,7 @@ import { isPublicMode } from '@/lib/auth/access'
 import { publicOrigin } from '@/lib/public-origin'
 import { isSnapTradeConfigured } from '@/lib/snaptrade'
 import { isTradierOAuthConfigured, tradierBase } from '@/lib/tradier-oauth'
+import { isTastytradeOAuthConfigured, tastytradeApiBase } from '@/lib/tastytrade-oauth'
 import { isCustomersDbConfigured } from '@/lib/customers-db'
 
 /**
@@ -30,7 +31,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 interface ProviderCheck {
-  provider: 'tradier' | 'snaptrade'
+  provider: 'tradier' | 'snaptrade' | 'tastytrade'
   label: string
   configured: boolean
   /** Env var NAMES that are unset — never their values. */
@@ -77,6 +78,24 @@ export async function GET(req: NextRequest) {
       'then set the missing env vars. Set TRADIER_OAUTH_BASE=https://sandbox.tradier.com to test against sandbox first.'
   }
 
+  const tastytrade: ProviderCheck = {
+    provider: 'tastytrade',
+    label: 'tastytrade (direct OAuth — pending trusted-third-party approval)',
+    configured: isTastytradeOAuthConfigured(),
+    missingEnv: unset('TASTYTRADE_OAUTH_CLIENT_ID', 'TASTYTRADE_OAUTH_CLIENT_SECRET'),
+    callbackUrl: `${origin}/api/onboarding/brokerage/tastytrade/callback`,
+    scopes: 'read trade openid',
+    apiBase: tastytradeApiBase(),
+  }
+  if (!tastytrade.configured) {
+    tastytrade.detail =
+      'Create a personal OAuth app at my.tastytrade.com (My Profile -> API -> OAuth Applications) ' +
+      'using the callbackUrl and scopes below, then set the missing env vars. tastytrade shows the ' +
+      'client secret exactly once at creation. Even once configured, only the app-owning tastytrade ' +
+      'account can authorize until tastytrade approves the trusted-third-party request (sent ' +
+      '2026-08-12 to api.support@tastytrade.com, still pending).'
+  }
+
   const snaptrade: ProviderCheck = {
     provider: 'snaptrade',
     label: 'All other brokers (SnapTrade hosted portal)',
@@ -88,7 +107,7 @@ export async function GET(req: NextRequest) {
       : 'Set the missing env vars from the SnapTrade dashboard. The customer logs in on SnapTrade\'s portal, so no broker credentials ever reach us.',
   }
 
-  const providers = [tradier, snaptrade]
+  const providers = [tradier, snaptrade, tastytrade]
   const usable = providers.filter((p) => p.configured && customersDbConfigured)
 
   const blockers: string[] = []

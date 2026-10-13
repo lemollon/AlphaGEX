@@ -188,6 +188,11 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_access_token TEXT;       -- A
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_refresh_token TEXT;      -- AES-256-GCM ciphertext
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tradier_token_expires_at TIMESTAMPTZ;
 
+-- Third brokerage provider: direct tastytrade OAuth (alongside SnapTrade and Tradier).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tastytrade_access_token TEXT;    -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tastytrade_refresh_token TEXT;   -- AES-256-GCM ciphertext
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tastytrade_token_expires_at TIMESTAMPTZ;
+
 -- Forge Community (members-only chat; see IronForge_Forge_Community_V1 design doc) --
 CREATE TABLE IF NOT EXISTS community_channels (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
