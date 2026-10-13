@@ -814,7 +814,8 @@ def _narrative_entry_watches(block):
         if not isinstance(row, dict):
             continue
         sym, sid, state = row.get("symbol"), row.get("setup_id"), row.get("state")
-        word = state_word.get(state, (str(state).replace("_", " ").lower() if state else "status unclear"))
+        state_key = state if isinstance(state, str) else None
+        word = state_word.get(state_key, (str(state).replace("_", " ").lower() if state else "status unclear"))
         bits.append(f"{sym} setup {sid} is {word}.")
     return " ".join(bits) if bits else None
 

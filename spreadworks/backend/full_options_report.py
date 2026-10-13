@@ -348,9 +348,16 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             blocks['event_calendar'][f]['status']='unavailable'
             blocks['event_calendar'][f]['reason']='Calendar coverage is partial; local estimates are displayed explicitly and are not verified releases'
     setup_list=plan.get('setups') or [];states=runtime.get('per_symbol_state') or {}
+    def _setup_state(symbol,setup_id):
+        # states[symbol] is a LIST of per-setup state rows (see packages loop below) — find
+        # this setup's own row rather than dumping the whole list into a field named 'state'.
+        for row in (states.get(symbol) or []):
+            if isinstance(row,dict) and row.get('setup_id')==setup_id:
+                return row.get('state')
+        return None
     for field in ('trigger','confirmation','invalidation','status','two_minute_closes','successful_retest'):
         vals=[{'setup_id':s['setup_id'],'symbol':s['symbol'],'entry':s.get('entry'),'invalidation':s.get('invalidation'),
-               'state':states.get(s['symbol']),'required_sequence':'Two completed 1-minute closes; then successful retest if required by setup'} for s in setup_list]
+               'state':_setup_state(s['symbol'],s['setup_id']),'required_sequence':'Two completed 1-minute closes; then successful retest if required by setup'} for s in setup_list]
         put('entry_watches',field,vals,source='Registered plan and isolated minute watcher',ts=runtime.get('worker_heartbeat') or plan.get('generated_at'))
     packages=[]
     for rows in states.values():

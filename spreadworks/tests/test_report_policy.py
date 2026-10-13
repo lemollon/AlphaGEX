@@ -14,7 +14,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
                                    decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html,
-                                   _control_side_narrative)
+                                   _control_side_narrative, _narrative_entry_watches)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -1139,3 +1139,33 @@ def test_render_markdown_empty_section_gets_generic_fallback_not_unavailable_wal
     assert 'No verified observation yet this checkpoint.' in profile_section
     assert 'UNAVAILABLE' not in profile_section
     assert '- **' not in profile_section
+
+def test_narrative_entry_watches_normal_states_read_as_prose():
+    block={'trigger':item([
+        {'symbol':'SPY','setup_id':'s1','state':'ENTRY_READY'},
+        {'symbol':'QQQ','setup_id':'s2','state':'WATCH'}])}
+    summary=_narrative_entry_watches(block)
+    assert 'SPY setup s1 is just confirmed and ready.' in summary
+    assert 'QQQ setup s2 is still on watch, not confirmed yet.' in summary
+
+def test_narrative_entry_watches_tolerates_state_as_list_dict_or_none():
+    """Production bug, 2026-10-13: the entry_watches producer in full_options_report.py was
+    assigning the WHOLE per-symbol state list (runtime['per_symbol_state'][symbol], a list of
+    every setup's state row for that symbol) into the single 'state' field instead of this
+    setup's own scalar state. GET /api/spreadworks/reports/{id}/view then 500'd with
+    `TypeError: cannot use 'list' as a dict key` inside state_word.get(state, ...). This must
+    never crash regardless of what shape 'state' arrives in, and must still produce a sane
+    (if unglamorous) sentence -- not blow up the whole report render."""
+    for bad_state in ([{'setup_id':'s1','state':'WATCH'}], {'setup_id':'s1'}, None):
+        block={'trigger':item([{'symbol':'SPY','setup_id':'s1','state':bad_state}])}
+        summary=_narrative_entry_watches(block)  # must not raise TypeError
+        assert summary is not None
+        assert 'SPY setup s1 is' in summary
+    # None specifically falls back to the explicit "status unclear" wording.
+    none_block={'trigger':item([{'symbol':'SPY','setup_id':'s1','state':None}])}
+    assert 'status unclear' in _narrative_entry_watches(none_block)
+    # section_summary (the real call path from render_markdown/report_view) must also survive
+    # end-to-end through the exact same dict-shaped bug state.
+    blocks=empty_blocks()
+    blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'s1','state':{'bad':'shape'}}])
+    assert section_summary('entry_watches',blocks['entry_watches']) is not None
