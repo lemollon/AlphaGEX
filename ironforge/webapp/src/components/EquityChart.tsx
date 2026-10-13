@@ -251,10 +251,22 @@ export default function EquityChart({
   const fillColor =
     lastEquity >= startingCapital ? 'rgba(52, 211, 153, 0.15)' : 'rgba(239, 68, 68, 0.15)'
 
-  // Hypo color: distinct from the actual equity line so the two are easy
-  // to tell apart at a glance. Purple/violet works well against blue/red/amber.
-  const hypoColor = '#06b6d4'
-  const hypoFill = 'rgba(6, 182, 212, 0.10)'
+  // Hypo colour: must not match ANY entry in BOT_COLORS, or it collides with the
+  // equity line on that bot's own dashboard.
+  //
+  // 🚨 It did. This was '#06b6d4' — byte-identical to BOT_COLORS.blaze — so on
+  // BLAZE the hypothetical line and the real equity line were the SAME COLOUR,
+  // told apart only by a dash pattern. The comment here still claimed
+  // "purple/violet works well against blue/red/amber", describing both a colour
+  // it no longer was and a palette from before blaze (cyan) and flare (amber)
+  // existed. The button and pill below were never restyled off violet either,
+  // so clicking a VIOLET control drew a CYAN line — and violet (#a78bfa) is what
+  // the ARCHIVED-era line actually uses.
+  //
+  // Fuchsia is in neither BOT_COLORS nor archivedColor. Keep it that way: if a
+  // new bot is ever given fuchsia, this has to move.
+  const hypoColor = '#e879f9'
+  const hypoFill = 'rgba(232, 121, 249, 0.10)'
   const lastHypoCum = lastPoint.cumulative_hypothetical_pnl ?? null
   const lastHypoEquity = lastPoint.hypothetical_equity ?? null
   const botLabel = (bot || 'this bot').toUpperCase()
@@ -279,7 +291,7 @@ export default function EquityChart({
           )}
           {hasHypo && lastHypoCum != null && (
             <span
-              className="text-xs font-mono px-2 py-0.5 rounded bg-violet-500/20 text-violet-300"
+              className="text-xs font-mono px-2 py-0.5 rounded bg-fuchsia-500/20 text-fuchsia-300"
               title={`Hypothetical cumulative P&L if ${botLabel} had held every trade to 2:59 PM CT`}
             >
               Hypo: {lastHypoCum >= 0 ? '+' : ''}${lastHypoCum.toFixed(2)}
@@ -292,7 +304,7 @@ export default function EquityChart({
               onClick={() => setShowHypo((v) => !v)}
               className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors border ${
                 showHypo
-                  ? 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                  ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
                   : 'bg-transparent text-gray-500 border-forge-border hover:text-gray-300'
               }`}
               title={showHypo ? 'Hide hypothetical 2:59 PM line' : 'Show hypothetical 2:59 PM line'}
@@ -394,7 +406,7 @@ export default function EquityChart({
           </span>
         )}
         {hasHypo && lastHypoEquity != null && (
-          <span className="text-violet-300/80">
+          <span className="text-fuchsia-300/80">
             Hypo line = "held to 2:59 PM CT every day"; flat through trades older than Tradier's 40-day window.
           </span>
         )}
@@ -706,7 +718,7 @@ export function ComparisonChart({
             onClick={onToggleHypo}
             className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors border ${
               showHypo
-                ? 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                ? 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
                 : 'bg-transparent text-gray-500 border-forge-border hover:text-gray-300'
             }`}
             title={showHypo ? 'Hide hypothetical 2:59 PM lines' : 'Show hypothetical 2:59 PM lines'}
@@ -785,7 +797,7 @@ export function ComparisonChart({
         </ComposedChart>
       </ResponsiveContainer>
       {allowHypo && showHypo && (
-        <p className="text-xs text-violet-300/80 mt-2 px-2">
+        <p className="text-xs text-fuchsia-300/80 mt-2 px-2">
           Dashed = &ldquo;held to 2:59 PM CT every day&rdquo; counterfactual (flat where no hypo data, e.g. BLAZE).
         </p>
       )}
