@@ -14,7 +14,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
                                    decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html,
-                                   _control_side_narrative, _narrative_entry_watches)
+                                   _control_side_narrative, _narrative_entry_watches,
+                                   catalyst_vol_narrative, catalyst_vol_narrative_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -1261,3 +1262,36 @@ def test_narrative_entry_watches_tolerates_state_as_list_dict_or_none():
     blocks=empty_blocks()
     blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'s1','state':{'bad':'shape'}}])
     assert section_summary('entry_watches',blocks['entry_watches']) is not None
+
+def test_catalyst_vol_narrative_names_the_catalyst_and_favors_selling_premium_when_rich():
+    """Leron, 2026-10-13: "what future events... is the market going to be paused until the
+    catalyst, is it best to sell premium, if so what strikes and expirations." This is the new
+    morning-only narrative paragraph answering that -- built entirely from already-computed
+    fields (event_calendar, risk_on_defensive.regime_label, profile.acceptance_rejection,
+    surface, premium_selling), never a new number, and it must point at the Edge Board for the
+    actual strike/expiration rather than inventing one here."""
+    blocks=empty_blocks()
+    blocks['event_calendar']['catalysts']=item([
+        {'name':'CPI Report','impact':'HIGH','datetime':'2026-10-15T07:30:00-05:00'},
+        {'name':'Low impact thing','impact':'LOW','datetime':'2026-10-14T07:30:00-05:00'},
+    ])
+    blocks['risk_on_defensive']['regime_label']=item('CHOPPY')
+    blocks['profile']['acceptance_rejection']=item({'SPY':{'location':'inside value'},'QQQ':{'location':'inside value'}})
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH'})
+    narrative=catalyst_vol_narrative(blocks)
+    assert 'CPI Report' in narrative and '2026-10-15' in narrative
+    assert 'Low impact thing' not in narrative  # LOW impact never leads the catalyst call
+    assert 'chopping inside' in narrative
+    # Favors selling premium, but points at the Edge Board for the real strike/expiration
+    # rather than computing one here -- it never picks its own level.
+    assert 'sell-the-quiet-before-the-event' in narrative
+    assert 'Edge Board' in narrative
+
+    html_out=catalyst_vol_narrative_html(blocks)
+    assert 'Catalyst' in html_out and 'CPI Report' in html_out
+
+def test_catalyst_vol_narrative_is_honest_when_nothing_favors_selling():
+    blocks=empty_blocks()
+    narrative=catalyst_vol_narrative(blocks)
+    assert narrative=='No flagged high-impact catalyst on the board right now.'
+    assert 'No flagged high-impact catalyst' in catalyst_vol_narrative_html(blocks)

@@ -1371,6 +1371,8 @@ def render_markdown(payload):
     brief=decision_brief_lines(blocks)
     if brief:
         lines.extend(["## 🧭 Decision brief"]+brief)
+    if payload.get("kind")=="morning":
+        lines.extend(["## 🎯 Catalyst & volatility read",catalyst_vol_narrative(blocks)])
     lines.extend([
         "## 🎯 Today’s mission",display(blocks["risk_on_defensive"]["verdict"]),
         "Day and forward plans are separate. Execute no strategy from historical or unqualified quotes; use the recorded triggers and conflicts below.",
@@ -1811,6 +1813,73 @@ def _week_ahead_outlook_html(blocks):
             '<p style="font-size:.8rem;color:#8b97a8">Built from the last verified observation of '
             "each input — nothing here is invented ahead of the open.</p>")
 
+def catalyst_vol_narrative(blocks):
+    """Leron, 2026-10-13: "what future events... is the market going to be paused until the
+    catalyst, is it best to sell premium, if so what strikes and expirations." One narrative
+    paragraph tying the next flagged catalyst, today's vol/term-structure read and whether
+    price is actually contained into a single sell-premium-or-not call -- zero new producer
+    fields, same synthesis pattern as market_story/_week_ahead_outlook_html. Never computes a
+    strike/expiration here: when the read favors selling premium it points at the Edge Board's
+    own live, freshly-qualified contract instead of inventing an unverified level."""
+    events = ((blocks.get("event_calendar") or {}).get("catalysts") or {}).get("value")
+    catalyst = None
+    if isinstance(events, list):
+        high = sorted((e for e in events if isinstance(e, dict) and str(e.get("impact")).upper() == "HIGH" and e.get("datetime")),
+                      key=lambda e: str(e.get("datetime")))
+        catalyst = high[0] if high else None
+
+    bits = []
+    if catalyst:
+        when_text = str(catalyst.get("datetime"))[:10]
+        weekday = None
+        try:
+            weekday = datetime.fromisoformat(str(catalyst["datetime"])).strftime("%A")
+        except (ValueError, TypeError, KeyError):
+            pass
+        when_phrase = f"{weekday}, {when_text}" if weekday else when_text
+        bits.append(f"{catalyst.get('name')} hits {when_phrase} — the next real catalyst on the board.")
+    else:
+        bits.append("No flagged high-impact catalyst on the board right now.")
+
+    label = ((blocks.get("risk_on_defensive") or {}).get("regime_label") or {}).get("value")
+    accept_val = ((blocks.get("profile") or {}).get("acceptance_rejection") or {}).get("value") or {}
+    locations = ([row.get("location") for row in accept_val.values() if isinstance(row, dict) and row.get("location")]
+                 if isinstance(accept_val, dict) else [])
+    contained = bool(locations) and all(loc == "inside value" for loc in locations)
+    if label == "CHOPPY" and contained:
+        bits.append("Price itself is going nowhere — chopping inside today's value area on every name checked, exactly what a market marking time ahead of a catalyst looks like.")
+    elif label == "CHOPPY":
+        bits.append("Price is chopping (SPY and QQQ disagree in sign) but hasn't settled into a clean contained range yet.")
+    elif contained:
+        bits.append(f"Price is {label.lower() if isinstance(label, str) else 'trending'} but still contained inside today's value area on the names checked.")
+
+    surface_sentence = _narrative_surface(blocks.get("surface") or {})
+    if surface_sentence:
+        bits.append(surface_sentence)
+
+    suit_val = ((blocks.get("premium_selling") or {}).get("suitability") or {}).get("value") or {}
+    rich_syms = sorted(s for s, v in suit_val.items() if v == "PREMIUM_RICH") if isinstance(suit_val, dict) else []
+    if rich_syms and catalyst:
+        bits.append(
+            f"Premium is rich in {', '.join(rich_syms)} with {catalyst.get('name')} still ahead — a classic "
+            "sell-the-quiet-before-the-event read, if price keeps holding its range into it. The Edge Board "
+            "above carries the live, fresh-quoted strikes and expiration once a setup actually confirms — "
+            "nothing here is a trade until that board shows one."
+        )
+    elif rich_syms:
+        bits.append(f"Premium is rich in {', '.join(rich_syms)} with nothing major flagged ahead — favors sellers; same Edge Board caveat on strikes.")
+    elif catalyst:
+        bits.append("Premium isn't rich enough yet to favor selling into this one specifically — re-check as the date gets closer.")
+    return " ".join(bits)
+
+def catalyst_vol_narrative_html(blocks):
+    text = catalyst_vol_narrative(blocks)
+    if not text:
+        return ""
+    return ('<h2>🎯 Catalyst &amp; volatility read</h2><p>' + html.escape(text) + "</p>"
+            '<p style="font-size:.8rem;color:#8b97a8">Built from today\'s own verified fields above — '
+            "never a new number, never an invented strike.</p>")
+
 def render_opening_html(payload):
     blocks=payload.get("report_blocks") or {};escape=html.escape
     divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
@@ -1827,6 +1896,7 @@ def render_opening_html(payload):
     brief=decision_brief_lines(blocks)
     out=(('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
          +(_week_ahead_outlook_html(blocks) if payload.get("kind")=="morning" else "")
+         +(catalyst_vol_narrative_html(blocks) if payload.get("kind")=="morning" else "")
          +_what_changed_today_html(blocks)
          +"<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
