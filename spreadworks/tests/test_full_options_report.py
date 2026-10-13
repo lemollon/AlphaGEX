@@ -400,6 +400,32 @@ def test_engine_consensus_no_longer_carries_risk_session_hunt():
     blocks=report.report_blocks(core(),{},{},{},ledger_empty(),{},{},[],NOW)
     assert set(blocks['engine_consensus'])=={'squeeze','trading_volatility_status','contradictions'}
 
+def test_trade_volatility_scan_wires_the_collected_fields_into_blocks():
+    """Leron, 2026-10-13: TradingVolatility's ranked long/short opportunities, income setups
+    and put/call-ratio read now flow from the scan collector (report_trading_volatility_scan.py,
+    saved/reloaded via the same evidence store as breadth/macro) straight into the report
+    contract -- same observation()-wrapping every other producer field gets."""
+    context={'trade_volatility_scan':{'top_long_setups':[{'ticker':'AUPH','opportunity_score':7.3}],
+        'top_short_setups':[{'ticker':'CANE','opportunity_score':6.7}],
+        'income_setups':[{'ticker':'GME','strike':21.5}],
+        'put_call_ratio':{'SPY':{'pcr_oi':1.36}},
+        'expected_move_trend':{'SPY':{'trend':'collapsing'}},
+        'source_timestamp':NOW.isoformat()}}
+    blocks=report.report_blocks(core(),context,{},{},ledger_empty(),{},{},[],NOW)
+    scan=blocks['trade_volatility_scan']
+    assert scan['top_long_setups']['status']=='live'
+    assert scan['top_long_setups']['value'][0]['ticker']=='AUPH'
+    assert scan['put_call_ratio']['value']['SPY']['pcr_oi']==1.36
+    assert scan['expected_move_trend']['value']['SPY']['trend']=='collapsing'
+
+def test_trade_volatility_scan_degrades_honestly_when_vendor_failed():
+    context={'trade_volatility_scan':{'reason':'TradingVolatility credentials are not configured'}}
+    blocks=report.report_blocks(core(),context,{},{},ledger_empty(),{},{},[],NOW)
+    scan=blocks['trade_volatility_scan']
+    for field in ('top_long_setups','top_short_setups','income_setups','put_call_ratio','expected_move_trend'):
+        assert scan[field]['status']=='unavailable'
+        assert scan[field]['reason']=='TradingVolatility credentials are not configured'
+
 def flow_row_directional(fraction,calls_bought,calls_sold,puts_bought,puts_sold):
     # Bullish initiation lean = calls_bought + puts_sold premium; bearish = calls_sold + puts_bought.
     return {'confidence':'MEDIUM','source_timestamp':NOW.isoformat(),'evidence':{

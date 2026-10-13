@@ -14,6 +14,7 @@ from .db import engine, SessionLocal
 from . import market_structure as ms
 from .report_contract import REQUIREMENTS, prepare_report_delivery, validate_rendered_report, FLOW_SOURCE
 from .report_producers import observation, unavailable, number, collect_breadth, collect_profile, collect_macro, collect_study, stored_futures, UTC, ET
+from .report_trading_volatility_scan import collect_trade_volatility_scan
 from .report_ledger import scorecard, qualify_package, mark_open_positions
 from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip, markdown_report_pdf
@@ -57,7 +58,8 @@ async def capture_context(app,now=None,force=False):
     from .morning_options_report import _latest_plan_payload
     plan=await asyncio.to_thread(_latest_plan_payload,now.astimezone(CT).date()) or {}
     symbols=['SPY','QQQ',*(plan.get('symbols') or [])]
-    jobs={'breadth':collect_breadth(now,symbols),'macro':asyncio.to_thread(collect_macro,now)}
+    jobs={'breadth':collect_breadth(now,symbols),'macro':asyncio.to_thread(collect_macro,now),
+          'trade_volatility_scan':collect_trade_volatility_scan(app.state.http,now)}
     # Profile is lower priority than IV/flow; one consolidated tape request per underlying.
     jobs.update({f'profile_{s}':asyncio.to_thread(collect_profile,s,now,load_evidence('profile_'+s)) for s in ('SPY','QQQ')})
     async def one(name,job):
@@ -471,6 +473,11 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     put('position_management','risk_exposure',{'open_max_defined_risk':sum(t['max_risk'] for t in paper['trade_details'] if t['state']=='OPEN'),'quantity_model':'One structure per qualifying signal'})
     put('position_management','hold_exit_conditions',paper['fill_rules'])
     put('position_management','chain_qualification',{'rule':'Fresh executable BBO required for every entry/exit; missing quotes leave unresolved positions','exceptions':paper['exceptions']})
+    tv_scan=context.get('trade_volatility_scan') or {}
+    for field in REQUIREMENTS['trade_volatility_scan']:
+        put('trade_volatility_scan',field,tv_scan.get(field),
+            source='TradingVolatility v2 API — ranked cross-ticker opportunities, income setups and put/call-ratio read; third-party deterministic engine, not this report’s own signal',
+            ts=tv_scan.get('source_timestamp'),reason=tv_scan.get('reason'))
     # Directional inference uses only current evidence. Historical context stays visible separately.
     # Same bar as sector_credit (valid price+prev_close) — not an extra live-only "fresh" gate,
     # which silently dropped this entire headline field whenever either quote aged past 90s
@@ -564,7 +571,7 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     plan=plan if plan is not None else stored_plan
     refresh_attempts=await refresh_context(started,plan)
     core=await read('core',lambda:cached_core(datetime.now(UTC)),{'surface':{'SPY':{},'QQQ':{}},'gamma':{},'flow':{},'volatility':{},'cross_asset':{'assets':{}},'futures':{}},timeout=60)
-    context={name:await read(name,lambda n=name:load_evidence(n),{'reason':'Stored evidence read failed for '+name}) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces')}
+    context={name:await read(name,lambda n=name:load_evidence(n),{'reason':'Stored evidence read failed for '+name}) for name in ('breadth','macro','profile_SPY','profile_QQQ','study','candidate_surfaces','trade_volatility_scan')}
     paper=await read('paper',scorecard,{'entry_ready_alerts':None,'trade_details':[],'exceptions':[{'reason':'Paper ledger unavailable'}],
         'fill_rules':'Ledger failed; no paper performance or open risk may be inferred','loss_clusters':[]})
     morning,prior=await read('baselines',lambda:previous_reports(started),({},{}))
@@ -896,6 +903,7 @@ _SECTION_DISPLAY_ORDER=[
     'day_strategy','near_forward_strategy','forward_strategy','contract_packages','entry_watches',
     'expected_move','smile','surface','forward_strikes',
     'range_stall','breadth','profile','sector_credit','macro','futures_context','event_calendar','candidate_analysis',
+    'trade_volatility_scan',
     'position_management','trigger_accountability','paper_scorecard','scanner','event_study','engine_consensus',
     'morning_comparison','horizon_comparison','adaptation_rules',
     'visuals','data_integrity',

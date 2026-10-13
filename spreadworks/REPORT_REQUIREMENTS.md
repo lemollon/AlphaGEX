@@ -1,7 +1,26 @@
 # Permanent options report requirements
 
 The executable contract is `backend/report_contract.py`; inference and display
-rules are `backend/report_policy.py`. Version `2026-10-08.3` retains the
+rules are `backend/report_policy.py`.
+
+Version `2026-10-13.1` adds `trade_volatility_scan` (34th section, +5 fields:
+`top_long_setups`, `top_short_setups`, `income_setups`, `put_call_ratio`,
+`expected_move_trend`): Leron, 2026-10-13 — "which stock show the best
+opprotunity to go long in the short term bullish or bearish... what are the
+strikes and expirations", "put call ratio does is support the read", "is it
+widenening or collapsing". TradingVolatility's v2 API (already integrated for
+`engine_consensus.trading_volatility_status`) already computes all of this,
+cross-ticker, versioned and deterministic; `backend/report_trading_volatility_scan.py`
+is a new, independent collector (separate from `trading_volatility_context.py`'s
+module-level cache/rate-limit state, which belongs to the live `qqq_retest_watch`
+alert loop) that calls `/top-setups` (long and short), `/income-setups`, and
+`/tickers/{SPY,QQQ,IWM,VIX}/market-structure` + `/series` for put/call ratio and
+an IV-rank-trend-based expected-move-widening/collapsing read. Every value is
+TradingVolatility's own output, clearly sourced — the report never fabricates
+a strike, score, or direction here; `section_meaning` explicitly labels it
+"their engine's read, not this report's own signal."
+
+Version `2026-10-08.3` retains the
 day/near-forward/forward plans, horizon comparisons, adaptation rules, data
 integrity, persisted visual delivery and market control, drops `risk`/
 `session`/`hunt` from engine consensus (redundant with `risk_on_defensive`
@@ -64,7 +83,7 @@ runs; `/reports/{id}/data` exposes the immutable full contract to the reader.
 Reading either route never collects market data, changes a report, sends a
 notification or executes a trade. All newly persisted morning, opening and
 intraday reports appear automatically without a second report schedule.
-The website retains all 33 sections/242 fields and reconciles all eleven chart
+The website retains all 34 sections/250 fields and reconciles all eleven chart
 categories; absent observed data receives an explicit reason, not a fake chart.
 Historical report generation and observation clocks remain separate from the
 website's retrieval time. Older ENTRY_READY states are historical alert states,
@@ -295,7 +314,8 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_full_options_report.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
-  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py spreadworks/tests/test_report_email.py -q
+  spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py spreadworks/tests/test_report_email.py \
+  spreadworks/tests/test_report_trading_volatility_scan.py spreadworks/tests/test_trading_volatility_context.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
