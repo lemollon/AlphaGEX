@@ -1693,6 +1693,14 @@ def surface_smile_story(blocks):
         return "Vol surface and skew coverage is too thin to read a shape right now."
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
 
+def expected_move_story(blocks):
+    """Promotes _narrative_expected_move's existing per-symbol $/%/band read plus its
+    budget-used framing ("already burned X% of this morning's frozen move") into its own
+    top-level section, same promotion pattern as options_flow_story/dealer_positioning_
+    story/surface_smile_story. Already existed and was already tested; only ever surfaced in
+    the per-field appendix under "### Expected Move". Zero new producer fields."""
+    return _narrative_expected_move(blocks["expected_move"]) or "Expected move coverage is too thin to read a band right now."
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1847,6 +1855,7 @@ def render_markdown(payload):
     lines.extend(["## 📊 Options flow",options_flow_story(blocks)])
     lines.extend(["## 🏛️ Dealer positioning",dealer_positioning_story(blocks)])
     lines.extend(["## 📐 Surface, smile & term structure",surface_smile_story(blocks)])
+    lines.extend(["## 📏 Expected move",expected_move_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2384,6 +2393,7 @@ def render_opening_html(payload):
     out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
     out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
+    out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"

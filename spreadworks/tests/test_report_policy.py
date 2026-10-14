@@ -10,6 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
+                                   expected_move_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -594,6 +595,38 @@ def test_render_markdown_and_html_carry_the_surface_smile_section():
     html_out=render_opening_html(payload)
     assert '<h2>📐 Surface, smile & term structure</h2>' in html_out
     assert 'vol surface: ATM IV 8.8%' in html_out  # escape() turns "SPY's" into "SPY&#x27;s"
+
+def test_expected_move_story_promotes_narrative_expected_move_to_top_level():
+    """_narrative_expected_move's per-symbol $/%/band read plus its budget-used framing
+    already existed and was already tested (section_summary coverage), but only ever
+    surfaced in the per-field appendix under "### Expected Move" -- same promotion pattern
+    as options_flow_story/dealer_positioning_story/surface_smile_story."""
+    blocks=empty_blocks()
+    blocks['expected_move']['dollars']=item({'SPY':{'expected_move_dollars_1d':5.52}})
+    blocks['expected_move']['percent']=item({'SPY':{'expected_move_pct_1d':0.71}})
+    blocks['expected_move']['lower']=item({'SPY':{'expected_move_low':772.00}})
+    blocks['expected_move']['upper']=item({'SPY':{'expected_move_high':783.04}})
+    blocks['expected_move']['budget_used']=item({'SPY':{'absolute_move_fraction':0.92}})
+    story=expected_move_story(blocks)
+    assert "SPY's one-day expected move is $5.52" in story and '772.00-783.04 band' in story
+    assert "already burned 92% of this morning's frozen move" in story
+
+def test_expected_move_story_falls_back_when_coverage_too_thin():
+    blocks=empty_blocks()
+    story=expected_move_story(blocks)
+    assert story=='Expected move coverage is too thin to read a band right now.'
+
+def test_render_markdown_and_html_carry_the_expected_move_section():
+    blocks=empty_blocks()
+    blocks['expected_move']['dollars']=item({'SPY':{'expected_move_dollars_1d':5.52}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 📏 Expected move' in md
+    assert "SPY's one-day expected move is $5.52" in md
+    html_out=render_opening_html(payload)
+    assert '<h2>📏 Expected move</h2>' in html_out
+    assert 'one-day expected move is $5.52' in html_out  # escape() turns "SPY's" into "SPY&#x27;s"
 
 def test_market_story_carries_premium_selling_narrative_not_flat_label():
     """market_story's premium fragment was just the flat suitability label ("SPY:
