@@ -1263,7 +1263,7 @@ def _per_symbol_floats(value):
                     break
     return out
 
-def section_meaning(name, block, mission_side=None):
+def section_meaning(name, block, mission_side=None, regime_label=None):
     """Deterministic "what it means for the day" line — a lookup on the section's own
     already-computed field values, never new analysis or a fabricated number. Strategy-
     neutral: states what the evidence favors (sellers vs buyers, which side), not which
@@ -1275,6 +1275,12 @@ def section_meaning(name, block, mission_side=None):
     agree/conflict callback to the mission verdict belongs; everywhere else that comparison
     would be forcing a direction onto evidence that genuinely has none (vol pricing, pipeline
     health, audit trails), which is exactly the fabrication this file's rules forbid.
+
+    `regime_label` is the flat RISK-ON/DEFENSIVE/CHOPPY text from `risk_on_defensive.regime_label`
+    (same label `decision_brief_lines` opens every report with) -- 2026-10-14: trade_volatility_
+    scan's put/call-ratio tie-in named it in the sentence instead of the hedged mission_side word
+    alone. Optional and falls back to the existing mission_side wording when unavailable, same
+    degrade-gracefully rule `decision_brief_lines` already follows for this same field.
     """
     def val(field):
         item = block.get(field) or {}
@@ -1363,20 +1369,30 @@ def section_meaning(name, block, mission_side=None):
     if name == "trade_volatility_scan":
         # Leron, 2026-10-13: "put call ratio does is support the read on the markets future
         # positioning" -- same cross-section tie-in pattern market_control already uses against
-        # mission_side. Conventional reading only (elevated PCR = defensive put hedging, low PCR
-        # = call-heavy positioning); never a new signal, just whether two independent reads agree.
+        # mission_side. 2026-10-14: ties to the flat RISK-ON/DEFENSIVE/CHOPPY regime_label (the
+        # same label decision_brief_lines opens every report with) when it's available, and
+        # names only the side that actually applies -- the prior wording always printed
+        # "the defensive/risk-on mission call above" verbatim regardless of which one was real.
+        # Falls back to the hedged mission_side wording only when regime_label itself is
+        # unavailable, same degrade-gracefully rule decision_brief_lines already follows.
+        # Conventional reading only (elevated PCR = defensive put hedging, low PCR = call-heavy
+        # positioning); never a new signal, just whether two independent reads agree.
         pcr_bits = []
         pcr = val("put_call_ratio")
         spy_pcr = (pcr or {}).get("SPY", {}).get("pcr_oi") if isinstance(pcr, dict) else None
-        if _num(spy_pcr) and mission_side in ("risk-on", "defensive"):
+        regime_side = {"RISK-ON": "risk-on", "DEFENSIVE": "defensive", "CHOPPY": "neutral"}.get(regime_label)
+        effective_side = regime_side if regime_side is not None else mission_side
+        tie_text = (f"today's flat {regime_label} regime call" if regime_label
+                    else f"the {mission_side} mission call above")
+        if _num(spy_pcr) and effective_side in ("risk-on", "defensive"):
             if spy_pcr >= 1.2:
-                agree = mission_side == "defensive"
+                agree = effective_side == "defensive"
                 pcr_bits.append(f"SPY's put/call ratio ({spy_pcr:.2f}) is running put-heavy — "
-                                 + ("agreeing with" if agree else "in tension with") + " the defensive/risk-on mission call above.")
+                                 + ("agreeing with" if agree else "in tension with") + " " + tie_text + ".")
             elif spy_pcr <= 0.8:
-                agree = mission_side == "risk-on"
+                agree = effective_side == "risk-on"
                 pcr_bits.append(f"SPY's put/call ratio ({spy_pcr:.2f}) is running call-heavy — "
-                                 + ("agreeing with" if agree else "in tension with") + " the defensive/risk-on mission call above.")
+                                 + ("agreeing with" if agree else "in tension with") + " " + tie_text + ".")
         longs = val("top_long_setups")
         shorts = val("top_short_setups")
         top_long = max((r for r in longs if _num(r.get("opportunity_score"))), key=lambda r: r["opportunity_score"], default=None) if isinstance(longs, list) else None
@@ -1628,6 +1644,8 @@ def render_markdown(payload):
     lines.append("## 🧮 If/then day plan")
     lines.extend("- **"+k+"**: "+v for k,v in if_then_day_plan(blocks))
     mission_side=_side_label((blocks["risk_on_defensive"]["verdict"] or {}).get("value"))
+    regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
+    regime_label=regime_label_item.get("value") if isinstance(regime_label_item.get("value"),str) else None
     # Leron, repeatedly: "a long boring ass scroll of data that means nothing to me." Every
     # section already gets a narrative summary (SECTION_SUMMARY_SECTIONS covers all 33) -- the
     # raw field:value dump that used to run first, for every field of every section, was
@@ -1638,7 +1656,7 @@ def render_markdown(payload):
         lines.append("### "+name.replace("_"," ").title())
         if name in SECTION_SUMMARY_SECTIONS:
             lines.append("Section summary: "+section_summary(name,blocks[name]))
-            lines.append("What it means for the day: "+section_meaning(name,blocks[name],mission_side))
+            lines.append("What it means for the day: "+section_meaning(name,blocks[name],mission_side,regime_label))
         else:
             for field in fields:lines.append("- **"+field+"**: "+display(blocks[name][field]))
     for name,url in (payload.get("chart_urls") or {}).items():lines.append("!["+name.replace("_"," ").title()+"]("+url+")")

@@ -276,6 +276,37 @@ former hedge ("price is leaning defensive"). Falls back to the old hedged
 phrasing only if `regime_label` itself is unavailable (degraded evidence),
 never fabricating a label SPY/QQQ returns don't support.
 
+## Macro yield delta and put/call ratio naming the flat regime label (2026-10-14)
+
+Two small narrative fixes, zero new producer fields, same pattern as "VIX
+contradiction-calling" above (no contract version bump).
+
+`macro.rates`'s 10-year yield was a snapshot only -- today's level, no sense of
+"how has it changed." `collect_macro` (`report_producers.py`) already fetches a
+14-day FRED window to find the latest valid `DGS10` row; the prior valid row in
+that same window just sat unused. Each FRED-sourced rate (`rates_2y/5y/10y/
+30y`) now also carries `change_1day_bp` and `prior_observation_date` when a
+second valid row exists, no new API call. `_narrative_macro`
+(`report_policy.py`) folds the 10-year's delta into its existing sentence --
+`"the 10-year yield is 4.12% (up 6bp day-over-day)"` -- same real-sentence
+style as every other section_summary builder.
+
+`trade_volatility_scan.put_call_ratio`'s "what it means for the day" line
+already tied SPY's put/call-ratio read back to the mission call (agree/
+conflict), same cross-section pattern `market_control` uses against
+`mission_side` -- but it named both possible sides verbatim in every sentence
+("the defensive/risk-on mission call above") regardless of which one was
+actually in play, and it never referenced the flat `regime_label` the Decision
+Brief actually opens with. `section_meaning` (`report_policy.py`) now takes an
+optional `regime_label` argument (same shape as `mission_side`, both call
+sites in `report_policy.py`/`full_options_report.py` compute it from
+`risk_on_defensive.regime_label` the same way `decision_brief_lines` already
+does); when present, the tie-in sentence names it directly --
+`"...in tension with today's flat DEFENSIVE regime call."` Falls back to the
+prior hedged `mission_side` wording, naming only the side that actually
+applies, when `regime_label` itself is unavailable -- never fabricating
+a label the underlying returns don't support.
+
 ## Integrity and failure behavior
 
 Source timestamps require a timezone and cannot be in the future. Age is
