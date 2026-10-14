@@ -9,6 +9,7 @@ from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
+                                   options_flow_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -491,6 +492,39 @@ def test_market_story_carries_market_control_tie_in_to_mission_call():
     story=market_story(blocks,mission_side='risk-on',regime_label=None)
     assert 'Call sellers dominate' in story
     assert 'tension with the risk-on mission call above' in story
+
+def test_options_flow_story_promotes_narrative_flow_to_top_level():
+    """_narrative_flow's per-symbol dominant-flow-type + $ premium + price-confirms/conflicts
+    read already existed and was already covered by test_narrative_flow_reads_the_real_nested_
+    bucket_shape, but only ever surfaced in the per-field appendix under "### Flow" -- this
+    promotes the same read (zero new producer fields) into its own top-level section."""
+    blocks=empty_blocks()
+    blocks['flow']['calls_bought']=item({'SPY':{'0dte':{'contracts':2939,'premium':119089.0}}})
+    blocks['flow']['puts_sold']=item({'SPY':{'0dte':{'contracts':4488,'premium':294719.0}}})
+    blocks['flow']['price_vix_confirmation']=item({'SPY':{'read':'confirms'}})
+    story=options_flow_story(blocks)
+    assert 'SPY flow is dominated by puts sold' in story and '$294,719' in story
+    assert 'clean' in story.lower()
+
+def test_options_flow_story_falls_back_when_coverage_too_thin():
+    """_narrative_flow returns None when classified coverage can't support a direction --
+    the top-level section must still render a plain disclosure, never an empty heading."""
+    blocks=empty_blocks()
+    story=options_flow_story(blocks)
+    assert story=='Classified options flow coverage is too thin to read a direction right now.'
+
+def test_render_markdown_and_html_carry_the_options_flow_section():
+    blocks=empty_blocks()
+    blocks['flow']['calls_bought']=item({'SPY':{'0dte':{'contracts':2939,'premium':119089.0}}})
+    blocks['flow']['price_vix_confirmation']=item({'SPY':{'read':'confirms'}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 📊 Options flow' in md
+    assert 'SPY flow is dominated by calls bought' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>📊 Options flow</h2>' in html_out
+    assert 'SPY flow is dominated by calls bought' in html_out
 
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
