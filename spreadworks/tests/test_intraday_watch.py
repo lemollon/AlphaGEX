@@ -745,6 +745,55 @@ def test_status_exposes_plan_hash_ingestion_and_parity(sqlite_store):
     assert result["plan_parity"]["valid"] is True
 
 
+def test_cycle_writes_each_setups_own_scalar_state_not_the_per_symbol_list(sqlite_store, monkeypatch):
+    """Root-cause regression for PR #3289: full_options_report.py's old producer read
+    runtime['per_symbol_state'][symbol] -- a LIST holding one row per setup registered on that
+    symbol, by design, since a symbol can carry more than one setup -- and dumped that whole
+    list into a field named 'state' for every setup on the symbol, 500ing the narrative renderer
+    on an unhashable-list dict key. The real fix belongs here, at the source: run_intraday_cycle
+    must also hand consumers a setup_state_by_id map so looking up ONE setup's current state
+    never requires trusting (or mis-reading) the shape of the per-symbol list. Two setups on the
+    same symbol here resolve to two DIFFERENT, correctly-scoped scalar states."""
+    trading_date = date(2026, 9, 18)
+    near = watch.validate_setup(_raw_setup("AMD", level=100, setup_id="amd-near"), trading_date)
+    wait = watch.validate_setup(
+        _raw_setup("AMD", strategy="put_credit_spread", level=200, setup_id="amd-wait"), trading_date)
+    watch.store_morning_plan_atomic(
+        trading_date, ["AMD"], [near, wait],
+        {"trading_date": trading_date.isoformat(), "symbols": ["AMD"], "setups": [near, wait]},
+        ingested_at=NOW,
+    )
+
+    async def market(_app, symbol, now):
+        return {"symbol": symbol, "price": 99.9, "price_basis": "last trade",
+                "bars": _bars([99.8, 99.9]), "source": "Tradier production consolidated feed",
+                "session": "regular", "exchange_timestamp": now.isoformat(),
+                "retrieval_timestamp": now.isoformat(), "quote_timestamp": now - timedelta(seconds=10),
+                "age_seconds": 10, "fresh": True}
+    monkeypatch.setattr(watch, "fetch_symbol_market", market)
+
+    result = asyncio.run(watch.run_intraday_cycle(
+        SimpleNamespace(state=SimpleNamespace(http=None)), now=NOW
+    ))
+
+    by_id = result["setup_state_by_id"]
+    assert by_id[near["setup_id"]] == "NEAR_TRIGGER"
+    assert by_id[wait["setup_id"]] == "WAIT"
+    # The exact shape of the original bug: neither setup's scalar state is ever the raw
+    # per-symbol list, or the other setup's state.
+    assert all(isinstance(state, str) for state in by_id.values())
+    assert isinstance(result["per_symbol_state"]["AMD"], list)
+    assert len(result["per_symbol_state"]["AMD"]) == 2
+    # The scalar map is derived from the exact same result.state that was persisted to each
+    # setup's own database row -- not a separate, driftable computation.
+    db = sqlite_store()
+    try:
+        assert by_id[near["setup_id"]] == db.get(IntradaySetup, near["setup_id"]).state
+        assert by_id[wait["setup_id"]] == db.get(IntradaySetup, wait["setup_id"]).state
+    finally:
+        db.close()
+
+
 def test_plan_endpoint_requires_symbols_and_setups(monkeypatch):
     class Request:
         async def json(self):
