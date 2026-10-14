@@ -1876,7 +1876,8 @@ def positioning_panel_html(blocks):
             rows.append(f'<b>{html.escape(sym)}</b>'+"".join(bits))
     if not rows:
         return ""
-    parts=[f'<div{"" if i==0 else " style=\"margin:10px 0;padding-top:10px;border-top:1px solid #2a3341\""}>{content}</div>'
+    _row_style = ' style="margin:10px 0;padding-top:10px;border-top:1px solid #2a3341"'
+    parts=[f'<div{"" if i==0 else _row_style}>{content}</div>'
            for i,content in enumerate(rows)]
     return '<h2>📍 Positioning &amp; levels</h2>'+"".join(parts)
 
