@@ -479,12 +479,25 @@ def test_market_story_separates_fragments_with_sentence_stops():
     assert 'observation Gamma sign' not in story  # the exact run-on seen live
     assert '. ' in story or story.count('.')>=2
 
+def test_market_story_carries_market_control_tie_in_to_mission_call():
+    """Leron, 2026-10-10: "each section should flow into each [other]" -- market_control's
+    agree/conflict callback to the mission verdict already existed (section_meaning), it just
+    never reached the flagship Market story paragraph. Risk-on mission + call-sellers-dominant
+    market_control is a genuine conflict; the tie-in sentence must say so, not just restate
+    "call sellers dominate" in isolation."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Risk-on price confirmation')
+    blocks['market_control']['control_side']=item({'SPY':{'horizon':'call_sellers'},'QQQ':{'horizon':'call_sellers'}})
+    story=market_story(blocks,mission_side='risk-on',regime_label=None)
+    assert 'Call sellers dominate' in story
+    assert 'tension with the risk-on mission call above' in story
+
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
     blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
     blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH'})
     blocks['gamma']['net_gex']=item({'SPY':0.5})
-    assert 'Defensive price confirmation' in market_story(blocks)
+    assert 'leaning defensive' in market_story(blocks)  # derived from the literal verdict's "Defensive"
     for name in ('day_strategy','near_forward_strategy','forward_strategy'):
         blocks[name]['trigger']=item('No registered trigger')
         blocks[name]['invalidation']=item('No observed setup')
