@@ -10,7 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
-                                   expected_move_story,
+                                   expected_move_story, breadth_sector_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -627,6 +627,36 @@ def test_render_markdown_and_html_carry_the_expected_move_section():
     html_out=render_opening_html(payload)
     assert '<h2>📏 Expected move</h2>' in html_out
     assert 'one-day expected move is $5.52' in html_out  # escape() turns "SPY's" into "SPY&#x27;s"
+
+def test_breadth_sector_story_combines_both_narrative_builders():
+    """_narrative_breadth's advancers/decliners + up-down-volume + 52-week highs/lows read
+    and _narrative_sector_credit's leaders/laggards + HYG-credit-confirmation read already
+    existed and were already tested (section_summary coverage), but only ever surfaced
+    separately in the per-field appendix under "### Breadth" and "### Sector Credit" --
+    combines both into one top-level section, same pattern as surface_smile_story."""
+    blocks=empty_blocks()
+    blocks['breadth']['advance_decline']=item({'advances':2800,'declines':700})
+    blocks['sector_credit']['relative_returns']=item({'XLK':1.2,'XLF':0.8,'XLE':0.3,'XLU':-0.9,'XLP':-0.5,'XLY':-0.1})
+    story=breadth_sector_story(blocks)
+    assert '2800 stocks are advancing against 700 declining' in story and 'broad and convincing' in story
+    assert 'Leading today: XLK +1.20%' in story and 'Lagging: XLU -0.90%' in story
+
+def test_breadth_sector_story_falls_back_when_both_builders_return_none():
+    blocks=empty_blocks()
+    story=breadth_sector_story(blocks)
+    assert story=='Breadth and sector/credit coverage is too thin to read participation right now.'
+
+def test_render_markdown_and_html_carry_the_breadth_sector_section():
+    blocks=empty_blocks()
+    blocks['breadth']['advance_decline']=item({'advances':2800,'declines':700})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🌐 Breadth, sectors & credit' in md
+    assert '2800 stocks are advancing against 700 declining' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🌐 Breadth, sectors & credit</h2>' in html_out
+    assert '2800 stocks are advancing against 700 declining' in html_out
 
 def test_market_story_carries_premium_selling_narrative_not_flat_label():
     """market_story's premium fragment was just the flat suitability label ("SPY:
