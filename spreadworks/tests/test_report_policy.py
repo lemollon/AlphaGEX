@@ -10,7 +10,7 @@ from backend.report_contract import REQUIREMENTS, validate_report, prepare_repor
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
-                                   expected_move_story, breadth_sector_story,
+                                   expected_move_story, breadth_sector_story, macro_futures_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -657,6 +657,37 @@ def test_render_markdown_and_html_carry_the_breadth_sector_section():
     html_out=render_opening_html(payload)
     assert '<h2>🌐 Breadth, sectors & credit</h2>' in html_out
     assert '2800 stocks are advancing against 700 declining' in html_out
+
+def test_macro_futures_story_combines_both_narrative_builders():
+    """_narrative_macro's 10-year yield + 2s10s curve + MOVE + dollar-index read and
+    _narrative_futures_context's ES/NQ overnight-range read already existed and were already
+    tested (section_summary coverage), but only ever surfaced separately in the per-field
+    appendix under "### Macro" and "### Futures Context" -- combines both into one top-level
+    section, same pattern as surface_smile_story/breadth_sector_story."""
+    blocks=empty_blocks()
+    blocks['macro']['rates']=item({'rates_10y':{'symbol':'DGS10','price':4.12}})
+    blocks['macro']['curve']=item({'10y_minus_2y_basis_points':-25})
+    blocks['futures_context']['es_mes']=item({'ES':{'price':5820.25}})
+    story=macro_futures_story(blocks)
+    assert 'Macro backdrop: the 10-year yield is 4.12%' in story and 'curve is inverted' in story
+    assert 'ES is at 5820.25' in story
+
+def test_macro_futures_story_falls_back_when_both_builders_return_none():
+    blocks=empty_blocks()
+    story=macro_futures_story(blocks)
+    assert story=='Macro and futures coverage is too thin to read a backdrop right now.'
+
+def test_render_markdown_and_html_carry_the_macro_futures_section():
+    blocks=empty_blocks()
+    blocks['macro']['rates']=item({'rates_10y':{'symbol':'DGS10','price':4.12}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🏦 Macro & futures context' in md
+    assert 'the 10-year yield is 4.12%' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🏦 Macro & futures context</h2>' in html_out
+    assert 'the 10-year yield is 4.12%' in html_out
 
 def test_market_story_carries_premium_selling_narrative_not_flat_label():
     """market_story's premium fragment was just the flat suitability label ("SPY:
