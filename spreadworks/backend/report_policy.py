@@ -855,6 +855,47 @@ def _narrative_morning_comparison(block):
                 bits.append(f"{sym}'s setup has shifted since this morning.")
     return " ".join(bits) if bits else None
 
+def _thesis_sentence(thesis):
+    """Leron, 2026-10-14: "Today vs forward... tells me nothing about what the strategy for
+    the day should be." thesis's raw value is a pressure dict per symbol (upside/downside
+    initiation premium + a read), the risk_on_defensive verdict string, or an INCONCLUSIVE
+    forward-horizon dict with no verified flow -- all three used to render as a flat
+    key:value dump wherever thesis was shown directly instead of through this sentence,
+    the Today vs forward table included. One sentence per shape, shared by every renderer
+    so the table and the per-section narrative below it never disagree."""
+    if isinstance(thesis, dict):
+        if "direction" in thesis:
+            direction = thesis.get("direction")
+            return f"Thesis: {direction}." if isinstance(direction, str) else None
+        leaning = [(s, r) for s, r in thesis.items()
+                   if isinstance(r, dict) and r.get("read") not in (None, "balanced or unclassified")]
+        if leaning:
+            return "Thesis: " + "; ".join(f"{s} flow leans {r['read']}" for s, r in leaning) + "."
+        return "Thesis: no classified directional flow yet for this horizon."
+    elif isinstance(thesis, str):
+        mood = ("leaning bullish" if "Risk-on" in thesis else "leaning defensive" if "Defensive" in thesis
+                else "mixed, no clean lean")
+        return f"Today's price read is {mood}."
+    return None
+
+def _thesis_display_item(item):
+    """Swaps an observed()-shaped thesis item's raw dict/string value for _thesis_sentence()'s
+    one-line read, for any renderer (the Today vs forward table, today) that shows thesis
+    directly via display()/item_cell_html() instead of through _narrative_strategy below.
+    Status, source and timestamp metadata pass through untouched; an unavailable item is
+    returned as-is since there is no value to turn into a sentence. The INCONCLUSIVE forward
+    dict (has "direction") is also left untouched -- a 2026-10-10 fix specifically requires it
+    to render as separate labeled lines (direction/volatility_context/meaning), not a sentence;
+    collapsing it to "Thesis: INCONCLUSIVE..." would drop the volatility context and meaning
+    that fix was added to surface."""
+    if not isinstance(item, dict) or item.get("status") == "unavailable":
+        return item
+    value = item.get("value")
+    if isinstance(value, dict) and "direction" in value:
+        return item
+    sentence = _thesis_sentence(value)
+    return dict(item, value=sentence) if sentence else item
+
 def _narrative_strategy(block):
     status_item = block.get("status") or {}
     status = status_item.get("value")
@@ -866,20 +907,9 @@ def _narrative_strategy(block):
                       "PENDING EVIDENCE": "not enough evidence yet to even call this a watch"}.get(status, status)
     sentence = f"Status: {status_phrase}."
     thesis = (block.get("thesis") or {}).get("value")
-    if isinstance(thesis, dict):
-        if "direction" in thesis:
-            direction = thesis.get("direction")
-            if isinstance(direction, str):
-                sentence += f" Thesis: {direction}."
-        else:
-            leaning = [(s, r) for s, r in thesis.items()
-                       if isinstance(r, dict) and r.get("read") not in (None, "balanced or unclassified")]
-            if leaning:
-                sentence += " " + "; ".join(f"{s} flow leans {r['read']}" for s, r in leaning) + "."
-    elif isinstance(thesis, str):
-        mood = ("leaning bullish" if "Risk-on" in thesis else "leaning defensive" if "Defensive" in thesis
-                else "mixed, no clean lean")
-        sentence += f" Today's price read is {mood}."
+    bit = _thesis_sentence(thesis)
+    if bit:
+        sentence += " " + bit
     # Leron, 2026-10-13: "what are the option strateiges to trade today... butterflies,
     # calendar, ircon condor, debit or credit spreads." The structure field carries a dynamic
     # textbook hint appended after the fixed disclaimer (_structure_family_hint, set in
@@ -1634,7 +1664,7 @@ def render_markdown(payload):
     for label,read in scoreboard(blocks):lines.append("| "+label+" | "+read.replace("|","\\|").replace("\n"," ")+" |")
     lines.extend(["## Today vs forward","| Horizon | Thesis | Status |","|---|---|---|"])
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
-        row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(row["thesis"]).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
+        row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(_thesis_display_item(row["thesis"])).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
     lines.extend(["## 🧭 Market story",market_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Horizon | Trigger | Invalidation | Status | Contracts |","|---|---|---|---|---|"])
     for horizon,trigger,invalid,status,contracts in edge_board(blocks):
@@ -2162,7 +2192,7 @@ def render_opening_html(payload):
          "<h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>")
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks.get(name) or {}
-        cell_html=item_cell_html(row.get("thesis",{}))+divider+item_cell_html(row.get("status",{}))+'</div>'
+        cell_html=item_cell_html(_thesis_display_item(row.get("thesis",{})))+divider+item_cell_html(row.get("status",{}))+'</div>'
         out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks))+"</p>"
