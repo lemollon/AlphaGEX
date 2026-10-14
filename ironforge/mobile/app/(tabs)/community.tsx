@@ -88,6 +88,11 @@ export default function CommunityScreen() {
   const [channel, setChannel] = useState('all-chat')
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
+  // A plain state read inside `send` is fresh every render (send isn't memoized), so
+  // this isn't the stale-closure race sparky.tsx had — but two touches landing in the
+  // same tick, before React re-renders between them, can still both pass the `posting`
+  // check. A ref closes that gap too; see app/sparky.tsx's sendingRef for the full story.
+  const postingRef = useRef(false)
   const [postError, setPostError] = useState<string | null>(null)
   // Two sheets, never both: the report/block menu, then the reason picker it opens.
   const [menuFor, setMenuFor] = useState<CommunityMessage | null>(null)
@@ -192,7 +197,8 @@ export default function CommunityScreen() {
 
   async function send() {
     const message = draft.trim()
-    if (!message || posting) return
+    if (!message || postingRef.current) return
+    postingRef.current = true
     setPosting(true)
     setPostError(null)
     try {
@@ -223,6 +229,7 @@ export default function CommunityScreen() {
           : msg,
       )
     } finally {
+      postingRef.current = false
       setPosting(false)
     }
   }
@@ -654,6 +661,9 @@ function ThreadSheet({
   const s = useMemo(() => makeStyles(color), [color])
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
+  // See the postingRef above the top-level composer's `send` in this file — the
+  // same same-tick double-touch race, and here it would double the optimistic reply too.
+  const postingRef = useRef(false)
   const [postError, setPostError] = useState<string | null>(null)
 
   const { data, mutate, isLoading, error } = useSWR<ThreadReplies>(
@@ -675,7 +685,8 @@ function ThreadSheet({
   async function send() {
     if (!parent) return
     const message = draft.trim()
-    if (!message || posting) return
+    if (!message || postingRef.current) return
+    postingRef.current = true
     setPosting(true)
     setPostError(null)
     const tempId = `temp-${Date.now()}`
@@ -721,6 +732,7 @@ function ThreadSheet({
       const msg = (e as Error).message
       setPostError(msg.includes('MEMBERSHIP') ? 'An active membership is required to reply.' : msg)
     } finally {
+      postingRef.current = false
       setPosting(false)
     }
   }
