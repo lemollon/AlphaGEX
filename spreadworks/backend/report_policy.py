@@ -1746,6 +1746,41 @@ def trade_volatility_scan_story(blocks):
     "### Trade Volatility Scan". Zero new producer fields."""
     return _narrative_trade_volatility_scan(blocks["trade_volatility_scan"]) or "TradingVolatility scan coverage is too thin to surface a ranked setup right now."
 
+def contract_packages_and_entry_watches_story(blocks):
+    """Promotes _narrative_contract_packages's existing qualified-structure (strikes, credit/
+    debit, max risk/reward) read and _narrative_entry_watches's existing per-setup trigger-
+    lifecycle read into one top-level section -- both already existed and were already tested,
+    they're deliberately kept paired here because they describe the same registered setups
+    from two angles: what's qualified to trade, and where each one sits in its own trigger
+    lifecycle. Tagged in _SECTION_ROLE as "execution detail" supporting the day/forward plans
+    shown elsewhere, not an independent signal -- promoted anyway per explicit instruction to
+    cover every section. Zero new producer fields."""
+    parts = [p for p in (_narrative_contract_packages(blocks["contract_packages"]), _narrative_entry_watches(blocks["entry_watches"])) if p]
+    if not parts:
+        return "No qualified contract packages or registered entry watches right now."
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+
+def candidates_tracked_story(blocks):
+    """Promotes _narrative_candidate_analysis's existing symbol-roster + qualified-package-
+    count + registered-trigger-count read into its own top-level section, same promotion
+    pattern as the others. Tagged in _SECTION_ROLE as showing what's being watched, not a
+    ranked recommendation -- promoted anyway per explicit instruction to cover every section.
+    Zero new producer fields."""
+    return _narrative_candidate_analysis(blocks["candidate_analysis"]) or "No candidates currently being tracked."
+
+def position_and_trigger_audit_story(blocks):
+    """Promotes _narrative_position_management's existing open-paper-risk + quote-exception
+    read and _narrative_trigger_accountability's existing registered/verified-trigger +
+    loss-cluster read into one top-level section -- both already existed and were already
+    tested, paired here because they're both bookkeeping on this report's own paper-trading
+    system (what's open now, what's happened historically), never advice on a real account.
+    Tagged in _SECTION_ROLE as bookkeeping/audit trail, not today's signal -- promoted anyway
+    per explicit instruction to cover every section. Zero new producer fields."""
+    parts = [p for p in (_narrative_position_management(blocks["position_management"]), _narrative_trigger_accountability(blocks["trigger_accountability"])) if p]
+    if not parts:
+        return "No open paper positions or registered triggers to audit right now."
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1905,6 +1940,9 @@ def render_markdown(payload):
     lines.extend(["## 🏦 Macro & futures context",macro_futures_story(blocks)])
     lines.extend(["## 🕒 Since this morning",since_this_morning_story(blocks)])
     lines.extend(["## 🔭 TradingVolatility top setups",trade_volatility_scan_story(blocks)])
+    lines.extend(["## 📦 Contract packages & entry watches",contract_packages_and_entry_watches_story(blocks)])
+    lines.extend(["## 🔍 Candidates tracked",candidates_tracked_story(blocks)])
+    lines.extend(["## 📋 Position & trigger audit",position_and_trigger_audit_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2447,6 +2485,9 @@ def render_opening_html(payload):
     out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"
     out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"
     out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"
+    out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"
+    out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"
+    out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
