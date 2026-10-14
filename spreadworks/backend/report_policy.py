@@ -2488,11 +2488,11 @@ def render_opening_html(payload):
     out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"
     out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"
     out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"
-    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
+    out+='<h2>🧩 Edge board</h2><div class="tablewrap"><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
               "<td>"+escape(trigger)+"</td><td>"+escape(conflict)+"</td><td>"+escape(status)+"</td></tr>")
-    out+="</table>"
+    out+="</table></div>"
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
     out+="<h2>🧮 If/then day plan</h2><table>"
     for k,item in (blocks.get("adaptation_rules") or {}).items():
