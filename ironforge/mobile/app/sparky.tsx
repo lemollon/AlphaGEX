@@ -57,14 +57,25 @@ export default function SparkyScreen() {
   // got back last time, never the whole transcript. A ref, not state: it must
   // not trigger a re-render, and `send` reads the latest value synchronously.
   const conversationIdRef = useRef<string | null>(null)
+  // `send` is a `useCallback` keyed on [draft, sending], so two touches that land
+  // before React re-renders between them both close over the SAME (stale) `sending
+  // === false` — the `if (!text || sending) return` guard below never sees the
+  // first touch's setSending(true). A customer's screen recording showed exactly
+  // this: a suggestion-chip tap produced two /api/sparky/chat calls 130ms apart.
+  // A ref updates synchronously, before any re-render, so it closes the gap.
+  const sendingRef = useRef(false)
 
   const send = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? draft).trim()
-      if (!text || sending) return
+      if (!text || sendingRef.current) return
+      sendingRef.current = true
 
       trackEvent('sparky_question', { mode: overrideText ? 'suggested' : 'typed' })
-      setTurns((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }])
+      // Captured by reference so the two updates below can find THIS call's own
+      // placeholder by identity, not by array position (see the comments at each).
+      const placeholder: SparkyTurn = { role: 'assistant', content: '' }
+      setTurns((prev) => [...prev, { role: 'user', content: text }, placeholder])
       setDraft('')
       setError(null)
       setSending(true)
@@ -73,23 +84,26 @@ export default function SparkyScreen() {
         const res = await sendSparkyMessage(text, conversationIdRef.current)
         conversationIdRef.current = res.conversationId
         // Fill the trailing (placeholder) assistant turn with the full reply —
-        // one JSON response, not streamed deltas.
+        // one JSON response, not streamed deltas. Matched by identity (the exact
+        // placeholder object this call pushed), not by array position — `sendingRef`
+        // now rules out a second concurrent call, but this stays correct even if
+        // that guard is ever bypassed.
         setTurns((prev) => {
+          const idx = prev.findIndex((t) => t === placeholder)
+          if (idx === -1) return prev
           const copy = [...prev]
-          const last = copy[copy.length - 1]
-          if (last?.role === 'assistant') copy[copy.length - 1] = { ...last, content: res.reply }
+          copy[idx] = { ...copy[idx], content: res.reply }
           return copy
         })
       } catch (e) {
         const msg =
           e instanceof SparkyUnavailableError ? e.message : (e as Error).message || 'Something went wrong.'
         setError(msg)
-        // Drop the empty assistant bubble rather than leaving a blank message behind.
-        setTurns((prev) => {
-          const last = prev[prev.length - 1]
-          return last?.role === 'assistant' && !last.content ? prev.slice(0, -1) : prev
-        })
+        // Drop this call's own empty assistant placeholder, by identity, rather
+        // than assuming it's still the last entry in the array.
+        setTurns((prev) => prev.filter((t) => t !== placeholder))
       } finally {
+        sendingRef.current = false
         setSending(false)
       }
     },
