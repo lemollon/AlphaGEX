@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { trackEvent } from '@/analytics/trackEvent'
+import { reportClientError } from '@/monitoring/crashReport'
 
 /** 10.4 design `sugg` chips — exact copy, shown only on the empty state. */
 const SUGGESTIONS = [
@@ -47,6 +48,26 @@ export default function SparkyScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
+  // TEMP DIAGNOSTIC (2026-10-14): a customer reports sendSparkyMessage succeeding
+  // (confirmed server-side, real replies) while this screen's transcript never
+  // updates — reproduced three separate times, ruling out the double-fire race
+  // fixed alongside this. No code-level cause found by inspection; this reports
+  // to the existing [CLIENT_CRASH] log pipe (reportClientError, kind mislabeled
+  // as network_error — there's no better bucket, and this is temporary) so the
+  // NEXT occurrence has real data instead of another guess. Remove once resolved.
+  const instanceIdRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+  useEffect(() => {
+    reportClientError({
+      kind: 'network_error',
+      message: `[sparky-diag] mount instance=${instanceIdRef.current}`,
+    })
+    return () => {
+      reportClientError({
+        kind: 'network_error',
+        message: `[sparky-diag] unmount instance=${instanceIdRef.current}`,
+      })
+    }
+  }, [])
   const [turns, setTurns] = useState<SparkyTurn[]>([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -65,9 +86,24 @@ export default function SparkyScreen() {
   // A ref updates synchronously, before any re-render, so it closes the gap.
   const sendingRef = useRef(false)
 
+  // TEMP DIAGNOSTIC — see the block at the top of this component.
+  useEffect(() => {
+    reportClientError({
+      kind: 'network_error',
+      message: `[sparky-diag] turns changed instance=${instanceIdRef.current} length=${turns.length}`,
+    })
+    // Only the length and instance id matter for this diagnostic — re-running on
+    // every turns identity change (the normal case) is the point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns.length])
+
   const send = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? draft).trim()
+      reportClientError({
+        kind: 'network_error',
+        message: `[sparky-diag] send() called instance=${instanceIdRef.current} text="${text.slice(0, 40)}" sendingRef=${sendingRef.current}`,
+      })
       if (!text || sendingRef.current) return
       sendingRef.current = true
 
