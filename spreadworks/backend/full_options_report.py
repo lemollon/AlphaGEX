@@ -976,6 +976,7 @@ def report_view(report_id:str):
     _OPEN_BY_DEFAULT = {'risk_on_defensive', 'market_control', 'gamma', 'flow', 'premium_selling',
                          'day_strategy', 'near_forward_strategy', 'forward_strategy',
                          'entry_watches', 'trade_volatility_scan'}
+    _CHART_DIV_OPEN = '<div class="chart">'
     for name,block in _ordered_blocks(payload['report_blocks']):
         anchor='sec-'+name.replace('_','-')
         title=name.replace('_',' ').title()
@@ -999,7 +1000,7 @@ def report_view(report_id:str):
         section_meta_html=f'<div class="meta section-meta">{shared_meta}</div>' if shared_meta else ''
         open_attr=' open' if name in _OPEN_BY_DEFAULT else ''
         parts.append(f'<section class="card" id="{anchor}"><details{open_attr}><summary>{html.escape(title)}</summary>{section_meta_html}'
-                     f'{"<div class=\'chart\'>"+image+"</div>" if image else ""}'
+                     f'{_CHART_DIV_OPEN+image+"</div>" if image else ""}'
                      f'<div class="fields">{fields_html}</div></details></section>')
     from .report_policy import display
     bottom=('<section class="card bottomline"><h2>Bottom line</h2>'
