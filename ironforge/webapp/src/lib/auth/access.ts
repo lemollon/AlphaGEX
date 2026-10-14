@@ -156,11 +156,27 @@ export function isCustomerPath(pathname: string): boolean {
   if (pathname.startsWith('/api/account/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
+  // Sparky's current chat route (#264 renamed this off /api/support/chat, but this
+  // allowlist was never updated) — without this clause isCustomerPath() returns false
+  // for /api/sparky/*, middleware never reads the bearer token for it, and decideAccess
+  // falls through to the generic 'unauthorized' branch. Every mobile call 401'd with the
+  // same opaque {"error":"unauthorized"} body regardless of token validity.
+  if (pathname.startsWith('/api/sparky/')) return true
   // Push device registration + notification preferences. /api/notifications/dispatch is
   // the scanner's seam and passes on the service token via decideAccess's first branch;
   // it ALSO self-guards in-route, because IRONFORGE_PUBLIC_MODE bypasses this gate and a
   // route that can push to arbitrary customers must not inherit that.
   if (pathname.startsWith('/api/notifications/')) return true
+  // EMBER's own trade book + REFLEX status, for the signed-in customer who owns Ember
+  // (resolveEmberOwner → getCustomerIdentity, 403 not 401 when not entitled). Neither
+  // path was classified here or in isPublicPath, so the middleware never read the
+  // customer cookie OR bearer token for them — the same /api/sparky/ trap: every mobile
+  // call 401'd with the opaque generic body regardless of token validity. Exact match
+  // only (not an /api/ember/ prefix) — /api/ember/[...path] is the EMBER BACKTESTER proxy
+  // to the AlphaGEX Python backend, reachable only from the operator-only /ember page via
+  // its own session cookie, and must NOT inherit customer-bearer reachability: it has no
+  // in-route entitlement check of its own.
+  if (pathname === '/api/ember/trades' || pathname === '/api/ember/status') return true
   // Password change is a customer-session route. It was classified NOWHERE, so the
   // middleware never read the customer cookie and 401'd a signed-in customer's own
   // password change — the exact /api/v1/ trap documented above, found during UAT-013.

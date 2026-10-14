@@ -71,11 +71,21 @@ describe('isCustomerPath', () => {
     }
     expect(isCustomerPath('/api/live/summary')).toBe(true)
     expect(isCustomerPath('/api/spark/production-pause')).toBe(true)
+    expect(isCustomerPath('/api/sparky/chat')).toBe(true)
+    expect(isCustomerPath('/api/ember/trades')).toBe(true)
+    expect(isCustomerPath('/api/ember/status')).toBe(true)
   })
   it('does not claim public or operator paths', () => {
     for (const p of ['/', '/pricing', '/track-record', '/spark', '/api/spark/status']) {
       expect(isCustomerPath(p)).toBe(false)
     }
+  })
+  it('does not widen the ember exact match into the operator-only backtester proxy', () => {
+    // /api/ember/[...path] (build/evaluate/build/{id}) has no in-route entitlement check
+    // of its own — it must stay reachable only by an operator session, not a customer
+    // bearer token, so this is an exact match and not an /api/ember/ prefix.
+    expect(isCustomerPath('/api/ember/build')).toBe(false)
+    expect(isCustomerPath('/api/ember/evaluate')).toBe(false)
   })
 })
 
@@ -171,7 +181,7 @@ describe('mobile bearer access', () => {
   const base = { isApi: true, hasSession: false, hasServiceToken: false }
 
   it('opens the customer API surface', () => {
-    for (const p of ['/api/live/summary', '/api/live/trades', '/api/support/chat', '/api/v1/enrollment']) {
+    for (const p of ['/api/live/summary', '/api/live/trades', '/api/support/chat', '/api/sparky/chat', '/api/v1/enrollment', '/api/ember/trades', '/api/ember/status']) {
       expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('allow')
     }
   })
