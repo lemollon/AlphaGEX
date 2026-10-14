@@ -161,16 +161,26 @@ function RootLayoutInner() {
   const [updateChecked, setUpdateChecked] = useState(false)
   useEffect(() => {
     let cancelled = false
-    const UPDATE_CHECK_TIMEOUT_MS = 8_000
+    const CHECK_TIMEOUT_MS = 6_000
+    // The bundle + asset download needs its own, longer budget — racing it against
+    // the same short timer used for the version check starved the download on any
+    // connection slower than wifi, so the update silently never applied, every launch.
+    const FETCH_TIMEOUT_MS = 25_000
+    const withTimeout = <T,>(promise: Promise<T>, ms: number, label: string) =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+      ])
     ;(async () => {
       try {
         if (!Updates.isEnabled) return // Expo Go, or a dev client with updates off
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('update check timed out')), UPDATE_CHECK_TIMEOUT_MS),
+        const result = await withTimeout(
+          Updates.checkForUpdateAsync(),
+          CHECK_TIMEOUT_MS,
+          'update check timed out',
         )
-        const result = await Promise.race([Updates.checkForUpdateAsync(), timeout])
         if (cancelled || !result.isAvailable) return
-        await Promise.race([Updates.fetchUpdateAsync(), timeout])
+        await withTimeout(Updates.fetchUpdateAsync(), FETCH_TIMEOUT_MS, 'update fetch timed out')
         if (cancelled) return
         // Never resolves meaningfully — the app restarts on the new bundle here.
         await Updates.reloadAsync()
