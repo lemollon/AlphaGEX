@@ -1146,6 +1146,14 @@ table{width:100%;border-collapse:collapse;background:var(--surface);border:1px s
 th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;overflow-wrap:anywhere;vertical-align:top;font-size:.85rem}
 th{width:34%;color:var(--muted);font-weight:600}
 table.wide th{width:auto}
+/* The 6-column Edge Board was squeezing every header word down to a one-character
+   column (overflow-wrap:anywhere breaking "Rank"/"Setup"/etc mid-word) to force the whole
+   table into .wrap's 900px -- found 2026-10-14 checking the live site after the ranked
+   Edge Board shipped. Headers never wrap now; the table scrolls horizontally in its own
+   wrapper instead of being crushed to fit. */
+table.wide th{white-space:nowrap}
+.tablewrap{overflow-x:auto}
+.tablewrap table.wide{width:max-content;min-width:100%}
 tr:last-child td,tr:last-child th{border-bottom:none}
 p{color:var(--muted)}
 a{color:var(--accent)}
