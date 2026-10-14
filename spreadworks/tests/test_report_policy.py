@@ -12,6 +12,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
                                    expected_move_story, breadth_sector_story, macro_futures_story,
                                    since_this_morning_story, trade_volatility_scan_story,
+                                   contract_packages_and_entry_watches_story, candidates_tracked_story,
+                                   position_and_trigger_audit_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -751,6 +753,96 @@ def test_render_markdown_and_html_carry_the_trade_volatility_scan_section():
     html_out=render_opening_html(payload)
     assert '<h2>🔭 TradingVolatility top setups</h2>' in html_out
     assert 'SPY put/call ratio (OI) is 1.36' in html_out
+
+def test_contract_packages_and_entry_watches_story_combines_both_builders():
+    """_narrative_contract_packages's qualified-structure (strikes, credit/debit, max risk/
+    reward) read and _narrative_entry_watches's per-setup trigger-lifecycle read already
+    existed and were already tested, but only ever surfaced separately in the per-field
+    appendix under "### Contract Packages" and "### Entry Watches" -- combines both into one
+    top-level section, same pattern as surface_smile_story."""
+    blocks=empty_blocks()
+    blocks['contract_packages']['legs']=item([{'setup_id':'day','strategy':'put_credit_spread','value':[{'strike':780},{'strike':775}]}])
+    blocks['contract_packages']['debit_credit']=item([{'setup_id':'day','value':{'natural_credit':1.25}}])
+    blocks['contract_packages']['max_risk_reward']=item([{'setup_id':'day','value':{'max_risk':375,'max_reward':125}}])
+    blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'day','state':'ENTRY_READY'}])
+    story=contract_packages_and_entry_watches_story(blocks)
+    assert 'Put Credit Spread at 775/780' in story and 'collects $1.25' in story and 'risking $375 to make $125' in story
+    assert 'SPY setup day is just confirmed and ready' in story
+
+def test_contract_packages_and_entry_watches_story_falls_back_when_both_builders_return_none():
+    blocks=empty_blocks()
+    story=contract_packages_and_entry_watches_story(blocks)
+    assert story=='No qualified contract packages or registered entry watches right now.'
+
+def test_render_markdown_and_html_carry_the_contract_packages_entry_watches_section():
+    blocks=empty_blocks()
+    blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'day','state':'WATCH'}])
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 📦 Contract packages & entry watches' in md
+    assert 'SPY setup day is still on watch, not confirmed yet' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>📦 Contract packages & entry watches</h2>' in html_out
+    assert 'SPY setup day is still on watch, not confirmed yet' in html_out
+
+def test_candidates_tracked_story_promotes_narrative_candidate_analysis_to_top_level():
+    """_narrative_candidate_analysis's symbol-roster + qualified-package-count + registered-
+    trigger-count read already existed and was already tested, but only ever surfaced in the
+    per-field appendix under "### Candidate Analysis"."""
+    blocks=empty_blocks()
+    blocks['candidate_analysis']['symbols']=item(['SPY','QQQ'])
+    blocks['candidate_analysis']['liquidity']=item([{'strategy':'put_credit_spread'}])
+    blocks['candidate_analysis']['conditional_triggers']=item([{'setup_id':'s1'}])
+    story=candidates_tracked_story(blocks)
+    assert story=='Tracking 2 symbols: SPY, QQQ. 1 qualified contract package currently live. 1 registered conditional trigger on file.'
+
+def test_candidates_tracked_story_falls_back_when_coverage_too_thin():
+    blocks=empty_blocks()
+    story=candidates_tracked_story(blocks)
+    assert story=='No candidates currently being tracked.'
+
+def test_render_markdown_and_html_carry_the_candidates_tracked_section():
+    blocks=empty_blocks()
+    blocks['candidate_analysis']['symbols']=item(['SPY','QQQ'])
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🔍 Candidates tracked' in md
+    assert 'Tracking 2 symbols: SPY, QQQ' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🔍 Candidates tracked</h2>' in html_out
+    assert 'Tracking 2 symbols: SPY, QQQ' in html_out
+
+def test_position_and_trigger_audit_story_combines_both_builders():
+    """_narrative_position_management's open-paper-risk + quote-exception read and
+    _narrative_trigger_accountability's registered/verified-trigger + loss-cluster read
+    already existed and were already tested, but only ever surfaced separately in the
+    per-field appendix under "### Position Management" and "### Trigger Accountability"."""
+    blocks=empty_blocks()
+    blocks['position_management']['risk_exposure']=item({'open_max_defined_risk':420.0,'quantity_model':'x'})
+    blocks['trigger_accountability']['registered_triggers']=item([{'setup_id':'s1'},{'setup_id':'s2'}])
+    blocks['trigger_accountability']['verified_occurrence']=item(1)
+    story=position_and_trigger_audit_story(blocks)
+    assert '$420 of paper capital is at risk across open positions right now' in story
+    assert '2 registered triggers on file, 1 verified ENTRY_READY alert fired' in story
+
+def test_position_and_trigger_audit_story_falls_back_when_both_builders_return_none():
+    blocks=empty_blocks()
+    story=position_and_trigger_audit_story(blocks)
+    assert story=='No open paper positions or registered triggers to audit right now.'
+
+def test_render_markdown_and_html_carry_the_position_trigger_audit_section():
+    blocks=empty_blocks()
+    blocks['position_management']['risk_exposure']=item({'open_max_defined_risk':420.0})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 📋 Position & trigger audit' in md
+    assert '$420 of paper capital is at risk' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>📋 Position & trigger audit</h2>' in html_out
+    assert '$420 of paper capital is at risk' in html_out
 
 def test_market_story_carries_premium_selling_narrative_not_flat_label():
     """market_story's premium fragment was just the flat suitability label ("SPY:
