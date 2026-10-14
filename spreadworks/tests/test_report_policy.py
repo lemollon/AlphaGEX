@@ -667,6 +667,20 @@ def test_render_markdown_adds_decision_lines_to_every_section_honestly():
     assert set(SECTION_SUMMARY_SECTIONS)==set(REQUIREMENTS)
     assert 'paper_scorecard' in SECTION_SUMMARY_SECTIONS
 
+def test_render_markdown_threads_the_flat_regime_label_into_put_call_tie_in():
+    """2026-10-14: render_markdown computes regime_label the same way decision_brief_lines
+    already does and must pass it into section_meaning, not just mission_side -- otherwise the
+    trade_volatility_scan tie-in silently falls back to the old hedged wording on every real
+    report even though regime_label is sitting right there in risk_on_defensive."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
+    blocks['risk_on_defensive']['regime_label']=item('DEFENSIVE')
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.4}})
+    payload={'generated_at':NOW.isoformat(),'kind':'intraday','report_blocks':blocks,'report_completeness':'INCOMPLETE'}
+    markdown=render_markdown(payload)
+    tv_section=markdown.split('### Trade Volatility Scan')[1].split('###')[0]
+    assert 'flat DEFENSIVE regime call' in tv_section
+
 def test_render_opening_html_carries_decision_first_panels():
     """This is the function the live /view page and the email body actually render from —
     unlike render_markdown (Discord-only), a gap this catches by construction."""
@@ -1373,6 +1387,30 @@ def test_trade_volatility_scan_meaning_ties_put_call_ratio_to_the_mission_call()
 
     agree=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side='defensive')
     assert 'put-heavy' in agree and 'agreeing with' in agree
+
+def test_trade_volatility_scan_meaning_names_the_flat_regime_label_not_both_sides():
+    """2026-10-14: the tie-in sentence always printed "the defensive/risk-on mission call
+    above" verbatim, regardless of which side actually applied -- a real bug, found reading a
+    live report. With regime_label given, the sentence must name that flat label instead of the
+    hedged mission_side wording, and only the side that's real, never both."""
+    blocks=empty_blocks()
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.4}})
+    tension=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],
+                             mission_side='risk-on',regime_label='RISK-ON')
+    assert 'put-heavy' in tension and 'in tension with' in tension
+    assert 'flat RISK-ON regime call' in tension
+    assert 'defensive/risk-on' not in tension  # the old bug: both words, every time
+
+    agree=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],
+                           mission_side='defensive',regime_label='DEFENSIVE')
+    assert 'put-heavy' in agree and 'agreeing with' in agree
+    assert 'flat DEFENSIVE regime call' in agree
+    assert 'defensive/risk-on' not in agree
+
+    # No regime_label given at all -> falls back to the prior hedged mission_side wording,
+    # naming only that one side, same as before this change (CHOPPY/no field is unavailable).
+    bare=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side='risk-on')
+    assert 'the risk-on mission call above' in bare and 'defensive/risk-on' not in bare
 
 def test_trade_volatility_scan_is_honest_when_vendor_unavailable():
     blocks=empty_blocks()  # every field unavailable, as if TV credentials/data are missing
