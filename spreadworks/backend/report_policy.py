@@ -1670,6 +1670,15 @@ def options_flow_story(blocks):
     rather than an empty section."""
     return _narrative_flow(blocks["flow"]) or "Classified options flow coverage is too thin to read a direction right now."
 
+def dealer_positioning_story(blocks):
+    """Promotes _narrative_market_control's existing per-symbol "who's running this today,
+    how confident, does forward flow agree" read into its own top-level section, same
+    pattern as options_flow_story. Distinct from Market story's market_control fragment --
+    that one is section_meaning's single aggregate sentence with its agree/conflict callback
+    to the mission verdict; this is the richer per-symbol breakdown that previously only
+    surfaced in the per-field appendix under "### Market Control". Zero new producer fields."""
+    return _narrative_market_control(blocks["market_control"]) or "Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1822,6 +1831,7 @@ def render_markdown(payload):
     regime_label=regime_label_item.get("value") if isinstance(regime_label_item.get("value"),str) else None
     lines.extend(["## 🧭 Market story",market_story(blocks,mission_side,regime_label)])
     lines.extend(["## 📊 Options flow",options_flow_story(blocks)])
+    lines.extend(["## 🏛️ Dealer positioning",dealer_positioning_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2357,6 +2367,7 @@ def render_opening_html(payload):
     html_regime_label=html_regime_label_item.get("value") if isinstance(html_regime_label_item.get("value"),str) else None
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,html_mission_side,html_regime_label))+"</p>"
     out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"
+    out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
