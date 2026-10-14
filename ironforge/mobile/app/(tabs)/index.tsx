@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { View, Text, ScrollView, RefreshControl, Pressable, StyleSheet, Alert, Platform, Linking, AppState, type AppStateStatus } from 'react-native'
-import { useScrollToTop } from '@react-navigation/native'
+import { useIsFocused, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -784,10 +784,24 @@ function AgentRow({ agent, onPress }: { agent: LiveAgent; onPress: () => void })
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
+  // Every sheet screen (/sparky, /notifications, /agents/[bot], /trade/[id]) used
+  // to be a plain full-screen pushed route; the 10.4 redesign made them all
+  // presentation:'transparentModal' sheets that deliberately keep THIS tab mounted
+  // and visible underneath (Sheet.tsx's own doc comment) — but React Navigation
+  // doesn't automatically stop a backgrounded screen from receiving touches just
+  // because another is presented on top of it the way these sheets are built.
+  // Confirmed live: a tap meant for a control inside a freshly-opened sheet also
+  // reaching a button here re-triggered navigation, reopening the sheet from
+  // scratch and wiping whatever it was about to show (#3332's Sparky repro).
+  // `pointerEvents="none"` while this tab isn't focused closes that for every
+  // button here at once, instead of gating each one individually.
+  const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <AppHeader />
-      {children}
+      <View style={{ flex: 1 }} pointerEvents={isFocused ? 'auto' : 'none'}>
+        <AppHeader />
+        {children}
+      </View>
     </SafeAreaView>
   )
 }

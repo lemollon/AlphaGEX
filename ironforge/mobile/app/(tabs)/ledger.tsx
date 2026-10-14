@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, TextInput, Pressable, RefreshControl, ActivityIndicator, StyleSheet } from 'react-native'
-import { useScrollToTop } from '@react-navigation/native'
+import { useIsFocused, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import useSWR from 'swr'
@@ -430,10 +430,14 @@ function EmberFact({ label, value }: { label: string; value: string }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
+  // See the matching comment in app/(tabs)/index.tsx's Shell.
+  const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <AppHeader />
-      {children}
+      <View style={{ flex: 1 }} pointerEvents={isFocused ? 'auto' : 'none'}>
+        <AppHeader />
+        {children}
+      </View>
     </SafeAreaView>
   )
 }
