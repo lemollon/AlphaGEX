@@ -1701,6 +1701,18 @@ def expected_move_story(blocks):
     the per-field appendix under "### Expected Move". Zero new producer fields."""
     return _narrative_expected_move(blocks["expected_move"]) or "Expected move coverage is too thin to read a band right now."
 
+def breadth_sector_story(blocks):
+    """Promotes _narrative_breadth's existing advancers/decliners + up-down-volume + 52-week
+    highs/lows read and _narrative_sector_credit's existing leaders/laggards + HYG-credit-
+    confirmation read into one top-level "Breadth, sectors & credit" section, same combining
+    pattern as surface_smile_story. Both narrative builders already existed and were already
+    tested; they only ever surfaced separately in the per-field appendix under "### Breadth"
+    and "### Sector Credit". Zero new producer fields."""
+    parts = [p for p in (_narrative_breadth(blocks["breadth"]), _narrative_sector_credit(blocks["sector_credit"])) if p]
+    if not parts:
+        return "Breadth and sector/credit coverage is too thin to read participation right now."
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1856,6 +1868,7 @@ def render_markdown(payload):
     lines.extend(["## 🏛️ Dealer positioning",dealer_positioning_story(blocks)])
     lines.extend(["## 📐 Surface, smile & term structure",surface_smile_story(blocks)])
     lines.extend(["## 📏 Expected move",expected_move_story(blocks)])
+    lines.extend(["## 🌐 Breadth, sectors & credit",breadth_sector_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2394,6 +2407,7 @@ def render_opening_html(payload):
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
     out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
     out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
+    out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
