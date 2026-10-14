@@ -1,5 +1,5 @@
 from datetime import datetime,timedelta,timezone
-import html,io,json
+import asyncio,html,io,json
 from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine,text
@@ -852,3 +852,82 @@ def test_report_view_raw_field_branch_still_used_for_a_section_outside_summary_s
     scanner_card=view.split('id="sec-scanner"')[1].split('</section>')[0]
     assert '<div class="field"><div class="fieldtop">' in scanner_card  # raw _field_row, not narrative
     assert 'Section summary' not in scanner_card
+
+def _empty_blocks():
+    return {n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+
+async def _fake_fetch_ok(app,setup,now):
+    return package(),'fresh'
+
+async def _fake_fetch_none(app,setup,now):
+    return None,'no expiration matched the setup preference'
+
+def test_refresh_live_contract_packages_fills_an_unavailable_day_strategy_contracts(monkeypatch):
+    """Leron, 2026-10-14: "what strikes are the sellers at" -- the stored option_strike_selection
+    intraday_watch.py persists is stamped at ENTRY_READY transition time, not report-build time,
+    so qualify_package()'s <=90s freshness check rejects it on every report. This re-fetches
+    live at report-build time instead, using the same fetch_option_selection() the watcher
+    calls, and should fill contract_packages + day_strategy.contracts when both start out
+    unavailable."""
+    monkeypatch.setattr(report,'fetch_option_selection',_fake_fetch_ok)
+    blocks=_empty_blocks()
+    plan={'setups':[{'setup_id':'s1','symbol':'SPY','strategy':'call_debit_spread'}]}
+    runtime={'setup_state_by_id':{'s1':'ENTRY_READY'}}
+    core={'surface':{'SPY':{'spot':100.5}}}
+    asyncio.run(report.refresh_live_contract_packages(None,blocks,plan,runtime,core,NOW))
+    assert blocks['contract_packages']['legs']['status']=='live'
+    assert blocks['contract_packages']['legs']['value'][0]['setup_id']=='s1'
+    assert blocks['contract_packages']['strikes']['value'][0]['value']==[100,105]
+    assert blocks['day_strategy']['contracts']['status']=='live'
+    assert blocks['day_strategy']['contracts']['value'][0]['setup_id']=='s1'
+
+def test_refresh_live_contract_packages_never_overwrites_an_already_live_field(monkeypatch):
+    """The normal (stored-snapshot) path occasionally does qualify in time -- this refetch must
+    never second-guess or replace a field that path already populated."""
+    monkeypatch.setattr(report,'fetch_option_selection',_fake_fetch_ok)
+    blocks=_empty_blocks()
+    already=p.observation([{'setup_id':'existing','strategy':'put_credit_spread','value':[1]}],'Watcher fresh per-leg chain qualification',NOW,NOW)
+    blocks['contract_packages']['legs']=already
+    blocks['day_strategy']['contracts']=already
+    plan={'setups':[{'setup_id':'s1','symbol':'SPY','strategy':'call_debit_spread'}]}
+    runtime={'setup_state_by_id':{'s1':'ENTRY_READY'}}
+    core={'surface':{'SPY':{'spot':100.5}}}
+    asyncio.run(report.refresh_live_contract_packages(None,blocks,plan,runtime,core,NOW))
+    assert blocks['contract_packages']['legs']==already
+    assert blocks['day_strategy']['contracts']==already
+
+def test_refresh_live_contract_packages_only_checks_entry_ready_setups(monkeypatch):
+    """A WATCH or PENDING setup has no business triggering a live options-chain fetch every
+    report cycle -- only a setup that has actually confirmed ENTRY_READY."""
+    calls=[]
+    async def spy_fetch(app,setup,now):
+        calls.append(setup['setup_id']);return package(),'fresh'
+    monkeypatch.setattr(report,'fetch_option_selection',spy_fetch)
+    blocks=_empty_blocks()
+    plan={'setups':[{'setup_id':'watching','symbol':'SPY','strategy':'call_debit_spread'}]}
+    runtime={'setup_state_by_id':{'watching':'WATCH'}}
+    core={'surface':{'SPY':{'spot':100.5}}}
+    asyncio.run(report.refresh_live_contract_packages(None,blocks,plan,runtime,core,NOW))
+    assert calls==[]
+    assert blocks['contract_packages']['legs']['status']=='unavailable'
+    assert blocks['day_strategy']['contracts']['status']=='unavailable'
+
+def test_refresh_live_contract_packages_tolerates_fetch_failures(monkeypatch):
+    """A rejected/failed live fetch (no expiration matched, Tradier error, etc.) must leave the
+    unavailable fields exactly as they were -- never a half-built package, never a crash that
+    takes the whole report down with it."""
+    monkeypatch.setattr(report,'fetch_option_selection',_fake_fetch_none)
+    blocks=_empty_blocks()
+    plan={'setups':[{'setup_id':'s1','symbol':'SPY','strategy':'call_debit_spread'}]}
+    runtime={'setup_state_by_id':{'s1':'ENTRY_READY'}}
+    core={'surface':{'SPY':{'spot':100.5}}}
+    asyncio.run(report.refresh_live_contract_packages(None,blocks,plan,runtime,core,NOW))
+    assert blocks['contract_packages']['legs']['status']=='unavailable'
+    assert blocks['day_strategy']['contracts']['status']=='unavailable'
+
+    async def spy_raise(app,setup,now):
+        raise RuntimeError('tradier down')
+    monkeypatch.setattr(report,'fetch_option_selection',spy_raise)
+    blocks2=_empty_blocks()
+    asyncio.run(report.refresh_live_contract_packages(None,blocks2,plan,runtime,core,NOW))
+    assert blocks2['contract_packages']['legs']['status']=='unavailable'
