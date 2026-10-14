@@ -9,7 +9,7 @@ from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
-                                   edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
+                                   edge_board, ranked_edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
@@ -523,8 +523,56 @@ def test_edge_board_carries_the_qualified_contract_strike_and_expiration():
     rows=edge_board(blocks)
     assert len(rows)==3 and len(rows[0])==5
     assert '580' in rows[0][4] and '575' in rows[0][4]
+    # The ranked Edge Board (2026-10-14) replaced the old 3-row table with a ranked,
+    # multi-candidate list that has no separate Contracts column -- the strikes now live in
+    # the candidate's Evidence text instead, never dropped.
+    ranked=ranked_edge_board(blocks)
+    day_row=next(r for r in ranked if 'put credit spread' in r[1])
+    assert '580' in day_row[2] and '575' in day_row[2]
     html_out=render_opening_html({'kind':'intraday','generated_at':NOW.isoformat(),'report_blocks':blocks})
-    assert '<th>Contracts</th>' in html_out
+    assert '<th>Evidence</th>' in html_out and '580' in html_out and '575' in html_out
+
+def test_ranked_edge_board_ranks_a_confirmed_registered_setup_above_a_range_idea_above_no_trade():
+    """Leron, 2026-10-14 (a ChatGPT mockup he's building toward): the Edge Board should be a
+    RANKED list of competing ideas across symbols, with "No trade" an explicit, ranked
+    competitor instead of an unstated default. ENTRY_READY beats a contained-range read,
+    which beats "No trade" -- same ordering the mockup showed."""
+    blocks=empty_blocks()
+    blocks['day_strategy']['status']=item('ENTRY_READY')
+    blocks['day_strategy']['trigger']=item([{'symbol':'QQQ','level':742.75,'direction':'above'}])
+    blocks['day_strategy']['contracts']=item([{'strategy':'call_debit_spread','expiration':'2026-10-14','legs':[]}])
+    blocks['day_strategy']['thesis']=item('Risk-on price confirmation')
+    blocks['profile']['val']=item({'SPY':{'val':776.9},'QQQ':{'val':741.5}})
+    blocks['profile']['vah']=item({'SPY':{'vah':778.3},'QQQ':{'vah':743.75}})
+    blocks['profile']['poc']=item({'SPY':{'poc':777.65},'QQQ':{'poc':743.125}})
+    blocks['gamma']['walls']=item({'SPY':{'walls':{'top_call':[{'strike':778.0}],'top_put':[{'strike':777.0}]}},
+                                    'QQQ':{'walls':{'top_call':[{'strike':744.0}],'top_put':[{'strike':741.0}]}}})
+    ranked=ranked_edge_board(blocks)
+    statuses=[r[5] for r in ranked]
+    assert statuses[0]=='ENTRY_READY'  # the confirmed setup ranks first
+    assert statuses[-1]=='READY'  # No trade ranks last when real candidates exist
+    assert ranked[0][0]==1 and ranked[-1][0]==len(ranked)  # Rank column is sequential
+    assert any(r[1]=='No trade' for r in ranked)
+    assert any('SPY range structure' in r[1] for r in ranked)
+    assert any('QQQ range structure' in r[1] for r in ranked)
+
+def test_ranked_edge_board_puts_no_trade_first_when_nothing_else_qualifies():
+    blocks=empty_blocks()  # every field unavailable -- no registered setup, no profile/gamma coverage
+    ranked=ranked_edge_board(blocks)
+    assert len(ranked)==1
+    assert ranked[0]==(1,'No trade','Evidence and executable packages incomplete.',
+                        'Remains the default while other triggers conflict or remain unconfirmed.',
+                        'Opportunity cost.','READY')
+
+def test_ranked_edge_board_skips_pending_evidence_but_keeps_watch():
+    blocks=empty_blocks()
+    blocks['day_strategy']['status']=item('PENDING EVIDENCE')
+    blocks['near_forward_strategy']['status']=item('WATCH')
+    blocks['near_forward_strategy']['thesis']=item('Defensive price confirmation')
+    ranked=ranked_edge_board(blocks)
+    setups=[r[1] for r in ranked]
+    assert not any('day strategy' in s for s in setups)  # PENDING EVIDENCE has nothing to rank
+    assert any('near forward strategy' in s for s in setups)  # WATCH still competes
 
 def test_macro_yield_shows_day_over_day_change_not_just_a_snapshot():
     """Leron, 2026-10-13: "what is the yield on treasury how has it changed... what does it
