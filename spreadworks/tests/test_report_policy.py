@@ -11,6 +11,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
                                    expected_move_story, breadth_sector_story, macro_futures_story,
+                                   since_this_morning_story, trade_volatility_scan_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -688,6 +689,68 @@ def test_render_markdown_and_html_carry_the_macro_futures_section():
     html_out=render_opening_html(payload)
     assert '<h2>🏦 Macro & futures context</h2>' in html_out
     assert 'the 10-year yield is 4.12%' in html_out
+
+def test_since_this_morning_story_promotes_narrative_morning_comparison_to_top_level():
+    """_narrative_morning_comparison's per-symbol HOLDING/CHANGED/FIRST_REPORT regime-shift
+    read already existed and was already tested (section_summary coverage), but only ever
+    surfaced in the per-field appendix under "### Morning Comparison" -- same promotion
+    pattern as options_flow_story/dealer_positioning_story."""
+    blocks=empty_blocks()
+    blocks['morning_comparison']['regime_shift']=item({'SPY':{'status':'CHANGED','changed':['flipped from risk-on to defensive']},
+                                                         'QQQ':{'status':'HOLDING'}})
+    story=since_this_morning_story(blocks)
+    assert 'SPY has moved since this morning: flipped from risk-on to defensive' in story
+    assert 'QQQ is holding the same read as this morning' in story
+
+def test_since_this_morning_story_falls_back_when_no_prior_checkpoint():
+    blocks=empty_blocks()
+    story=since_this_morning_story(blocks)
+    assert story=='No prior checkpoint to compare against yet this report.'
+
+def test_render_markdown_and_html_carry_the_since_this_morning_section():
+    blocks=empty_blocks()
+    blocks['morning_comparison']['regime_shift']=item({'SPY':{'status':'HOLDING'}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🕒 Since this morning' in md
+    assert 'SPY is holding the same read as this morning' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🕒 Since this morning</h2>' in html_out
+    assert 'SPY is holding the same read as this morning' in html_out
+
+def test_trade_volatility_scan_story_promotes_narrative_to_top_level():
+    """_narrative_trade_volatility_scan's best-long/best-short/best-income setup + put/call-
+    ratio + expected-move-trend read already existed and was already tested (section_summary
+    coverage), but only ever surfaced in the per-field appendix under "### Trade Volatility
+    Scan" -- this is literally answering Leron's own questions ("which stock shows the best
+    opportunity to go long", "is [put/call] widening or collapsing") that were buried there."""
+    blocks=empty_blocks()
+    blocks['trade_volatility_scan']['top_long_setups']=item([
+        {'ticker':'AUPH','opportunity_score':7.3,'opportunity_tier':'moderate',
+         'structures':['long_equity','long_calls'],'entry_trigger':'Buy pullbacks toward the 20-day average while it holds'},
+    ])
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.36,'change_30day':-0.43}})
+    story=trade_volatility_scan_story(blocks)
+    assert 'Best long setup: AUPH (7.3/10, moderate)' in story
+    assert 'SPY put/call ratio (OI) is 1.36, down 0.43 over 30 days' in story
+
+def test_trade_volatility_scan_story_falls_back_when_coverage_too_thin():
+    blocks=empty_blocks()
+    story=trade_volatility_scan_story(blocks)
+    assert story=='TradingVolatility scan coverage is too thin to surface a ranked setup right now.'
+
+def test_render_markdown_and_html_carry_the_trade_volatility_scan_section():
+    blocks=empty_blocks()
+    blocks['trade_volatility_scan']['put_call_ratio']=item({'SPY':{'pcr_oi':1.36}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🔭 TradingVolatility top setups' in md
+    assert 'SPY put/call ratio (OI) is 1.36' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🔭 TradingVolatility top setups</h2>' in html_out
+    assert 'SPY put/call ratio (OI) is 1.36' in html_out
 
 def test_market_story_carries_premium_selling_narrative_not_flat_label():
     """market_story's premium fragment was just the flat suitability label ("SPY:

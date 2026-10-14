@@ -1726,6 +1726,26 @@ def macro_futures_story(blocks):
         return "Macro and futures coverage is too thin to read a backdrop right now."
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
 
+def since_this_morning_story(blocks):
+    """Promotes _narrative_morning_comparison's existing per-symbol HOLDING/CHANGED/FIRST_
+    REPORT regime-shift read into its own top-level section, same promotion pattern as
+    options_flow_story/dealer_positioning_story. Already existed and was already tested;
+    only ever surfaced in the per-field appendix under "### Morning Comparison". On a
+    morning report (or the first checkpoint) every symbol reads FIRST_REPORT, which is
+    already handled gracefully by the builder. Zero new producer fields."""
+    return _narrative_morning_comparison(blocks["morning_comparison"]) or "No prior checkpoint to compare against yet this report."
+
+def trade_volatility_scan_story(blocks):
+    """Promotes _narrative_trade_volatility_scan's existing best-long/best-short/best-income
+    setup + put/call-ratio + expected-move-trend read into its own top-level section, same
+    promotion pattern as the others. Every number here is TradingVolatility's own
+    deterministic, versioned output (see report_trading_volatility_scan.py), clearly
+    sourced -- this is literally answering Leron's own questions ("which stock shows the
+    best opportunity to go long... what are the strikes and expirations", "is [put/call]
+    widening or collapsing") that were previously buried in the per-field appendix under
+    "### Trade Volatility Scan". Zero new producer fields."""
+    return _narrative_trade_volatility_scan(blocks["trade_volatility_scan"]) or "TradingVolatility scan coverage is too thin to surface a ranked setup right now."
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1883,6 +1903,8 @@ def render_markdown(payload):
     lines.extend(["## 📏 Expected move",expected_move_story(blocks)])
     lines.extend(["## 🌐 Breadth, sectors & credit",breadth_sector_story(blocks)])
     lines.extend(["## 🏦 Macro & futures context",macro_futures_story(blocks)])
+    lines.extend(["## 🕒 Since this morning",since_this_morning_story(blocks)])
+    lines.extend(["## 🔭 TradingVolatility top setups",trade_volatility_scan_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2423,6 +2445,8 @@ def render_opening_html(payload):
     out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
     out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"
     out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"
+    out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"
+    out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
