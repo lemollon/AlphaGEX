@@ -1713,6 +1713,19 @@ def breadth_sector_story(blocks):
         return "Breadth and sector/credit coverage is too thin to read participation right now."
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
 
+def macro_futures_story(blocks):
+    """Promotes _narrative_macro's existing 10-year yield + 2s10s curve + MOVE + dollar-index
+    read and _narrative_futures_context's existing ES/NQ overnight-range read into one
+    top-level "Macro & futures context" section, same combining pattern as surface_smile_
+    story/breadth_sector_story. Both narrative builders already existed and were already
+    tested; they only ever surfaced separately in the per-field appendix under "### Macro"
+    and "### Futures Context". Context-only by design (neither builder computes a directional
+    lean) -- zero new producer fields."""
+    parts = [p for p in (_narrative_macro(blocks["macro"]), _narrative_futures_context(blocks["futures_context"])) if p]
+    if not parts:
+        return "Macro and futures coverage is too thin to read a backdrop right now."
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1869,6 +1882,7 @@ def render_markdown(payload):
     lines.extend(["## 📐 Surface, smile & term structure",surface_smile_story(blocks)])
     lines.extend(["## 📏 Expected move",expected_move_story(blocks)])
     lines.extend(["## 🌐 Breadth, sectors & credit",breadth_sector_story(blocks)])
+    lines.extend(["## 🏦 Macro & futures context",macro_futures_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2408,6 +2422,7 @@ def render_opening_html(payload):
     out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
     out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
     out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"
+    out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
