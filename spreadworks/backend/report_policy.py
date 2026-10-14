@@ -1627,6 +1627,100 @@ def edge_board(blocks):
                      display(row.get("contracts", {}), compact=True)))
     return rows
 
+_EDGE_BOARD_SCORE = {"ENTRY_READY": 3, "OPEN PAPER": 3, "WATCH": 2}
+
+def _edge_board_registered_candidate(name, row):
+    """One registered horizon (day/near/forward) as a ranked Edge Board candidate. Skips
+    PENDING EVIDENCE -- not enough evidence yet to even call it a watch, so it has nothing to
+    compete on. Reuses the exact same fields _narrative_strategy/_thesis_sentence already
+    read; never invents a symbol, structure or evidence string that isn't already observed."""
+    status = (row.get("status") or {}).get("value")
+    if status not in _EDGE_BOARD_SCORE:
+        return None
+    trigger_val = (row.get("trigger") or {}).get("value")
+    symbol = trigger_val[0].get("symbol") if isinstance(trigger_val, list) and trigger_val and isinstance(trigger_val[0], dict) else None
+    contracts_val = (row.get("contracts") or {}).get("value")
+    strategy = contracts_val[0].get("strategy") if isinstance(contracts_val, list) and contracts_val and isinstance(contracts_val[0], dict) else None
+    setup = " ".join(x for x in (symbol, strategy.replace("_", " ") if strategy else None) if x) or name.replace("_", " ")
+    sentence = _thesis_sentence((row.get("thesis") or {}).get("value"))
+    evidence = sentence.removeprefix("Thesis: ") if sentence else "No classified evidence yet for this horizon."
+    # Leron: "the edge board is not providing strike or expirations" -- a prior fix wired
+    # this into the old 3-row table's own Contracts column; the ranked board has no separate
+    # Contracts column, so the strikes belong in Evidence here instead, not dropped.
+    package = contracts_val[0] if isinstance(contracts_val, list) and contracts_val and isinstance(contracts_val[0], dict) else None
+    legs = package.get("legs") if isinstance(package, dict) else None
+    if isinstance(legs, list) and legs:
+        strikes = ", ".join(f"{leg.get('action')} {leg.get('strike')}" for leg in legs if isinstance(leg, dict) and leg.get("strike") is not None)
+        expiration = package.get("expiration")
+        if strikes:
+            evidence += f" Qualified: {strikes}" + (f", exp {expiration}." if expiration else ".")
+    conflicts_val = (row.get("conflicts") or {}).get("value")
+    market_conflicts = conflicts_val.get("market_conflicts") if isinstance(conflicts_val, dict) else None
+    conflict = "; ".join(str(c) for c in market_conflicts) if isinstance(market_conflicts, list) and market_conflicts else "None flagged."
+    return {"setup": setup, "evidence": evidence, "trigger": display(row.get("trigger", {}), compact=True),
+            "conflict": conflict, "status": status, "score": _EDGE_BOARD_SCORE[status]}
+
+def _edge_board_range_candidate(blocks, symbol):
+    """A contained-range idea for a symbol this report has real profile + gamma coverage for
+    (SPY/QQQ today -- IWM is tracked by the watcher for price/triggers but has no gamma/
+    profile/control_side producer yet, so it cannot honestly appear here). Built entirely from
+    fields already required and rendered elsewhere (profile.val/vah/poc, gamma.walls,
+    market_control.control_side); never a new signal, never an invented level."""
+    val_row = ((blocks.get("profile") or {}).get("val") or {}).get("value") or {}
+    vah_row = ((blocks.get("profile") or {}).get("vah") or {}).get("value") or {}
+    poc_row = ((blocks.get("profile") or {}).get("poc") or {}).get("value") or {}
+    val = (val_row.get(symbol) or {}).get("val")
+    vah = (vah_row.get(symbol) or {}).get("vah")
+    poc = (poc_row.get(symbol) or {}).get("poc")
+    if not (_num(val) and _num(vah) and _num(poc)):
+        return None
+    walls = ((blocks.get("gamma") or {}).get("walls") or {}).get("value") or {}
+    wall_row = (walls.get(symbol) or {}).get("walls") or {}
+    top_call = wall_row.get("top_call") or []
+    top_put = wall_row.get("top_put") or []
+    call_strike = top_call[0].get("strike") if top_call and isinstance(top_call[0], dict) else None
+    put_strike = top_put[0].get("strike") if top_put and isinstance(top_put[0], dict) else None
+    accept_row = ((blocks.get("profile") or {}).get("acceptance_rejection") or {}).get("value") or {}
+    location = (accept_row.get(symbol) or {}).get("location")
+    evidence = f"Value area {val:g}-{vah:g}, POC {poc:g}" + (f"; {location}" if location else "") + "."
+    trigger_bits = []
+    if _num(call_strike):
+        trigger_bits.append(f"rejection under {call_strike:g}")
+    if _num(put_strike):
+        trigger_bits.append(f"held above {put_strike:g}")
+    trigger = ("Contained range: " + " and ".join(trigger_bits) + ".") if trigger_bits else "Contained range, no gamma wall observed."
+    sides = ((blocks.get("market_control") or {}).get("control_side") or {}).get("value") or {}
+    bucket_sides = {v for v in (sides.get(symbol) or {}).values() if v not in (None, "inconclusive")}
+    conflict = "Mixed control across timeframes." if len(bucket_sides) > 1 else "None flagged."
+    return {"setup": f"{symbol} range structure", "evidence": evidence, "trigger": trigger,
+            "conflict": conflict, "status": "WAIT", "score": 1}
+
+def ranked_edge_board(blocks):
+    """Leron, 2026-10-14: a ChatGPT mockup he's building toward -- a RANKED Edge Board of
+    competing trade ideas across every symbol with real coverage, "No trade" included as an
+    explicit, ranked competitor rather than a default nobody states out loud. The three
+    registered horizons (day/near/forward) still anchor it; a contained-range idea for each
+    symbol with real profile+gamma coverage (SPY/QQQ) is added so the board isn't just the
+    one pre-assigned structure per horizon. No new producer fields -- every candidate is
+    built from data already required and rendered elsewhere; "No trade" never invents a
+    number and always ranks last except when nothing else qualifies."""
+    candidates = []
+    for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
+        candidate = _edge_board_registered_candidate(name, blocks.get(name) or {})
+        if candidate:
+            candidates.append(candidate)
+    for symbol in ("SPY", "QQQ"):
+        candidate = _edge_board_range_candidate(blocks, symbol)
+        if candidate:
+            candidates.append(candidate)
+    no_trade_score = 0 if not candidates else -1
+    candidates.append({"setup": "No trade", "evidence": "Evidence and executable packages incomplete.",
+                        "trigger": "Remains the default while other triggers conflict or remain unconfirmed.",
+                        "conflict": "Opportunity cost.", "status": "READY", "score": no_trade_score})
+    candidates.sort(key=lambda c: -c["score"])
+    return [(i + 1, c["setup"], c["evidence"], c["trigger"], c["conflict"], c["status"])
+            for i, c in enumerate(candidates)]
+
 def biggest_traps(blocks):
     """Market-risk events only — a data-completeness count ("N fields unavailable") is a
     different kind of fact than "CPI drops Tuesday" and reads as a trading trap when it is
@@ -1666,9 +1760,9 @@ def render_markdown(payload):
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(_thesis_display_item(row["thesis"])).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
     lines.extend(["## 🧭 Market story",market_story(blocks)])
-    lines.extend(["## 🧩 Edge board","| Horizon | Trigger | Invalidation | Status | Contracts |","|---|---|---|---|---|"])
-    for horizon,trigger,invalid,status,contracts in edge_board(blocks):
-        lines.append("| "+horizon+" | "+trigger.replace("|","\\|")+" | "+invalid.replace("|","\\|")+" | "+status.replace("|","\\|")+" | "+contracts.replace("|","\\|")+" |")
+    lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
+    for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
+        lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
     lines.append("## ⚠️ Biggest traps")
     lines.extend("- "+t for t in biggest_traps(blocks))
     lines.append("## 🧮 If/then day plan")
@@ -2196,12 +2290,10 @@ def render_opening_html(payload):
         out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks))+"</p>"
-    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Horizon</th><th>Trigger</th><th>Invalidation</th><th>Status</th><th>Contracts</th></tr>'
-    for name in ("day_strategy","near_forward_strategy","forward_strategy"):
-        row=blocks.get(name) or {}
-        out+=("<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+item_cell_html(row.get("trigger",{}))+"</td>"
-              "<td>"+item_cell_html(row.get("invalidation",{}))+"</td><td>"+item_cell_html(row.get("status",{}))+"</td>"
-              "<td>"+item_cell_html(row.get("contracts",{}))+"</td></tr>")
+    out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
+    for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
+        out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
+              "<td>"+escape(trigger)+"</td><td>"+escape(conflict)+"</td><td>"+escape(status)+"</td></tr>")
     out+="</table>"
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
     out+="<h2>🧮 If/then day plan</h2><table>"
