@@ -17,6 +17,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    _control_side_narrative, _narrative_entry_watches,
                                    catalyst_vol_narrative, catalyst_vol_narrative_html,
                                    _structure_family_hint, _structure_family, _tv_structure_check,
+                                   _thesis_sentence, _thesis_display_item,
                                    _narrative_strategy)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
@@ -1528,3 +1529,51 @@ def test_catalyst_vol_narrative_is_honest_when_nothing_favors_selling():
     narrative=catalyst_vol_narrative(blocks)
     assert narrative=='No flagged high-impact catalyst on the board right now.'
     assert 'No flagged high-impact catalyst' in catalyst_vol_narrative_html(blocks)
+
+def test_thesis_sentence_turns_the_pressure_dict_into_a_sentence_not_a_raw_dump():
+    """Leron, 2026-10-14: "Today vs forward... tells me nothing about what the strategy for
+    the day should be" -- the real live report's Today vs forward table showed thesis's raw
+    pressure dict as a labeled field dump ("Upside initiation premium: 306,147...") instead of
+    a sentence. One classified symbol."""
+    pressure={'SPY':{'upside_initiation_premium':306147.0,'downside_initiation_premium':161809.0,
+                      'read':'upside pressure','scope':'Observed retained strike concentrations only'},
+               'QQQ':{'upside_initiation_premium':5.0,'downside_initiation_premium':5.0,
+                      'read':'balanced or unclassified','scope':'x'}}
+    sentence=_thesis_sentence(pressure)
+    assert sentence=='Thesis: SPY flow leans upside pressure.'
+    assert '306147' not in sentence and 'Upside initiation premium' not in sentence  # no raw dump
+
+def test_thesis_sentence_handles_the_plain_regime_string_and_empty_pressure():
+    assert _thesis_sentence('Defensive price confirmation')=='Today\'s price read is leaning defensive.'
+    assert _thesis_sentence('Risk-on price confirmation')=='Today\'s price read is leaning bullish.'
+    all_balanced={'SPY':{'read':'balanced or unclassified'}}
+    assert _thesis_sentence(all_balanced)=='Thesis: no classified directional flow yet for this horizon.'
+    assert _thesis_sentence(None) is None
+
+def test_thesis_display_item_swaps_the_table_value_but_keeps_inconclusive_dict_as_labeled_lines():
+    """The INCONCLUSIVE forward-horizon dict (direction/volatility_context/meaning) must stay
+    untouched -- a 2026-10-10 fix specifically requires it to render as separate labeled lines,
+    not collapse into one sentence that drops the volatility context and meaning fields."""
+    pressure_item=item({'SPY':{'upside_initiation_premium':306147.0,'downside_initiation_premium':161809.0,
+                                'read':'upside pressure','scope':'x'}})
+    swapped=_thesis_display_item(pressure_item)
+    assert swapped['value']=='Thesis: SPY flow leans upside pressure.'
+    assert swapped['status']==pressure_item['status']  # metadata untouched
+
+    inconclusive_item=item({'direction':'INCONCLUSIVE: no verified directional trade-time flow',
+                             'volatility_context':{'SPY':{'median_iv':0.151}},
+                             'meaning':'Observed expiry-specific option pricing supplies forward risk context.'})
+    assert _thesis_display_item(inconclusive_item) is inconclusive_item  # untouched, not swapped
+
+    unavailable_item={'status':'unavailable','reason':'No source observation'}
+    assert _thesis_display_item(unavailable_item) is unavailable_item
+
+def test_today_vs_forward_html_table_shows_the_thesis_sentence_not_the_raw_pressure_dict():
+    blocks=empty_blocks()
+    blocks['day_strategy']['thesis']=item({'SPY':{'upside_initiation_premium':306147.0,
+        'downside_initiation_premium':161809.0,'read':'upside pressure','scope':'x'}})
+    blocks['day_strategy']['status']=item('WATCH')
+    opening=render_opening_html({'report_blocks':blocks})
+    assert 'SPY flow leans upside pressure' in opening
+    assert 'Upside initiation premium' not in opening
+    assert '306147' not in opening and '306,147' not in opening
