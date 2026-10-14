@@ -16,7 +16,7 @@ from .report_contract import LIVE_MAX_AGE_SECONDS
 
 UTC = timezone.utc
 CT = ZoneInfo("America/Chicago")
-POLICY_VERSION = "2026-10-13.1"
+POLICY_VERSION = "2026-10-14.1"
 PRESENTATION = ("Today’s mission", "30-second scoreboard", "Today vs forward",
                 "Market story", "Edge board", "Biggest traps", "If/then day plan")
 HOLDING_PERIODS = {10: "Approximately two trading weeks", 20: "Approximately one trading month"}
@@ -273,6 +273,76 @@ def _structure_family_hint(blocks):
         return "Premium is fairly priced; structure choice here is about risk tolerance, not an edge from IV level alone."
     return None
 
+_TV_STRUCTURE_FAMILIES = {
+    "credit_spread_or_iron_condor": {"iron_condor", "credit_spread", "put_credit_spread", "call_credit_spread",
+                                      "iron_butterfly", "short_strangle", "short_straddle"},
+    "calendar": {"calendar", "double_calendar", "calendar_spread", "diagonal"},
+    "debit_spread_or_long_premium": {"debit_spread", "put_debit_spread", "call_debit_spread",
+                                      "long_call", "long_put", "long_option", "long_straddle", "long_strangle"},
+}
+
+def _structure_family(label):
+    """Normalizes a vendor or registered-setup structure string into a coarse family bucket so
+    naming differences (TradingVolatility's "credit_spread" vs our registered "put_credit_spread")
+    don't read as a disagreement when they're the same structure family."""
+    if not label:
+        return None
+    norm = str(label).strip().lower().replace(" ", "_").replace("-", "_")
+    for family, members in _TV_STRUCTURE_FAMILIES.items():
+        if norm in members:
+            return family
+    return norm
+
+def _tv_rows_by_ticker(blocks):
+    """top_long_setups/top_short_setups are TradingVolatility's own ranked cross-ticker
+    opportunities -- the only one of its endpoints this report calls that actually returns a
+    per-ticker "structures" pick (/market-structure does not). SPY/QQQ are not guaranteed to
+    rank into either list this checkpoint; when they don't, there is no live TradingVolatility
+    structure to compare, and _tv_structure_check must say so rather than guess one."""
+    tv_block = blocks.get("trade_volatility_scan") or {}
+    by_ticker = {}
+    for field in ("top_long_setups", "top_short_setups"):
+        rows = (tv_block.get(field) or {}).get("value")
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict) and row.get("ticker"):
+                    by_ticker[row["ticker"]] = row
+    return by_ticker
+
+def _tv_structure_check(blocks, setup_list, symbols=("SPY", "QQQ")):
+    """Leron, 2026-10-14: SPY/QQQ's registered setup carries a FIXED structure regardless of
+    today's market condition, while trade_volatility_scan already reuses TradingVolatility's own
+    deterministic per-ticker structure pick (same engine trade_volatility_scan/engine_consensus
+    already call -- top_long_setups/top_short_setups' own "structures" field). This compares the
+    two for SPY/QQQ's day plan only -- never overwrites the registered setup's own 'strategy'
+    field, never invents a structure TradingVolatility didn't return -- and flags a disagreement
+    as a sentence so a reader sees both calls instead of silently losing one."""
+    tv_rows = _tv_rows_by_ticker(blocks)
+    out = {}
+    for symbol in symbols:
+        tv_row = tv_rows.get(symbol) or {}
+        tv_structures = tv_row.get("structures") or []
+        tv_structure = str(tv_structures[0]) if tv_structures else None
+        registered = next((s for s in setup_list if s.get("symbol") == symbol), None)
+        registered_structure = registered.get("strategy") if isinstance(registered, dict) else None
+        if not tv_structure and not registered_structure:
+            out[symbol] = {"tv_structure": None, "registered_structure": None, "agreement": "no_data",
+                            "note": f"{symbol}: TradingVolatility has no live structure pick and no setup is registered today."}
+        elif not tv_structure:
+            out[symbol] = {"tv_structure": None, "registered_structure": registered_structure, "agreement": "tv_unavailable",
+                            "note": f"{symbol}: TradingVolatility returned no structure pick this checkpoint; the registered {registered_structure} setup stands unchanged."}
+        elif not registered_structure:
+            out[symbol] = {"tv_structure": tv_structure, "registered_structure": None, "agreement": "no_registered_setup",
+                            "note": f"{symbol}: TradingVolatility's engine suggests {tv_structure}; no setup is registered yet to compare it against."}
+        else:
+            agrees = _structure_family(tv_structure) == _structure_family(registered_structure)
+            out[symbol] = {"tv_structure": tv_structure, "registered_structure": registered_structure,
+                           "agreement": "agrees" if agrees else "disagrees",
+                           "note": (f"{symbol}: TradingVolatility's engine agrees with the registered {registered_structure} setup."
+                                    if agrees else
+                                    f"{symbol}: TradingVolatility's engine suggests {tv_structure} while the registered setup is {registered_structure}.")}
+    return out or None
+
 def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, now):
     """Forward reads require actual expiry-specific observations, never 0DTE proxies."""
     today=now.astimezone(CT).date();sessions=business_dates(today,5)
@@ -374,6 +444,17 @@ def build_strategy_blocks(blocks, core, plan, runtime, paper, morning, prior, no
         # dict through the generic values-loop (which produced doubled status/source/timestamp
         # metadata nested inside its own "value").
         target["catalysts"]=catalysts_for_horizon
+        if name=="day_strategy":
+            # Today's own session only -- TradingVolatility's structure pick reflects today's
+            # regime, not the 2-5 session or 1-4 week horizons above. Reuses the already-computed,
+            # already-sourced trade_volatility_scan top_long_setups/top_short_setups blocks; never
+            # re-fetches or re-invents a structure, and never writes back into setup_list/
+            # "structure" above.
+            tv_scan=blocks.get("trade_volatility_scan") or {}
+            tv_ts=(tv_scan.get("top_long_setups") or {}).get("source_timestamp") or (tv_scan.get("top_short_setups") or {}).get("source_timestamp")
+            target["tv_structure_check"]=observed(_tv_structure_check(blocks,setup_list),
+                "TradingVolatility v2 API /top-setups per-ticker structure pick vs today's registered Edge Board setup",
+                tv_ts,now)
         blocks[name]=target
     comparisons={"morning_baseline":{"report_id":morning.get("report_id"),"timestamp":ct_str(morning.get("generated_at")) if morning.get("generated_at") else None,"thesis":morning.get("report_blocks",{}).get("risk_on_defensive")},
         "prior_checkpoint":{"report_id":prior.get("report_id"),"timestamp":ct_str(prior.get("generated_at")) if prior.get("generated_at") else None},
@@ -808,6 +889,17 @@ def _narrative_strategy(block):
         hint = structure_val[len(_STRUCTURE_DISCLAIMER):].strip()
         if hint:
             sentence += " " + hint
+    # Leron, 2026-10-14: day_strategy-only tv_structure_check (build_strategy_blocks) compares
+    # TradingVolatility's dynamic per-ticker structure pick against SPY/QQQ's registered setup;
+    # only the disagreement case is worth a sentence here -- agreement/no-data cases are already
+    # visible in the raw /data JSON and don't change what the reader does next. This never touches
+    # the registered setup's own "structure" field above; it only states that the two calls differ.
+    tv_check = (block.get("tv_structure_check") or {}).get("value")
+    if isinstance(tv_check, dict):
+        disagreements = [row.get("note") for row in tv_check.values()
+                         if isinstance(row, dict) and row.get("agreement") == "disagrees" and row.get("note")]
+        if disagreements:
+            sentence += " " + " ".join(disagreements)
     trigger = (block.get("trigger") or {}).get("value")
     if isinstance(trigger, list) and trigger:
         sentence += f" {len(trigger)} registered setup{'s' if len(trigger) != 1 else ''} on watch."

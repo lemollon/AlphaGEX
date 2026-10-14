@@ -16,7 +16,8 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    decision_brief_lines, _week_ahead_outlook_html, _what_changed_today_html,
                                    _control_side_narrative, _narrative_entry_watches,
                                    catalyst_vol_narrative, catalyst_vol_narrative_html,
-                                   _structure_family_hint)
+                                   _structure_family_hint, _structure_family, _tv_structure_check,
+                                   _narrative_strategy)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -30,13 +31,18 @@ def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     assert len(REQUIREMENTS)==34
     # 243 + regime_label (risk_on_defensive) + regime_label_shift (morning_comparison), 2026-10-12,
     # + 5 trade_volatility_scan fields (top_long_setups, top_short_setups, income_setups,
-    # put_call_ratio, expected_move_trend), 2026-10-13.
-    assert sum(map(len,REQUIREMENTS.values()))==250
+    # put_call_ratio, expected_move_trend), 2026-10-13, + tv_structure_check (day_strategy
+    # only -- reuses trade_volatility_scan's existing top_long_setups/top_short_setups
+    # "structures" field, no new collector field needed), 2026-10-14.
+    assert sum(map(len,REQUIREMENTS.values()))==251
     assert 'regime_shift' in REQUIREMENTS['morning_comparison']
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
     assert len(REQUIREMENTS['visuals'])==14
     assert REQUIREMENTS['market_control']==['control_side','control_evidence','control_confidence','forward_control_outlook']
+    assert 'tv_structure_check' in REQUIREMENTS['day_strategy']
+    assert 'tv_structure_check' not in REQUIREMENTS['near_forward_strategy']
+    assert 'tv_structure_check' not in REQUIREMENTS['forward_strategy']
 
 @pytest.mark.parametrize('name,field',[(n,f) for n,fs in REQUIREMENTS.items() for f in fs])
 def test_any_omitted_contract_field_is_rejected(name,field):
@@ -1361,6 +1367,92 @@ def test_structure_family_hint_is_textbook_vol_regime_not_a_fabricated_edge():
 
     blocks['premium_selling']['suitability'] = item({'SPY': 'PREMIUM_CHEAP'})
     assert 'debit spread' in _structure_family_hint(blocks)
+
+def test_structure_family_normalizes_vendor_vs_registered_naming():
+    """TradingVolatility's own vocabulary ("credit_spread") and our registered setup vocabulary
+    ("put_credit_spread") are the same structure family and must not read as a disagreement."""
+    assert _structure_family('credit_spread') == _structure_family('put_credit_spread')
+    assert _structure_family('Iron Condor') == _structure_family('iron_condor')
+    assert _structure_family('calendar') == _structure_family('double_calendar')
+    assert _structure_family('debit_spread') != _structure_family('iron_condor')
+    assert _structure_family(None) is None
+
+def test_tv_structure_check_flags_disagreement_without_touching_the_registered_setup():
+    """Leron, 2026-10-14: reuse TradingVolatility's own per-ticker structure pick (the
+    top_long_setups/top_short_setups "structures" field trade_volatility_scan/engine_consensus
+    already surface -- /market-structure does not carry one) for SPY/QQQ's day plan, and flag
+    -- never overwrite -- when it disagrees with the registered Edge Board setup."""
+    blocks = empty_blocks()
+    blocks['trade_volatility_scan']['top_long_setups'] = item([
+        {'ticker': 'SPY', 'structures': ['iron_condor'], 'opportunity_score': 6.1},
+        {'ticker': 'QQQ', 'structures': ['long_call'], 'opportunity_score': 7.4},
+    ])
+    setup_list = [{'symbol': 'SPY', 'strategy': 'put_credit_spread'},
+                  {'symbol': 'QQQ', 'strategy': 'calendar'}]
+    original_setup_list = copy.deepcopy(setup_list)
+    check = _tv_structure_check(blocks, setup_list)
+
+    # SPY: TradingVolatility says iron_condor, registered setup is put_credit_spread -- same
+    # family, agrees.
+    assert check['SPY']['agreement'] == 'agrees'
+    assert check['SPY']['tv_structure'] == 'iron_condor'
+    assert check['SPY']['registered_structure'] == 'put_credit_spread'
+
+    # QQQ: TradingVolatility says long_call, registered setup is calendar -- different
+    # families, disagrees, and the note names both calls explicitly.
+    assert check['QQQ']['agreement'] == 'disagrees'
+    assert "TradingVolatility's engine suggests long_call" in check['QQQ']['note']
+    assert 'registered setup is calendar' in check['QQQ']['note']
+
+    # The registered setup list itself is never mutated -- comparison only, no silent override.
+    assert setup_list == original_setup_list
+
+def test_tv_structure_check_checks_both_long_and_short_ranked_lists():
+    """SPY/QQQ can surface in either /top-setups ranking (long or short); both are TradingVolatility's
+    own engine output and must be checked, not just the long list."""
+    blocks = empty_blocks()
+    blocks['trade_volatility_scan']['top_short_setups'] = item([
+        {'ticker': 'QQQ', 'structures': ['put_debit_spread'], 'opportunity_score': 8.0},
+    ])
+    check = _tv_structure_check(blocks, [{'symbol': 'QQQ', 'strategy': 'call_credit_spread'}])
+    assert check['QQQ']['tv_structure'] == 'put_debit_spread'
+    assert check['QQQ']['agreement'] == 'disagrees'
+
+def test_tv_structure_check_is_honest_when_one_side_is_missing():
+    blocks = empty_blocks()  # TradingVolatility unavailable / SPY and QQQ didn't rank into either list
+    check = _tv_structure_check(blocks, [{'symbol': 'SPY', 'strategy': 'iron_condor'}])
+    assert check['SPY']['agreement'] == 'tv_unavailable'
+    assert check['SPY']['registered_structure'] == 'iron_condor'
+
+    blocks['trade_volatility_scan']['top_long_setups'] = item([{'ticker': 'SPY', 'structures': ['calendar']}])
+    check = _tv_structure_check(blocks, [])  # no registered setup at all
+    assert check['SPY']['agreement'] == 'no_registered_setup'
+    assert check['SPY']['registered_structure'] is None
+    assert check['QQQ']['agreement'] == 'no_data'
+
+def test_day_strategy_only_carries_tv_structure_check_not_near_or_forward():
+    """The vendor's structure pick reflects today's regime, not the 2-5 session or 1-4 week
+    horizons -- the comparison field is day_strategy-only by contract."""
+    blocks = empty_blocks()
+    blocks['trade_volatility_scan']['top_long_setups'] = item([
+        {'ticker': 'SPY', 'structures': ['iron_condor']}, {'ticker': 'QQQ', 'structures': ['calendar']}])
+    build_strategy_blocks(blocks, {'surface': {}, 'flow': {}}, {}, {}, {'trade_details': []}, {}, {}, NOW)
+    assert blocks['day_strategy']['tv_structure_check']['status'] == 'live'
+    assert 'tv_structure_check' not in blocks['near_forward_strategy']
+    assert 'tv_structure_check' not in blocks['forward_strategy']
+
+def test_narrative_strategy_surfaces_disagreement_sentence_only_when_structures_differ():
+    block = {'status': item('WATCH'),
+             'tv_structure_check': item({
+                 'SPY': {'agreement': 'disagrees',
+                         'note': "SPY: TradingVolatility's engine suggests iron_condor while the registered setup is calendar."}})}
+    sentence = _narrative_strategy(block)
+    assert "TradingVolatility's engine suggests iron_condor while the registered setup is calendar" in sentence
+
+    agreeing_block = {'status': item('WATCH'),
+                       'tv_structure_check': item({'SPY': {'agreement': 'agrees', 'note': 'SPY: agrees.'}})}
+    agreeing_sentence = _narrative_strategy(agreeing_block)
+    assert 'TradingVolatility' not in agreeing_sentence
 
 def test_trade_volatility_scan_meaning_ties_put_call_ratio_to_the_mission_call():
     """Leron, 2026-10-13: "put call ratio does is support the read on the markets future
