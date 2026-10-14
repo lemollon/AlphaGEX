@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { View, Text, Pressable, AppState, StyleSheet, type AppStateStatus } from 'react-native'
 import { useFonts } from 'expo-font'
+import * as Updates from 'expo-updates'
 // DEEP imports, one weight per line. The package barrels
 // (`@expo-google-fonts/inter`) re-export every weight AND italic, and Metro bundles
 // every .ttf it can reach — measured at 18 Inter + 6 Oswald faces, ~8 MB of dead
@@ -138,7 +139,57 @@ function RootLayoutInner() {
     Inter_700Bold,
   })
 
-  const ready = sessionChecked && (fontsLoaded || !!fontError) && lockResolved
+  /**
+   * 2026-10-14: this app had NO explicit update-check anywhere — it relied entirely on
+   * expo-updates' undocumented-from-the-app's-perspective native default (check on
+   * launch, apply on the NEXT launch, never the current one). That shape means a fresh
+   * OTA publish needs the app force-quit and reopened TWICE before it's actually
+   * running — once to silently download, once more to apply — and if a customer only
+   * does it once (or the background check itself fails silently, which expo-updates
+   * does by default), every published fix looks like it never shipped at all. A real
+   * customer hit exactly this: multiple OTA fixes published, "force quit and reopen
+   * twice" followed exactly as instructed, still running the old bundle.
+   *
+   * This replaces reliance on that default with an explicit check-fetch-reload RIGHT
+   * HERE, gating `ready` the same way sessionChecked/fontsLoaded/lockResolved already
+   * do — so the FIRST launch after a publish downloads AND applies it in one shot
+   * (Updates.reloadAsync() restarts the JS runtime on the new bundle), never a second
+   * relaunch. Bounded by its own timeout so a slow/unreachable update server can never
+   * hang app startup — falls through to the already-embedded bundle exactly like the
+   * old default did on any failure.
+   */
+  const [updateChecked, setUpdateChecked] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const UPDATE_CHECK_TIMEOUT_MS = 8_000
+    ;(async () => {
+      try {
+        if (!Updates.isEnabled) return // Expo Go, or a dev client with updates off
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('update check timed out')), UPDATE_CHECK_TIMEOUT_MS),
+        )
+        const result = await Promise.race([Updates.checkForUpdateAsync(), timeout])
+        if (cancelled || !result.isAvailable) return
+        await Promise.race([Updates.fetchUpdateAsync(), timeout])
+        if (cancelled) return
+        // Never resolves meaningfully — the app restarts on the new bundle here.
+        await Updates.reloadAsync()
+      } catch (e) {
+        // Offline, update server unreachable, or the race above timed out — the
+        // already-embedded/previously-downloaded bundle is still a perfectly good
+        // app to run. Never let a flaky network keep a customer locked on a splash
+        // screen, and never surface this as an error — it's invisible by design.
+        console.log('[updates] check/fetch/reload skipped:', e instanceof Error ? e.message : e)
+      } finally {
+        if (!cancelled) setUpdateChecked(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const ready = sessionChecked && (fontsLoaded || !!fontError) && lockResolved && updateChecked
 
   /**
    * Read the stored session once at cold start, then STAY SUBSCRIBED. The subscription
