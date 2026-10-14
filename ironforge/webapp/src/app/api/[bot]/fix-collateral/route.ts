@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
-import { closeIcOrderAllAccounts, PRODUCTION_BOT, getDailyHistory } from '@/lib/tradier'
+import { closeIcOrderAllAccounts, getDailyHistory, type SandboxCloseInfo } from '@/lib/tradier'
+import { mirrorCloseToCustomers } from '@/lib/customer-executor/executor'
 
 export const dynamic = 'force-dynamic'
 
@@ -210,6 +211,8 @@ export async function POST(
       const isExpired = expDate < today
       const isOrphan = posDte !== dte
 
+      const posAccountType = (pos.account_type || 'sandbox') as 'sandbox' | 'production'
+
       let reason: string
       let closePrice: number
       let realizedPnl: number
@@ -263,6 +266,64 @@ export async function POST(
         realizedPnl = 0
       }
 
+      // 🚨 A PRODUCTION ORPHAN/STALE ROW MUST NOT BE BOOKED CLOSED SIGHT-UNSEEN.
+      //
+      // `orphan_force_close` and `stale_holdover_force_close` book closePrice =
+      // entryCredit / realizedPnl = 0 — a PURE GUESS, unlike the expired-intrinsic
+      // branch above which reads the real settlement price. For a sandbox paper
+      // row that guess carries no real-money risk, which is this tool's original
+      // purpose. For a PRODUCTION row the real position may still be open at the
+      // broker; previously this cascade only even RAN for `bot === 'spark'`
+      // (PRODUCTION_BOT) regardless of the ROW's own account_type, so a stale
+      // production FLAME/INFERNO row got booked at a fictional $0 P&L with ZERO
+      // broker contact, ever. Fixed to key off the row's own account_type (any
+      // bot) and to attempt + CONFIRM the broker close BEFORE booking, exactly
+      // like force-close's identical guard — an unconfirmed production close is
+      // skipped (left open, reported), never booked on a guess.
+      let sandboxCloseInfo: Record<string, SandboxCloseInfo> = {}
+      if (!isExpired && posAccountType === 'production') {
+        try {
+          const posRows = await dbQuery(
+            `SELECT ticker, expiration, put_short_strike, put_long_strike,
+                    call_short_strike, call_long_strike, sandbox_order_id, person
+             FROM ${botTable(bot, 'positions')}
+             WHERE position_id = '${escapeSql(String(pid))}'`,
+          )
+          const p = posRows[0]
+          let sandboxOpenInfo: Record<string, any> | null = null
+          if (p?.sandbox_order_id) {
+            try { sandboxOpenInfo = JSON.parse(p.sandbox_order_id) } catch { /* malformed */ }
+          }
+          sandboxCloseInfo = p
+            ? await closeIcOrderAllAccounts(
+                String(p.ticker || 'SPY'),
+                String(p.expiration || '').slice(0, 10),
+                num(p.put_short_strike), num(p.put_long_strike),
+                num(p.call_short_strike), num(p.call_long_strike),
+                contracts, closePrice, String(pid), sandboxOpenInfo,
+                undefined, undefined, 'production',
+              )
+            : {}
+          const prodKey = `${String(p?.person || '')}:production`
+          const confirmed = sandboxCloseInfo[prodKey] ?? sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+          if (!confirmed?.order_id) {
+            actions.push(`SKIP ${pid}: PRODUCTION, no broker order confirmed — left open, not booked on a guess`)
+            continue
+          }
+          if (confirmed.fill_price != null && confirmed.fill_price > 0) {
+            // Replace the guessed price/P&L with the REAL fill.
+            closePrice = confirmed.fill_price
+            realizedPnl = Math.round((entryCredit - closePrice) * 100 * contracts * 100) / 100
+          } else {
+            actions.push(`SKIP ${pid}: PRODUCTION order ${confirmed.order_id} live, no fill yet — left open, retry next sweep`)
+            continue
+          }
+        } catch (sbErr) {
+          actions.push(`SKIP ${pid}: PRODUCTION broker check failed (${sbErr instanceof Error ? sbErr.message : String(sbErr)}) — left open`)
+          continue
+        }
+      }
+
       const rowsAffected = await dbExecute(
         `UPDATE ${botTable(bot, 'positions')}
          SET status = 'closed',
@@ -281,42 +342,10 @@ export async function POST(
         continue
       }
 
-      // Production bot: also close on sandbox/production accounts (cascade close)
-      if (bot === PRODUCTION_BOT) {
-        try {
-          const posRows = await dbQuery(
-            `SELECT ticker, expiration, put_short_strike, put_long_strike,
-                    call_short_strike, call_long_strike, sandbox_order_id,
-                    COALESCE(account_type, 'sandbox') as account_type
-             FROM ${botTable(bot, 'positions')}
-             WHERE position_id = '${escapeSql(String(pid))}'`,
-          )
-          if (posRows.length > 0) {
-            const p = posRows[0]
-            let sandboxOpenInfo: Record<string, any> | null = null
-            if (p.sandbox_order_id) {
-              try { sandboxOpenInfo = JSON.parse(p.sandbox_order_id) } catch { /* malformed */ }
-            }
-            const staleAccountType = (p.account_type || 'sandbox') as 'sandbox' | 'production'
-            await closeIcOrderAllAccounts(
-              String(p.ticker || 'SPY'),
-              String(p.expiration || '').slice(0, 10),
-              num(p.put_short_strike),
-              num(p.put_long_strike),
-              num(p.call_short_strike),
-              num(p.call_long_strike),
-              contracts,
-              closePrice,
-              String(pid),
-              sandboxOpenInfo,
-              undefined, undefined,
-              staleAccountType,
-            )
-          }
-        } catch (sandboxErr) {
-          actions.push(`SANDBOX_WARN ${pid}: ${sandboxErr instanceof Error ? sandboxErr.message : String(sandboxErr)}`)
-        }
-      }
+      // Close customer mirrors of this position (fire-and-forget, never throws).
+      // Missing entirely before — a customer's own broker position tied to an
+      // orphaned/stale house row had no path to ever close either.
+      void mirrorCloseToCustomers(bot, String(pid), reason)
 
       actions.push(`Closed ${pid}: ${reason} (P&L=$${realizedPnl.toFixed(2)})`)
     }

@@ -3729,6 +3729,10 @@ async function closePosition(
           bot.dte,
         ],
       )
+      // Customers sit on their own broker (SnapTrade), independent of this house
+      // Tradier order. A resting house fill does not mean their accounts can't
+      // close, and there is no next cycle to fire this later — ask now.
+      void mirrorCloseToCustomers(bot.name, positionId, reason)
       return 'failed'
     }
     return 'deferred' // Exit without closing paper — next cycle will re-poll
@@ -3756,6 +3760,11 @@ async function closePosition(
         bot.dte,
       ],
     )
+    // The house order failing at Tradier says nothing about whether a customer's
+    // own SnapTrade close would succeed — their broker is independent. When this
+    // fires from the assignment guard there may be no further cycle before expiry,
+    // so withholding the attempt here can mean it never happens at all.
+    void mirrorCloseToCustomers(bot.name, positionId, reason)
     return 'failed' // do NOT book the paper close — keep position open, retry broker close next cycle
   }
 
@@ -4700,6 +4709,12 @@ async function closeAtRiskBeforeBell(bot: BotDef, ct: Date): Promise<string> {
     }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
   }
 
+  // Re-drive any customer mirror this cycle just left close_failed, right now —
+  // the independent 15-min satellite sweep is not aligned to this 3-minute
+  // window and may not tick again before the bell. Self-gated/re-entrancy
+  // guarded and never throws; a no-op outside its own RTH gate.
+  retryFailedCustomerCloses()
+
   return out.length ? ` guard[${out.join(' ')}]` : ''
 }
 
@@ -5270,6 +5285,16 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
   const spot = q?.last ?? 0
   if (!(spot > 0)) {
     console.warn(`[scanner] FLINT ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    // `rows.length === 0` already returned above — every reach of this branch
+    // means real open FLINT positions are about to settle with no guard check
+    // at all. Same "a console line is not an alert" lesson as the put-side
+    // guard (2026-08-28): say so where a human will see it.
+    void sendOpsPush({
+      title: 'FLINT assignment guard: NO SPY QUOTE',
+      body: `${rows.length} open FLINT position${rows.length === 1 ? '' : 's'} at ${hhmm} CT with no SPY price — ` +
+        `holding to settlement completely unguarded.`,
+      severity: 'critical',
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
     return 'FLINT guard:no_quote'
   }
 
@@ -5353,12 +5378,35 @@ async function closeFlintAtRiskBeforeBell(ct: Date): Promise<string> {
             { close: true, targetPerson: p.person, botName: (p.bot as string | undefined) ?? 'flame' },
           )
         } catch (e: unknown) {
-          console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${e instanceof Error ? e.message : String(e)}`)
+          // The DB row is ALREADY claimed closed above (by design, for the
+          // concurrent-cycle idempotency this function documents) — a throw here
+          // means the real short call is still live at the broker while IronForge
+          // believes it is flat. A console.error only reaches Render's own logs; a
+          // CRITICAL row in a logs table is not an alert (same lesson the put-side
+          // guard already learned at 2026-08-28 and fixed with the push below).
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error(`[scanner] FLINT LIVE GUARD CLOSE FAILED ${p.position_id}: ${msg}`)
+          void sendOpsPush({
+            title: `FLINT assignment guard FAILED to close ${p.position_id}`,
+            body: `${p.person} ${p.account_type} short ${shortStrike}C — broker buy-back failed (${msg}). ` +
+              `IronForge's own ledger already shows this closed; the real position may still be open. ` +
+              `Reconcile the broker account directly.`,
+            severity: 'critical',
+          }).catch(() => { /* an alert must never take a scan cycle down */ })
+          void postOpsAlert({
+            botName: (p.bot as string | undefined) ?? 'flame',
+            title: 'FLINT assignment guard could NOT close at-risk position',
+            body: `${p.position_id} (${p.person}, ${p.account_type}) short ${shortStrike}C buy-back failed: ${msg}`,
+            severity: 'critical',
+          }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
         }
       }
     }
     out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
   }
+  // Same direct re-drive as the put-side guard above — do not wait for the
+  // independent 15-min sweep to happen to land inside this 3-minute window.
+  retryFailedCustomerCloses()
   return out.length ? `FLINT guard[${out.join(' ')}]` : ''
 }
 

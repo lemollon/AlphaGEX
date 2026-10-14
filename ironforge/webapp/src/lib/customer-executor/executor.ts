@@ -1182,10 +1182,16 @@ export function retryFailedCustomerCloses(): void {
   if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
 
   // Rough RTH gate (CT): market orders outside hours just reject and burn attempts.
+  //
+  // 🚨 THIS USED TO CUT OFF AT 1455 — FIVE MINUTES BEFORE THE ASSIGNMENT GUARD
+  // EVEN RUNS (14:57-15:00 CT). A close_failed row created BY the guard itself
+  // could never be retried by this sweep: the gate had already closed before the
+  // row existed. Extended to the real close (matches ASSIGNMENT_GUARD_END_HHMM) —
+  // a market order rejected a few minutes late is no worse than one never retried.
   const ct = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
   const hhmm = ct.getHours() * 100 + ct.getMinutes()
   const weekday = ct.getDay() >= 1 && ct.getDay() <= 5
-  if (!weekday || hhmm < 835 || hhmm > 1455) return
+  if (!weekday || hhmm < 835 || hhmm > 1500) return
 
   _closeRetryRunning = true
   ;(async () => {

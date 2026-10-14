@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, getPutSpreadMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
+import { mirrorCloseToCustomers } from '@/lib/customer-executor/executor'
 
 export const dynamic = 'force-dynamic'
 
@@ -182,9 +183,50 @@ export async function POST(
       console.warn(`Broker close failed for ${position_id}: ${sbMsg}`)
     }
 
-    // 4. Use User's actual fill price if available
+    // 4. Use the real fill price if available.
+    //
+    // 🚨 PRODUCTION FILLS ARE KEYED BY PERSON, NOT 'User'. This used to read only
+    // `sandboxCloseInfo['User']`, which closeIcOrderAllAccounts never populates for
+    // a production account (that key is `${person}:production`) — so every
+    // production force-close silently ignored a real fill price and booked the
+    // MTM estimate instead, and (worse, see below) could never tell a confirmed
+    // fill apart from total broker silence. Same key resolution as scanner.ts's
+    // closePosition.
+    const posPerson = String(pos.person || '')
+    const prodCloseKey = posAccountType === 'production' ? `${posPerson}:production` : null
+    const userClose = (prodCloseKey ? sandboxCloseInfo[prodCloseKey] : null)
+      ?? sandboxCloseInfo['User:sandbox'] ?? sandboxCloseInfo['User']
+
+    // 🚨 A PRODUCTION CLOSE WITH NO BROKER CONFIRMATION MUST NOT BE BOOKED.
+    //
+    // Before this check, a thrown/swallowed broker error (the catch above) or a
+    // resolved-but-empty result left `userClose` undefined, and the code fell
+    // straight through to booking the DB close at the MTM estimate with
+    // `success: true` — regardless of whether the real Tradier position closed.
+    // The scanner's own closePosition refuses exactly this case (see its "NO
+    // BROKER ORDER" branch); this operator tool exists to reach orphans the
+    // scanner can't, including PRODUCTION orphans, so it needs the identical
+    // guard. Sandbox/paper positions carry no real-money risk and keep the
+    // original estimate-close behavior this tool was built for.
+    if (posAccountType === 'production' && !userClose?.order_id) {
+      return NextResponse.json({
+        error: `Cannot confirm a broker close for production position ${position_id} — ` +
+          'no order was confirmed at Tradier. Refusing to book an estimated close; ' +
+          'verify the broker account directly before retrying.',
+        position_id, entry_credit: totalCredit, contracts,
+        sandbox_close_info: sandboxCloseInfo,
+      }, { status: 503 })
+    }
+    if (posAccountType === 'production' && (userClose.fill_price == null || userClose.fill_price <= 0)) {
+      return NextResponse.json({
+        error: `Production close order ${userClose.order_id} for ${position_id} is live at the ` +
+          'broker but has no fill price yet. Not booking the paper close — re-check shortly.',
+        position_id, entry_credit: totalCredit, contracts,
+        sandbox_close_info: sandboxCloseInfo,
+      }, { status: 409 })
+    }
+
     let effectivePrice = closePrice
-    const userClose = sandboxCloseInfo['User']
     if (userClose?.fill_price != null && userClose.fill_price > 0) {
       effectivePrice = userClose.fill_price
     }
@@ -222,6 +264,13 @@ export async function POST(
         skipped_pnl: realizedPnl,
       })
     }
+
+    // 6b. Close customer mirrors of this position (fire-and-forget, never throws).
+    // Previously missing entirely from this route — an operator force-close never
+    // touched a customer's own broker position, leaving it open in their real
+    // account with no further process able to reach it (scanner only re-selects
+    // `status = 'open'` rows on the HOUSE table, which this close just removed).
+    void mirrorCloseToCustomers(bot, position_id, 'manual_close')
 
     // 7. Update paper account — reconcile collateral from actual open positions
     //    Route to the correct paper_account row based on the position's account_type

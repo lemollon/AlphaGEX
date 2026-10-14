@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { dbQuery, dbExecute, botTable, num, int, validateBot, dteMode, CT_TODAY, escapeSql, isSettleAtExpiryBot } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, closeIcOrderAllAccounts, type SandboxCloseInfo, type SandboxOrderInfo } from '@/lib/tradier'
 import { isSparkStrategyBot } from '@/lib/pt-tiers'
+import { mirrorCloseToCustomers } from '@/lib/customer-executor/executor'
 
 export const dynamic = 'force-dynamic'
 
@@ -190,17 +191,28 @@ export async function POST(
       // which silently inflates the equity curve (the 2026-07-20 +$270 phantom).
       // Leave the position OPEN and let the scanner close it on a later cycle
       // with real quotes, or the expiry-day sweep handle it.
-      if (!mtmOk && !brokerFilled) {
+      //
+      // 🚨 PRODUCTION ALSO NEEDS THIS GUARD WHEN brokerFilled IS FALSE EVEN IF
+      // mtmOk IS TRUE. mtmOk only means Tradier returned a theoretical mark for
+      // the OPTION CHAIN — it says nothing about whether the real position at
+      // the broker actually closed. Booking a production close on an estimate
+      // with no broker confirmation can mark a still-open real position as
+      // closed, the same orphan risk force-close's identical guard exists for.
+      const unconfirmedProductionClose = posAccountType === 'production' && !brokerFilled
+      if ((!mtmOk && !brokerFilled) || unconfirmedProductionClose) {
         await dbExecute(
           `INSERT INTO ${botTable(bot, 'logs')} (level, message, details, dte_mode)
            VALUES ('SKIP', $1, $2, $3)`,
           [
-            `EOD SKIP: ${positionId} left open — no MTM quote and no broker fill, ` +
-            `refusing to book a phantom $0.00 close (would have shown ` +
-            `$${(totalCredit * 100 * contracts).toFixed(2)} profit)`,
+            unconfirmedProductionClose
+              ? `EOD SKIP: ${positionId} left open — PRODUCTION position with no confirmed ` +
+                `broker fill, refusing to book an estimated close`
+              : `EOD SKIP: ${positionId} left open — no MTM quote and no broker fill, ` +
+                `refusing to book a phantom $0.00 close (would have shown ` +
+                `$${(totalCredit * 100 * contracts).toFixed(2)} profit)`,
             JSON.stringify({
               position_id: positionId,
-              skip_reason: 'unpriced_close',
+              skip_reason: unconfirmedProductionClose ? 'unconfirmed_production_close' : 'unpriced_close',
               entry_credit: totalCredit,
               contracts,
               expiration,
@@ -244,6 +256,12 @@ export async function POST(
         )
         continue  // Skip to next position — don't double-count P&L
       }
+
+      // Close customer mirrors of this position (fire-and-forget, never throws).
+      // This EOD sweep previously never touched a customer's own broker position
+      // at all — it could sit open in their real account past the bot's own EOD
+      // cutoff with nothing else able to reach it.
+      void mirrorCloseToCustomers(bot, positionId, 'eod_cutoff')
 
       // Log the close
       await dbExecute(
