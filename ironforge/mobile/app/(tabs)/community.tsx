@@ -12,6 +12,8 @@ import {
   StyleSheet,
   Animated,
   AccessibilityInfo,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native'
 import * as Haptics from 'expo-haptics'
 import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
@@ -261,6 +263,19 @@ export default function CommunityScreen() {
 
   return (
     <Shell>
+      {/*
+        APP-054 composer fix: this screen had NO keyboard avoidance at all — the
+        feed ScrollView and the post composer View sat as plain siblings, so the
+        keyboard simply drew on top of whatever was at the bottom of the screen,
+        covering the composer entirely (same customer-reported symptom as the
+        Sparky sheet, different root cause there — see app/sparky.tsx's note:
+        that one HAD a KeyboardAvoidingView but with a wrong offset for its
+        nested-Sheet layout; this one never had one to begin with). This is a
+        plain full-screen tab route, not nested in a custom sheet, so the same
+        'padding' + no explicit offset pattern already proven correct on
+        sign-in.tsx/change-password.tsx/etc. applies directly here.
+      */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ padding: space.lg }}
@@ -452,6 +467,7 @@ export default function CommunityScreen() {
           AI monitored · Community standards active
         </Text>
       </View>
+      </KeyboardAvoidingView>
 
       <Sheet
         visible={topicPickerOpen}
@@ -733,6 +749,7 @@ function ThreadSheet({
           </Pressable>
         </View>
 
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={{ padding: space.lg, flexGrow: 1 }}>
           {parent ? (
             <Card style={{ marginBottom: space.lg }}>
@@ -814,6 +831,7 @@ function ThreadSheet({
             </Pressable>
           </View>
         </View>
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   )
