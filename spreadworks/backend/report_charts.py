@@ -8,7 +8,8 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from .report_producers import number
 from .report_contract import LIVE_MAX_AGE_SECONDS
 LOCK=threading.Lock()
-BG='#0B1220'; PANEL='#111827'; TEXT='#E5E7EB'; CYAN='#22D3EE'; GREEN='#34D399'; RED='#F87171'
+BG='#0B1220'; PANEL='#111827'; TEXT='#E5E7EB'; CYAN='#22D3EE'; GREEN='#34D399'; RED='#F87171'; VIOLET='#A78BFA'
+CALLOUT_BBOX=dict(boxstyle='round,pad=0.35',fc=PANEL,ec='#374151',alpha=.92)
 
 def chart_png(kind,evidence):
     with LOCK:
@@ -78,24 +79,53 @@ def chart_png(kind,evidence):
             if labels:ax.bar(labels,values,color=[GREEN if v>=0 else RED for v in values]);ax.set_ylabel('Change vs previous close (%)');plotted=True
         elif kind=='market_map':
             profiles=evidence.get('profiles') or {}
+            row_ticks={}
+            # Leron, 2026-10-14: "expected move visuals is hard to read" (follow-up to the
+            # 2026-10-13 label-collision fix below). Two remaining legibility gaps, fixed
+            # without touching the chart type or the data it plots: (1) the put-wall dashed
+            # line reused CYAN, the SAME color as the expected-move range bar underneath it --
+            # a reader can't tell the two apart by color alone, so put-wall now gets its own
+            # VIOLET; (2) nothing on the chart told a reader what each color/marker MEANT --
+            # a one-time legend (seen_legend dedupes it to one entry per category, never once
+            # per symbol) and real y-axis ticks (symbol name, not blank) replace the "read it
+            # from the floating annotation text" requirement.
+            seen_legend=set()
+            def once(key,label):
+                if key in seen_legend:return None
+                seen_legend.add(key);return label
+            # The EM-header callout box is centered on spot by default, which clipped off the
+            # right edge of the PNG whenever spot sat near the high end of the combined SPY/QQQ
+            # price range (bbox made this visible; it was silently truncating before too).
+            # Knowing the full plotted range up front lets the callout flip its anchor near
+            # either edge instead of assuming it always has room to center.
+            bounds=[number(r.get(k)) for r in surfaces.values() for k in ('expected_move_low','expected_move_high') if number(r.get(k)) is not None]
+            xmin,xmax=(min(bounds),max(bounds)) if bounds else (0,1)
+            span=(xmax-xmin) or 1
             for symbol,row in surfaces.items():
                 low,high=number(row.get('expected_move_low')),number(row.get('expected_move_high'))
                 spot=number(row.get('spot'))
                 if low and high and spot:
                     y=0 if symbol=='SPY' else 1
-                    ax.plot([low,high],[y,y],linewidth=12,alpha=.35,color=CYAN)
-                    ax.scatter([spot],[y],color=TEXT,s=80);ax.annotate(f'{dated(symbol,row)}\nEM {low:.2f} | spot {spot:.2f} | EM {high:.2f}',(spot,y),xytext=(0,46),textcoords='offset points',color=TEXT,ha='center');plotted=True
+                    row_ticks[y]=symbol
+                    ax.plot([low,high],[y,y],linewidth=12,alpha=.35,color=CYAN,label=once('em','Expected move range'))
+                    ax.scatter([spot],[y],color=TEXT,s=80,zorder=5,label=once('spot','Spot (observed)'))
+                    frac=(spot-xmin)/span
+                    ha,dx=('right',-6) if frac>.82 else ('left',6) if frac<.18 else ('center',0)
+                    ax.annotate(f'{dated(symbol,row)}\nEM {low:.2f} | spot {spot:.2f} | EM {high:.2f}',(spot,y),
+                                xytext=(dx,46),textcoords='offset points',color=TEXT,ha=ha,fontsize=9,
+                                fontweight='bold',bbox=CALLOUT_BBOX);plotted=True
                     profile=profiles.get(symbol) or {}
                     val,vah,poc=(number(profile.get(k)) for k in ('val','vah','poc'))
                     if val is not None and vah is not None:
                         ax.plot([val,vah],[y-.12,y-.12],linewidth=7,color=GREEN,alpha=.5,label=dated(symbol+' observed value area; chop unconfirmed',profile))
-                    if poc is not None:ax.scatter([poc],[y-.12],marker='D',color=GREEN,s=40)
+                    if poc is not None:ax.scatter([poc],[y-.12],marker='D',color=GREEN,s=40,zorder=5,label=once('poc','POC (observed)'))
                     gamma=(evidence.get('gamma') or {}).get(symbol) or {}
                     wall_levels=[]
-                    for key,label,color in [('gamma_flip','flip','#FBBF24'),('call_wall','call wall',RED),('put_wall','put wall',CYAN)]:
+                    for key,label,color in [('gamma_flip','flip','#FBBF24'),('call_wall','call wall',RED),('put_wall','put wall',VIOLET)]:
                         level=number(gamma.get(key))
                         if level is not None:
-                            ax.plot([level,level],[y-.25,y+.25],color=color,linestyle='--')
+                            ax.plot([level,level],[y-.25,y+.25],color=color,linestyle='--',
+                                    label=once(key,'Gamma '+label if key=='gamma_flip' else label.title()))
                             wall_levels.append((level,label,color))
                     # Live bug, found 2026-10-13 (Leron: "expected move visuals is hard to
                     # read"): flip/call-wall/put-wall often sit within a few points of each
@@ -105,8 +135,12 @@ def chart_png(kind,evidence):
                     # further down than the last so they never collide regardless of spacing.
                     for rank,(level,label,color) in enumerate(sorted(wall_levels,key=lambda w:w[0])):
                         ax.annotate(f'{label} {level:.2f}',(level,y-.25),xytext=(0,-20-14*rank),
-                                    textcoords='offset points',color=color,ha='center',fontsize=8)
-            ax.set_yticks([]);ax.set_xlabel('Underlying price; observed expected-move bounds')
+                                    textcoords='offset points',color=color,ha='center',fontsize=8,fontweight='bold')
+            if row_ticks:
+                ys=sorted(row_ticks);ax.set_yticks(ys);ax.set_yticklabels([row_ticks[y] for y in ys],color=TEXT,fontsize=11,fontweight='bold')
+            else:
+                ax.set_yticks([])
+            ax.set_xlabel('Underlying price ($); observed expected-move bounds',fontsize=10)
         elif kind=='baseline_comparison':
             current=evidence.get('comparison') or {}
             labels=[];values=[]
@@ -137,7 +171,7 @@ def chart_png(kind,evidence):
         if not plotted:
             text_method=ax.text2D if kind=='surface' else ax.text
             text_method(.5,.5,'No verified observations for this panel\nSee Data Integrity for source status',transform=ax.transAxes,ha='center',va='center',color=TEXT,fontsize=17)
-        if ax.get_legend_handles_labels()[0]:ax.legend(facecolor=PANEL,labelcolor=TEXT)
+        if ax.get_legend_handles_labels()[0]:ax.legend(facecolor=PANEL,labelcolor=TEXT,fontsize=9,framealpha=.9)
         ax.set_title(title,color=TEXT,fontsize=19,pad=20)
         group='surface' if kind in ('market_map','surface','smile_term','term_structure','baseline_comparison') else 'gamma' if kind=='gamma_expiry' else 'profiles' if kind=='volume_profile' else 'flow' if kind=='flow' else None
         clocks=[dated(s,r) for s,r in (evidence.get(group) or {}).items()] if group else [dated(s,r) for s,r in (evidence.get('cross_asset',{}).get('assets') or {}).items()][:3] if kind=='sector_credit' else []
