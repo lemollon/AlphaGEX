@@ -9,7 +9,7 @@ from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
-                                   options_flow_story,
+                                   options_flow_story, dealer_positioning_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -525,6 +525,41 @@ def test_render_markdown_and_html_carry_the_options_flow_section():
     html_out=render_opening_html(payload)
     assert '<h2>📊 Options flow</h2>' in html_out
     assert 'SPY flow is dominated by calls bought' in html_out
+
+def test_dealer_positioning_story_promotes_narrative_market_control_to_top_level():
+    """_narrative_market_control's per-symbol "who's running this today, how confident, does
+    forward flow agree" read already existed and was already covered by section_summary's
+    market_control test, but only ever surfaced in the per-field appendix under "### Market
+    Control" -- this promotes the same read into its own top-level section, distinct from
+    Market story's market_control fragment (that one is section_meaning's single aggregate
+    agree/conflict sentence, not this per-symbol breakdown)."""
+    blocks=empty_blocks()
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'call_sellers','1_5dte':'call_sellers'}})
+    blocks['market_control']['control_confidence']=item({'SPY':{'classified_contract_fraction':0.8,'label':'HIGH'}})
+    blocks['market_control']['forward_control_outlook']=item({'SPY':{'outlook':'persists'}})
+    story=dealer_positioning_story(blocks)
+    assert 'SPY is being run by call sellers today' in story
+    assert 'high-confidence read' in story
+    assert 'Forward flow agrees' in story
+
+def test_dealer_positioning_story_falls_back_when_coverage_too_thin():
+    """_narrative_market_control returns None when control_side is unavailable -- the
+    top-level section must still render a plain disclosure, never an empty heading."""
+    blocks=empty_blocks()
+    story=dealer_positioning_story(blocks)
+    assert story=="Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+
+def test_render_markdown_and_html_carry_the_dealer_positioning_section():
+    blocks=empty_blocks()
+    blocks['market_control']['control_side']=item({'SPY':{'0dte':'put_sellers'}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 🏛️ Dealer positioning' in md
+    assert 'SPY is being run by put sellers today' in md
+    html_out=render_opening_html(payload)
+    assert '<h2>🏛️ Dealer positioning</h2>' in html_out
+    assert 'SPY is being run by put sellers today' in html_out
 
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
