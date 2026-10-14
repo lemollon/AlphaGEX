@@ -250,6 +250,11 @@ export function isPublicPath(pathname: string): boolean {
   // visitor on every route change, so it must be reachable with no session.
   // No IP/UA/cookie is ever persisted; see lib/track.ts and /api/track.
   if (pathname === '/api/track') return true
+  // Client crash/error beacon (2026-10-14) — same reasoning as /api/track: a
+  // JS exception can happen before sign-in (or while a session has already
+  // expired), so this must be reachable with no session at all. Self-guards
+  // with its own IP rate limit; see /api/client-error.
+  if (pathname === '/api/client-error') return true
   // CRM agent façade — middleware-open, self-guarded in-route by CRM_AGENT_TOKEN. The agent
   // carries its own credential rather than the service token precisely so it CANNOT reach the
   // other /api/ops/* tooling; that separation is the point, so it cannot be gated here.
