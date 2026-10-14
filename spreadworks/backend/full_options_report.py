@@ -955,6 +955,8 @@ def report_view(report_id:str):
     from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning,_side_label
     payload=stored_report(report_id);parts=[];nav=[]
     mission_side=_side_label((payload['report_blocks']['risk_on_defensive']['verdict'] or {}).get('value'))
+    _regime_label_item=(payload['report_blocks'].get('risk_on_defensive') or {}).get('regime_label') or {}
+    regime_label=_regime_label_item.get('value') if isinstance(_regime_label_item.get('value'),str) else None
     images=payload.get('chart_urls') or {}
     assets,failures=stored_chart_assets(images)
     inline={asset['name']:'data:image/png;base64,'+asset['png_base64'] for asset in assets}
@@ -988,7 +990,7 @@ def report_view(report_id:str):
             fields_html=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
                           f'<div class="field decision"><div class="fieldname">What it means for the day</div>'
-                          f'<div class="fieldval">{html.escape(section_meaning(name,block,mission_side))}</div></div>')
+                          f'<div class="fieldval">{html.escape(section_meaning(name,block,mission_side,regime_label))}</div></div>')
         else:
             fields_html=''.join(_field_row(field,item,img_map,show_meta=(shared_meta is None)) for field,item in block.items())
         chart_names=[groups.get(name)]

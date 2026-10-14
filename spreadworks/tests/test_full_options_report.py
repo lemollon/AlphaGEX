@@ -759,6 +759,27 @@ def test_report_view_section_summary_sections_get_narrative_divs_not_raw_field_r
     # whether the section is narrative-only or raw-field.
     assert 'VISUAL DELIVERY FAILED' in surface_card
 
+def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
+    """2026-10-14: report_view computes mission_side from risk_on_defensive.verdict but, before
+    this fix, never read regime_label alongside it -- the live /view page's trade_volatility_
+    scan "what it means" line always fell back to the hedged mission_side wording and named
+    both possible sides verbatim, even though the flat regime_label was sitting right there in
+    the same stored report_blocks."""
+    from backend.report_policy import observed
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+    blocks['risk_on_defensive']['verdict']=observed('Defensive price confirmation','Observed provider feed',NOW,NOW)
+    blocks['risk_on_defensive']['regime_label']=observed('DEFENSIVE','Observed provider feed',NOW,NOW)
+    blocks['trade_volatility_scan']['put_call_ratio']=observed({'SPY':{'pcr_oi':1.4}},'Observed provider feed',NOW,NOW)
+    report_id='e'*24
+    payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
+             'report_blocks':blocks,'chart_urls':{}}
+    _store_report(payload)
+    view=report.report_view(report_id)
+    tv_card=view.split('id="sec-trade-volatility-scan"')[1].split('</section>')[0]
+    assert 'flat DEFENSIVE regime call' in tv_card
+    assert 'defensive/risk-on' not in tv_card  # the old bug: both words, every time
+
 @freeze_time(NOW)
 def test_report_view_sections_are_collapsible_but_keep_every_field_in_the_dom(db):
     """Leron, repeatedly: "a long boring ass scroll." Collapsing bookkeeping sections by
