@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, StyleSheet, Alert, Linking, Platform } from 'react-native'
 import { usePreventScreenCapture } from '@/security/screen-capture'
-import { useScrollToTop } from '@react-navigation/native'
+import { useIsFocused, useScrollToTop } from '@react-navigation/native'
 import * as Clipboard from 'expo-clipboard'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import * as WebBrowser from 'expo-web-browser'
@@ -78,12 +78,21 @@ export default function AccountScreen() {
   const scrollRef = useRef<ScrollView>(null)
   useScrollToTop(scrollRef)
   // A customer's live diagnostic logs showed the Sparky sheet mounting and
-  // unmounting repeatedly (3 fresh instances inside 3 seconds) — each
-  // router.push('/sparky') stacks ANOTHER transparentModal screen rather than
-  // reusing one already open, and nothing here stopped a second tap (likely a
-  // frustrated repeat-tap when the first press looked like it did nothing)
-  // from pushing a second, third, fourth copy. Each fresh copy starts a brand
-  // new conversation and wipes whatever the previous one was about to show.
+  // unmounting repeatedly (3 fresh instances inside 3 seconds, each a fresh
+  // router.push('/sparky')), wiping its own conversation before it could ever
+  // render. Diffed sparky.tsx against build 17/19 (before the 10.4 sheet
+  // redesign): Sparky used to be a plain full-screen pushed route; it is now
+  // a `presentation: 'transparentModal'` Sheet, which by design (Sheet.tsx's
+  // own doc comment) keeps THIS screen mounted and visible underneath it —
+  // and its content, including this Pressable, stays focused/interactive in
+  // React Navigation's model unless explicitly told otherwise. A tap meant
+  // for a suggestion chip inside the sheet landing here too (same gesture,
+  // same frame) would re-push '/sparky', explaining the sub-25ms mount-to-
+  // send gap in the logs — too fast for a deliberate second human tap. Gating
+  // on isFocused (false while the sheet is on top) closes that regardless of
+  // exactly how the touch is reaching this row; the press-debounce below is
+  // a second, independent layer against plain repeat-tapping.
+  const isFocused = useIsFocused()
   const lastSparkyPressRef = useRef(0)
   // The fetcher's return type must be explicit. With no third (config) argument, SWR's
   // overloads let TypeScript read `(p: string) => api(p)` — which resolves to
@@ -614,6 +623,7 @@ export default function AccountScreen() {
             label="Ask Sparky"
             detail="Get instant help from the IronForge AI agent"
             onPress={() => {
+              if (!isFocused) return
               const now = Date.now()
               if (now - lastSparkyPressRef.current < 1000) return
               lastSparkyPressRef.current = now
