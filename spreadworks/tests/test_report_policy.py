@@ -9,7 +9,7 @@ from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
-                                   options_flow_story, dealer_positioning_story,
+                                   options_flow_story, dealer_positioning_story, surface_smile_story,
                                    edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
@@ -560,6 +560,40 @@ def test_render_markdown_and_html_carry_the_dealer_positioning_section():
     html_out=render_opening_html(payload)
     assert '<h2>🏛️ Dealer positioning</h2>' in html_out
     assert 'SPY is being run by put sellers today' in html_out
+
+def test_surface_smile_story_combines_both_narrative_builders():
+    """_narrative_surface's term-structure-shape + IV-vs-realized read and _narrative_smile's
+    skew-lean read already existed and were already tested (section_summary coverage), but
+    only ever surfaced separately in the per-field appendix under "### Surface" and "###
+    Smile" -- this combines both into one top-level section, same promotion pattern as
+    options_flow_story/dealer_positioning_story."""
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':.088}})
+    blocks['surface']['term_0dte']=item({'SPY':{'iv_0dte':.15}})
+    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':.12}})
+    blocks['smile']['atm_iv']=item({'SPY':{'atm_iv':.088}})
+    blocks['smile']['put_25d_iv']=item({'SPY':{'put_25d_iv':.1}})
+    blocks['smile']['call_25d_iv']=item({'SPY':{'call_25d_iv':.09}})
+    story=surface_smile_story(blocks)
+    assert "SPY's vol surface" in story and 'term structure' in story
+    assert "SPY's skew" in story and 'puts are bid harder' in story
+
+def test_surface_smile_story_falls_back_when_both_builders_return_none():
+    blocks=empty_blocks()
+    story=surface_smile_story(blocks)
+    assert story=='Vol surface and skew coverage is too thin to read a shape right now.'
+
+def test_render_markdown_and_html_carry_the_surface_smile_section():
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':.088}})
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    md=render_markdown(payload)
+    assert '## 📐 Surface, smile & term structure' in md
+    assert "SPY's vol surface" in md
+    html_out=render_opening_html(payload)
+    assert '<h2>📐 Surface, smile & term structure</h2>' in html_out
+    assert 'vol surface: ATM IV 8.8%' in html_out  # escape() turns "SPY's" into "SPY&#x27;s"
 
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
