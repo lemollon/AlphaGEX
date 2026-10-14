@@ -71,6 +71,7 @@ describe('isCustomerPath', () => {
     }
     expect(isCustomerPath('/api/live/summary')).toBe(true)
     expect(isCustomerPath('/api/spark/production-pause')).toBe(true)
+    expect(isCustomerPath('/api/sparky/chat')).toBe(true)
   })
   it('does not claim public or operator paths', () => {
     for (const p of ['/', '/pricing', '/track-record', '/spark', '/api/spark/status']) {
@@ -171,7 +172,7 @@ describe('mobile bearer access', () => {
   const base = { isApi: true, hasSession: false, hasServiceToken: false }
 
   it('opens the customer API surface', () => {
-    for (const p of ['/api/live/summary', '/api/live/trades', '/api/support/chat', '/api/v1/enrollment']) {
+    for (const p of ['/api/live/summary', '/api/live/trades', '/api/support/chat', '/api/sparky/chat', '/api/v1/enrollment']) {
       expect(decideAccess({ ...base, pathname: p, hasBearerCustomer: true })).toBe('allow')
     }
   })

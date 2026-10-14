@@ -156,6 +156,12 @@ export function isCustomerPath(pathname: string): boolean {
   if (pathname.startsWith('/api/account/')) return true
   // Sparky support chat — customer-session guarded (also self-guards in-route).
   if (pathname.startsWith('/api/support/')) return true
+  // Sparky's current chat route (#264 renamed this off /api/support/chat, but this
+  // allowlist was never updated) — without this clause isCustomerPath() returns false
+  // for /api/sparky/*, middleware never reads the bearer token for it, and decideAccess
+  // falls through to the generic 'unauthorized' branch. Every mobile call 401'd with the
+  // same opaque {"error":"unauthorized"} body regardless of token validity.
+  if (pathname.startsWith('/api/sparky/')) return true
   // Push device registration + notification preferences. /api/notifications/dispatch is
   // the scanner's seam and passes on the service token via decideAccess's first branch;
   // it ALSO self-guards in-route, because IRONFORGE_PUBLIC_MODE bypasses this gate and a
