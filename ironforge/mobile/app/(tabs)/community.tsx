@@ -16,7 +16,7 @@ import {
   Platform,
 } from 'react-native'
 import * as Haptics from 'expo-haptics'
-import { useFocusEffect, useScrollToTop } from '@react-navigation/native'
+import { useFocusEffect, useIsFocused, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
@@ -1012,10 +1012,18 @@ function time(iso: string): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
+  // See the matching comment in app/(tabs)/index.tsx's Shell — the 10.4 sheet
+  // redesign (/sparky, /notifications, /agents/[bot], /trade/[id]) left every
+  // tab's own buttons reachable by touches meant for the sheet presented on
+  // top of it. This has nothing to do with ThreadSheet below (a native Modal,
+  // which already blocks the background on its own).
+  const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <AppHeader />
-      {children}
+      <View style={{ flex: 1 }} pointerEvents={isFocused ? 'auto' : 'none'}>
+        <AppHeader />
+        {children}
+      </View>
     </SafeAreaView>
   )
 }

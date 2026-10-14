@@ -751,10 +751,16 @@ function memberSince(iso: string): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
+  // Screen-wide version of the per-row isFocused guard above on "Ask Sparky" —
+  // see that comment for the full story. This covers every OTHER button on this
+  // tab (the notifications bell in AppHeader, etc.) the same way.
+  const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
-      <AppHeader />
-      {children}
+      <View style={{ flex: 1 }} pointerEvents={isFocused ? 'auto' : 'none'}>
+        <AppHeader />
+        {children}
+      </View>
     </SafeAreaView>
   )
 }
