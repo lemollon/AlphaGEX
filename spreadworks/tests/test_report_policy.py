@@ -9,7 +9,7 @@ from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
 from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
-                                   edge_board, ranked_edge_board, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
+                                   edge_board, ranked_edge_board, scoreboard, biggest_traps, if_then_day_plan, SECTION_SUMMARY_SECTIONS,
                                    render_markdown, render_opening_html, plain_value, field_label, display,
                                    ct_str, fmt_number, narrative_html, positioning_panel_html,
                                    narrative_package_html, item_cell_html, narrative_setup_html,
@@ -573,6 +573,38 @@ def test_ranked_edge_board_skips_pending_evidence_but_keeps_watch():
     setups=[r[1] for r in ranked]
     assert not any('day strategy' in s for s in setups)  # PENDING EVIDENCE has nothing to rank
     assert any('near forward strategy' in s for s in setups)  # WATCH still competes
+
+def test_scoreboard_adds_live_price_rows_from_change_vs_baselines_but_not_iwm():
+    """Leron, 2026-10-14 (ChatGPT mockup): live SPY/QQQ/VIX price rows on the 30-second
+    scoreboard -- "778.37, +0.09% from baseline; fresh at ...". Built entirely from
+    risk_on_defensive.change_vs_baselines, already required and populated for exactly this.
+    IWM has no row -- market_comparison() only ever iterates core['surface'], SPY/QQQ-only;
+    an honest IWM number doesn't exist yet."""
+    blocks=empty_blocks()
+    blocks['risk_on_defensive']['change_vs_baselines']=item({
+        'SPY':{'current_spot':778.37,'price_change_pct':0.0915,'current_source_timestamp':'2026-10-02T14:59:23+00:00'},
+        'QQQ':{'current_spot':743.59,'price_change_pct':0.41,'current_source_timestamp':'2026-10-02T14:59:22+00:00'},
+        'VIX':{'current_spot':15.18,'price_change_pct':-0.85,'current_source_timestamp':'2026-10-02T14:59:46+00:00'},
+    })
+    rows=scoreboard(blocks)
+    labels=[r[0] for r in rows]
+    assert 'SPY' in labels and 'QQQ' in labels and 'VIX' in labels and 'IWM' not in labels
+    spy_text=next(r[1] for r in rows if r[0]=='SPY')
+    assert spy_text=='778.37, +0.09% from baseline; fresh at 09:59:23 AM CT'
+    html_out=render_opening_html({'report_blocks':blocks})
+    assert '778.37, +0.09% from baseline' in html_out
+
+def test_scoreboard_no_trade_condition_mirrors_the_top_ranked_edge_board_candidate():
+    """The No-trade condition row must never drift out of sync with the ranked Edge Board
+    it summarizes -- it IS that board's own top candidate, not a separately-computed read."""
+    blocks=empty_blocks()
+    rows=scoreboard(blocks)
+    no_trade_row=next(r for r in rows if r[0]=='No-trade condition')
+    top=ranked_edge_board(blocks)[0]
+    assert no_trade_row[1]==f"Top-ranked: {top[1]} ({top[5]}). {top[3]} {top[2]}".strip()
+    assert no_trade_row[1]=='Top-ranked: No trade (READY). Remains the default while other triggers conflict or remain unconfirmed. Evidence and executable packages incomplete.'
+    html_out=render_opening_html({'report_blocks':blocks})
+    assert 'No-trade condition' in html_out and 'Top-ranked: No trade' in html_out
 
 def test_macro_yield_shows_day_over_day_change_not_just_a_snapshot():
     """Leron, 2026-10-13: "what is the yield on treasury how has it changed... what does it
