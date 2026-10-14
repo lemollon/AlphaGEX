@@ -3,6 +3,26 @@
 The executable contract is `backend/report_contract.py`; inference and display
 rules are `backend/report_policy.py`.
 
+Version `2026-10-14.1` adds `day_strategy.tv_structure_check` (+1 field, day_strategy
+only — not near_forward_strategy/forward_strategy, since TradingVolatility's structure
+pick reflects today's regime, not a 2-5 session or 1-4 week horizon). SPY/QQQ's own
+day plan previously carried only the fixed, textbook `structure` field (the registered
+package disclaimer plus `_structure_family_hint`'s rich/cheap premium reading) regardless
+of today's condition. This reuses — never duplicates — the same TradingVolatility
+structure-selection path `trade_volatility_scan`/`engine_consensus` already surface: the
+`structures` field on whichever of `top_long_setups`/`top_short_setups` rows matches
+ticker SPY or QQQ this checkpoint (`/market-structure`, also called by the collector,
+does not return a structure field, so it is not used here). `build_strategy_blocks`'s
+`_tv_structure_check` compares that vendor pick against the registered Edge Board setup's
+own `strategy` (`report_contract.py`'s `STRATEGY_FIELDS` registration, unchanged) by
+coarse structure family (`_structure_family`, so "credit_spread" vendor naming and our
+"put_credit_spread" registration are not read as a disagreement) and records
+agree/disagree/no-data per symbol — it never overwrites the registered setup's own
+`structure` field or `strategy` value. `_narrative_strategy` (shared by day_strategy's
+HTML and markdown rendering) appends a sentence only on disagreement: "TradingVolatility's
+engine suggests X while the registered setup is Y." Agreement and no-data cases stay in
+the raw `/data` JSON only, since they don't change what the reader does next.
+
 Version `2026-10-13.1` adds `trade_volatility_scan` (34th section, +5 fields:
 `top_long_setups`, `top_short_setups`, `income_setups`, `put_call_ratio`,
 `expected_move_trend`): Leron, 2026-10-13 — "which stock show the best

@@ -226,6 +226,17 @@ STRATEGY_FIELDS = ["horizon", "thesis", "evidence", "conflicts", "structure", "t
                    "risk_exit_rules", "catalysts"]
 for _name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
     REQUIREMENTS[_name] = list(STRATEGY_FIELDS)
+# Leron, 2026-10-14: SPY/QQQ's registered setup carries a FIXED structure regardless of
+# today's condition, while trade_volatility_scan/engine_consensus already reuse TradingVolatility's
+# own deterministic per-ticker structure pick -- the "structures" field on whichever of
+# trade_volatility_scan's existing top_long_setups/top_short_setups rows matches SPY or QQQ this
+# checkpoint (the vendor's /top-setups response is the only one of its endpoints that actually
+# returns a structure; /market-structure does not). day_strategy only (today's own session, not
+# the 2-5 session or 1-4 week horizons, which the vendor's current-regime pick does not speak to)
+# gets this comparison field: it never overwrites the registered setup's own "structure" field
+# above, it only states agreement/disagreement between the two, surfaced as a sentence in
+# _narrative_strategy.
+REQUIREMENTS["day_strategy"].append("tv_structure_check")
 REQUIREMENTS["horizon_comparison"] = ["morning_baseline", "prior_checkpoint", "current",
     "forward_options", "futures_confirmation", "alignment", "changes"]
 REQUIREMENTS["adaptation_rules"] = ["activate", "cancel", "switch", "stand_aside",
@@ -241,7 +252,7 @@ REQUIREMENTS["data_integrity"] = ["contract", "source_clocks", "coverage", "hist
 REQUIREMENTS["trade_volatility_scan"] = ["top_long_setups", "top_short_setups", "income_setups",
     "put_call_ratio", "expected_move_trend"]
 REQUIRED_BLOCKS = tuple(REQUIREMENTS)
-CONTRACT_VERSION = "2026-10-13.1"
+CONTRACT_VERSION = "2026-10-14.1"
 FLOW_SOURCE = "ThetaData Pro trade-time NBBO flow v1"
 # Display/completeness freshness only -- how old a field's own observation may be before it
 # stops counting as "live" for the reader and for report_completeness. Leron, 2026-10-12: "i
