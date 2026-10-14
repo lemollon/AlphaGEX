@@ -83,6 +83,30 @@ export async function createOrResumeEnrollment(userId: string, source?: string):
   const open = await getOpenEnrollment(userId)
   if (open) return open
 
+  // 🚨 A JUST-COMPLETED ENROLLMENT MUST NEVER BE SILENTLY REPLACED.
+  //
+  // getOpenEnrollment excludes 'complete' rows by design (they're not resumable
+  // drafts) — but this function then unconditionally INSERTed a brand-new 'draft'
+  // whenever that lookup came back empty, with no check for "did they just finish
+  // one?" A second POST /api/v1/enrollments immediately after a successful
+  // completion (a double-tap on "Join Community — Free" while the first tap's
+  // response was still in flight, or any other resume call on re-mount) found no
+  // OPEN row and minted a fresh draft with selected_plan=NULL, silently erasing
+  // the just-recorded 'community' choice — the customer had, in fact, already
+  // joined; the app just showed them a blank plan-select screen again. No caller
+  // of this function today ever needs "start a second enrollment the instant the
+  // first one finished" — the add-another-bot entry points all go through this
+  // same resume path, which is exactly why a stale local 'complete' row has to be
+  // handed back rather than papered over with a new one.
+  const recent = await customerQuery<EnrollmentRow>(
+    `SELECT id, user_id, selected_plan, status, current_step
+       FROM enrollments
+      WHERE user_id = $1
+      ORDER BY created_at DESC LIMIT 1`,
+    [userId],
+  )
+  if (recent[0]?.status === 'complete') return recent[0]
+
   const created = await customerQuery<EnrollmentRow>(
     `INSERT INTO enrollments (user_id, status, current_step, source)
      VALUES ($1, 'draft', 'plan', $2)
