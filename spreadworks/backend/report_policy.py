@@ -1640,13 +1640,15 @@ def market_story(blocks, mission_side=None, regime_label=None):
     of synthesis but only ever surfaced in the per-field appendix further down the report.
     Four fragments now: the real price-action read (who's leading, breadth confirmation or
     pushback), market_control's dealer-positioning read with its agree/conflict callback to
-    the mission verdict above, premium suitability, then the gamma read. Zero new producer
-    fields -- every fragment is an existing function call. _narrative_risk_on_defensive can
-    return None (verdict unavailable); falls back to the flat verdict display rather than
-    dropping the opening sentence entirely."""
+    the mission verdict above, premium suitability (_narrative_premium_selling's per-symbol
+    IV/realized-ratio + forward-implications read -- same promotion as the other three, was
+    the flat suitability label), then the gamma read. Zero new producer fields -- every
+    fragment is an existing function call. Each richer fragment can return None when its
+    block is unavailable; falls back to the flat display rather than dropping a sentence
+    entirely."""
     parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or display(blocks["risk_on_defensive"]["verdict"], compact=True),
              section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
-             display(blocks["premium_selling"]["suitability"], compact=True),
+             _narrative_premium_selling(blocks["premium_selling"]) or display(blocks["premium_selling"]["suitability"], compact=True),
              section_meaning("gamma", blocks["gamma"])]
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 
@@ -1657,7 +1659,7 @@ def market_story_html(blocks, mission_side=None, regime_label=None):
     clutter to a paragraph meant to read as plain prose."""
     parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or _value_text(blocks["risk_on_defensive"]["verdict"]),
              section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
-             _value_text(blocks["premium_selling"]["suitability"]),
+             _narrative_premium_selling(blocks["premium_selling"]) or _value_text(blocks["premium_selling"]["suitability"]),
              section_meaning("gamma", blocks["gamma"])]
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 

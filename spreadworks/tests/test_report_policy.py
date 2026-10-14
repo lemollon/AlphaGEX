@@ -595,6 +595,17 @@ def test_render_markdown_and_html_carry_the_surface_smile_section():
     assert '<h2>📐 Surface, smile & term structure</h2>' in html_out
     assert 'vol surface: ATM IV 8.8%' in html_out  # escape() turns "SPY's" into "SPY&#x27;s"
 
+def test_market_story_carries_premium_selling_narrative_not_flat_label():
+    """market_story's premium fragment was just the flat suitability label ("SPY:
+    PREMIUM_RICH"); _narrative_premium_selling's richer per-symbol IV/realized-ratio +
+    forward-implications read already existed and was already tested, same pattern as the
+    risk_on_defensive/market_control fragments added in the original enrichment."""
+    blocks=empty_blocks()
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_RICH'})
+    blocks['premium_selling']['iv_rv_meaning_today']=item({'SPY':{'ratio':1.35}})
+    story=market_story(blocks)
+    assert 'premium is rich' in story and 'IV/realized ratio 1.35' in story
+
 def test_market_story_edge_board_traps_and_plan_use_real_block_values():
     blocks=empty_blocks()
     blocks['risk_on_defensive']['verdict']=item('Defensive price confirmation')
