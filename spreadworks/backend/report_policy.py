@@ -509,11 +509,50 @@ def display(item, compact=False):
     age_text=f'{age:.0f}s' if age<120 else f'{age/60:.1f} min' if age<7200 else f'{age/3600:.1f} hours' if age<172800 else f'{age/86400:.1f} days'
     return text+' ['+label+'; updated '+clock+'; age '+age_text+']'
 
+def _scoreboard_price_rows(blocks):
+    """Leron, 2026-10-14 (ChatGPT mockup): live SPY/QQQ/VIX price rows on the 30-second
+    scoreboard -- "778.37, +0.09% from 07:40 baseline; fresh at 08:53:23 CT". Built entirely
+    from risk_on_defensive.change_vs_baselines, a field already required and populated by
+    market_comparison()/vix_comparison() for exactly this purpose -- no new producer field,
+    no invented price. IWM has no row: it is tracked by the watcher for price/triggers
+    (CORE_SYMBOLS) but market_comparison() only ever iterates core['surface'], which is
+    SPY/QQQ-only, so an honest IWM baseline-change number does not exist yet."""
+    baseline_val = ((blocks.get("risk_on_defensive") or {}).get("change_vs_baselines") or {}).get("value")
+    if not isinstance(baseline_val, dict):
+        return []
+    rows = []
+    for symbol in ("SPY", "QQQ", "VIX"):
+        row = baseline_val.get(symbol)
+        if not isinstance(row, dict) or not _num(row.get("current_spot")):
+            continue
+        pct = row.get("price_change_pct")
+        pct_text = f"{pct:+.2f}%" if _num(pct) else "change unavailable"
+        ts = row.get("current_source_timestamp")
+        clock = ct_str(ts) if ts else None
+        fresh = f"; fresh at {clock.split(' ', 1)[-1]}" if clock else ""
+        rows.append((symbol, f"{row['current_spot']:g}, {pct_text} from baseline{fresh}"))
+    return rows
+
+def _no_trade_condition_text(blocks):
+    """The ranked Edge Board's own #1 candidate is the honest answer to "why would/wouldn't I
+    trade right now" -- reusing it here means this row can never drift out of sync with the
+    board it's summarizing."""
+    ranked = ranked_edge_board(blocks)
+    if not ranked:
+        return None
+    _rank, setup, evidence, trigger, _conflict, status = ranked[0]
+    return f"Top-ranked: {setup} ({status}). {trigger} {evidence}".strip()
+
 def scoreboard(blocks):
     def get(name,field):return display(blocks.get(name,{}).get(field,{}),compact=True)
-    return [("Regime / trend",get("risk_on_defensive","verdict")),("Chop / breakout risk",get("range_stall","breakout_ends_chop")),
+    rows = [("Regime / trend",get("risk_on_defensive","verdict")),("Chop / breakout risk",get("range_stall","breakout_ends_chop")),
         ("Premium / volatility buying",get("premium_selling","suitability")),("Confidence / data quality","See the source clocks and explicit historical/unavailable fields below; no inferred high confidence."),
         ("Flow / gamma",get("flow","classified_coverage")+"; "+get("gamma","net_gex")),("Best underlying / structure",get("day_strategy","contracts"))]
+    rows.extend(_scoreboard_price_rows(blocks))
+    no_trade = _no_trade_condition_text(blocks)
+    if no_trade:
+        rows.append(("No-trade condition", no_trade))
+    return rows
 
 SECTION_SUMMARY_SECTIONS = (
     "risk_on_defensive", "market_control", "gamma", "flow", "premium_selling",
@@ -2273,6 +2312,10 @@ def render_opening_html(payload):
         ("Flow / gamma",cell("flow","classified_coverage")+divider+cell("gamma","net_gex")+'</div>'),
         ("Best underlying / structure",cell("day_strategy","contracts")),
     ]
+    scoreboard_rows.extend((symbol,'<span>'+escape(text)+'</span>') for symbol,text in _scoreboard_price_rows(blocks))
+    no_trade=_no_trade_condition_text(blocks)
+    if no_trade:
+        scoreboard_rows.append(("No-trade condition",'<span>'+escape(no_trade)+'</span>'))
     rows="".join("<tr><th>"+escape(k)+"</th><td>"+v+"</td></tr>" for k,v in scoreboard_rows)
     brief=decision_brief_lines(blocks)
     out=(('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
