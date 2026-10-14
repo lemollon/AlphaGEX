@@ -77,6 +77,14 @@ export default function AccountScreen() {
   // Re-tap-tab-to-scroll-to-top (#231).
   const scrollRef = useRef<ScrollView>(null)
   useScrollToTop(scrollRef)
+  // A customer's live diagnostic logs showed the Sparky sheet mounting and
+  // unmounting repeatedly (3 fresh instances inside 3 seconds) — each
+  // router.push('/sparky') stacks ANOTHER transparentModal screen rather than
+  // reusing one already open, and nothing here stopped a second tap (likely a
+  // frustrated repeat-tap when the first press looked like it did nothing)
+  // from pushing a second, third, fourth copy. Each fresh copy starts a brand
+  // new conversation and wipes whatever the previous one was about to show.
+  const lastSparkyPressRef = useRef(0)
   // The fetcher's return type must be explicit. With no third (config) argument, SWR's
   // overloads let TypeScript read `(p: string) => api(p)` — which resolves to
   // Promise<unknown> — as a config object instead of a fetcher, and the call fails to
@@ -605,7 +613,12 @@ export default function AccountScreen() {
             image={SPARKY_AVATAR}
             label="Ask Sparky"
             detail="Get instant help from the IronForge AI agent"
-            onPress={() => router.push('/sparky')}
+            onPress={() => {
+              const now = Date.now()
+              if (now - lastSparkyPressRef.current < 1000) return
+              lastSparkyPressRef.current = now
+              router.push('/sparky')
+            }}
             first
             badge={
               <View style={s.aiTag}>
