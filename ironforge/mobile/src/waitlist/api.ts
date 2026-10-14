@@ -6,7 +6,7 @@
  * (built for exactly this "code for the caller, sentence for the customer" shape — see
  * its own docstring) is used directly against the shared API_BASE instead.
  */
-import { API_BASE, ApiError } from '@/api/client'
+import { API_BASE, ApiError, fetchWithTimeout } from '@/api/client'
 import type { CapitalRange } from './validation'
 
 export interface WaitlistSubmitRequest {
@@ -28,10 +28,22 @@ export interface WaitlistSubmitResponse {
 }
 
 export async function submitWaitlist(fields: WaitlistSubmitRequest): Promise<WaitlistSubmitResponse> {
-  const res = await fetch(`${API_BASE}/api/waitlist`, {
+  // fetchWithTimeout (api/client.ts) — this call previously had no timeout at all,
+  // same bug class as the Sparky composer lock: a stalled connection would leave
+  // the submit button disabled forever with nothing to show for it.
+  const res = await fetchWithTimeout(`${API_BASE}/api/waitlist`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(fields),
+  }).catch((e: unknown) => {
+    const timedOut = e instanceof Error && e.name === 'AbortError'
+    throw new ApiError(
+      timedOut
+        ? 'That took too long. Check your connection and try again.'
+        : 'Could not reach IronForge. Check your connection and try again.',
+      0,
+      null,
+    )
   })
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
   if (!res.ok || !json?.ok) {

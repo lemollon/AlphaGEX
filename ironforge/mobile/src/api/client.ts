@@ -27,6 +27,46 @@ const API_BASE: string =
   (Constants.expoConfig?.extra as { apiBase?: string } | undefined)?.apiBase ??
   'https://ironforge.trade'
 
+/**
+ * 2026-10-14: every raw `fetch()` to our own API previously carried NO timeout of
+ * any kind — each call site relied entirely on the native layer's own (iOS
+ * URLSession ~60s, can be effectively unbounded on some connection-hang shapes)
+ * eventually rejecting. A caller awaiting an unbounded fetch has no way to ever
+ * recover: a screen that sets a `sending`/`submitting` flag before the call and
+ * only clears it in a `finally` after it settles — exactly app/sparky.tsx's
+ * composer, and the waitlist form's submit button — stays locked (disabled input,
+ * disabled button) for as long as the hang lasts, with NOTHING to show for it: a
+ * request that never completes a connection never reaches Render's logs either,
+ * so server-side nothing can prove or disprove it happened. A tester describing
+ * "it just blinks and does nothing, nothing was ever sent" is the exact shape
+ * this produces — and it was not unique to one screen, because nothing in this
+ * file (or waitlist/api.ts, which reaches the same host directly) had ever
+ * applied a bound. 15s is generous for every route this app calls (Sparky's own
+ * LLM round-trip measures ~2s in production logs) while being short enough that
+ * a real hang resolves to a visible, reportable error instead of an indefinite
+ * lock.
+ *
+ * ONE helper, used by every first-party fetch in this app (api(), apiPublic(),
+ * and waitlist/api.ts's submitWaitlist — doRefresh() above keeps its own
+ * REFRESH_TIMEOUT_MS AbortController since its needs differ slightly), so this
+ * can never again silently regress to "forgot the timeout on this one call site."
+ */
+export const DEFAULT_TIMEOUT_MS = 15_000
+
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timeoutId)
+  }
+}
+
 const ACCESS_KEY = 'ironforge.accessToken'
 const REFRESH_KEY = 'ironforge.refreshToken'
 
@@ -55,12 +95,19 @@ function throwSecureConnectionError(cause?: unknown): never {
   // message below — "Secure connection failed" is what the customer sees,
   // but what actually tripped (SSL pin mismatch, DNS, timeout, offline) only
   // exists in `cause`, and would otherwise vanish the instant this throws.
+  const isTimeout = cause instanceof Error && cause.name === 'AbortError'
   reportClientError({
     kind: 'network_error',
-    message: cause instanceof Error ? cause.message : String(cause ?? 'unknown fetch failure'),
+    message: isTimeout
+      ? `timeout after ${DEFAULT_TIMEOUT_MS}ms`
+      : cause instanceof Error ? cause.message : String(cause ?? 'unknown fetch failure'),
     stack: cause instanceof Error ? cause.stack : undefined,
   })
-  throw new Error('Secure connection to IronForge failed. Check your connection and try again.')
+  throw new Error(
+    isTimeout
+      ? 'IronForge took too long to respond. Check your connection and try again.'
+      : 'Secure connection to IronForge failed. Check your connection and try again.',
+  )
 }
 
 export interface TokenPair {
@@ -237,10 +284,18 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
   // is also the case react-native-ssl-public-key-pinning triggers on a pin mismatch
   // (security/ssl-pinning.ts), so it gets the same clear "secure connection failed"
   // message as every other network-layer failure here — never a raw native
-  // exception string.
+  // exception string. fetchWithTimeout's bound is ALSO funneled through this same
+  // catch (AbortController.abort() makes fetch reject, same as any other network
+  // failure) so a stalled request fails the exact same visible way as being
+  // offline, rather than needing a third error path a caller has to separately
+  // handle — see fetchWithTimeout's own docstring above for why this exists at all.
+  // No caller passes its own `signal` today — if one ever does, the timeout would
+  // otherwise silently override it. Fail loudly instead of guessing.
+  if (opts.signal) throw new Error('api(): opts.signal is not supported alongside the built-in timeout')
+
   let res: Response
   try {
-    res = await fetch(`${API_BASE}${path}`, {
+    res = await fetchWithTimeout(`${API_BASE}${path}`, {
       ...opts,
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -268,7 +323,7 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
 
 /** Unauthenticated POST, for sign-in and password reset. */
 export async function apiPublic<T = unknown>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify(body),
