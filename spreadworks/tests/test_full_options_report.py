@@ -320,6 +320,37 @@ def test_entry_watches_attaches_each_setups_own_state_not_the_whole_symbol_list(
     # Neither row's state is ever the raw per-symbol list -- the exact shape of the bug.
     assert all(not isinstance(row['state'],list) for row in rows)
 
+def test_entry_watches_prefers_setup_state_by_id_scalar_map_over_the_per_symbol_list():
+    """The real fix for the #3289 bug lives upstream in intraday_watch.py: run_intraday_cycle
+    now writes a setup_state_by_id map (setup_id -> scalar state string) at the exact point
+    result.state is decided, so no consumer has to trust the shape of per_symbol_state[symbol]
+    (a list, by design, since one symbol can hold multiple setups) to get one setup's state.
+    When both are present, report_blocks must read the guaranteed-scalar map, not re-derive
+    from the list -- and must still never crash or go stale if the map disagrees with the list
+    (e.g. a runtime payload written mid-deploy, before/after a worker restart)."""
+    plan={'generated_at':NOW.isoformat(),'setups':[
+        {'setup_id':'s1','symbol':'SPY','entry':{'type':'touch'},'invalidation':{'type':'close_below'}},
+        {'setup_id':'s2','symbol':'SPY','entry':{'type':'touch'},'invalidation':{'type':'close_below'}}]}
+    runtime={'setup_state_by_id':{'s1':'ENTRY_READY','s2':'WATCH'},
+             'per_symbol_state':{'SPY':[
+                 {'setup_id':'s1','state':'STALE_LIST_VALUE'},
+                 {'setup_id':'s2','state':'STALE_LIST_VALUE'}]}}
+    blocks=report.report_blocks(core(),{},plan,runtime,ledger_empty(),{},{},[],NOW)
+    rows=blocks['entry_watches']['status']['value']
+    by_setup={row['setup_id']:row['state'] for row in rows}
+    assert by_setup=={'s1':'ENTRY_READY','s2':'WATCH'}
+    assert all(isinstance(state,str) for state in by_setup.values())
+
+def test_entry_watches_falls_back_to_the_per_symbol_list_when_setup_state_by_id_is_absent():
+    """Backward compatibility: a runtime payload persisted by a worker before this fix shipped
+    will have no setup_state_by_id key at all. The per-symbol list scan must still work."""
+    plan={'generated_at':NOW.isoformat(),'setups':[
+        {'setup_id':'s1','symbol':'SPY','entry':{'type':'touch'},'invalidation':{'type':'close_below'}}]}
+    runtime={'per_symbol_state':{'SPY':[{'setup_id':'s1','state':'NEAR_TRIGGER'}]}}
+    blocks=report.report_blocks(core(),{},plan,runtime,ledger_empty(),{},{},[],NOW)
+    rows=blocks['entry_watches']['status']['value']
+    assert rows[0]['state']=='NEAR_TRIGGER'
+
 def test_entry_watches_state_is_none_when_setup_has_no_matching_runtime_row():
     plan={'generated_at':NOW.isoformat(),'setups':[{'setup_id':'orphan','symbol':'SPY','entry':{},'invalidation':{}}]}
     runtime={'per_symbol_state':{'SPY':[{'setup_id':'other','state':'WATCH'}]}}

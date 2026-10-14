@@ -350,9 +350,14 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
             blocks['event_calendar'][f]['status']='unavailable'
             blocks['event_calendar'][f]['reason']='Calendar coverage is partial; local estimates are displayed explicitly and are not verified releases'
     setup_list=plan.get('setups') or [];states=runtime.get('per_symbol_state') or {}
+    state_by_id=runtime.get('setup_state_by_id') or {}
     def _setup_state(symbol,setup_id):
-        # states[symbol] is a LIST of per-setup state rows (see packages loop below) — find
-        # this setup's own row rather than dumping the whole list into a field named 'state'.
+        # intraday_watch.py writes this setup's own scalar state directly into
+        # setup_state_by_id[setup_id] at the source -- prefer it so this field can never be a
+        # list. states[symbol] is a LIST of per-setup state rows (see packages loop below);
+        # only fall back to scanning it for runtime payloads persisted before that map existed.
+        if setup_id in state_by_id:
+            return state_by_id[setup_id]
         for row in (states.get(symbol) or []):
             if isinstance(row,dict) and row.get('setup_id')==setup_id:
                 return row.get('state')

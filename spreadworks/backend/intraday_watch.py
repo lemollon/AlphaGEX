@@ -1496,7 +1496,8 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
         "poll_interval_seconds": poll, "current_trading_date": today.isoformat(),
         "core_symbols": list(CORE_SYMBOLS), "confirmation_symbols": list(CONFIRMATION_SYMBOLS),
         "trading_volatility_universe_count": None, "selected_daily_symbols": [],
-        "active_setup_count": 0, "per_symbol_state": {}, "last_market_data_timestamp": None,
+        "active_setup_count": 0, "per_symbol_state": {}, "setup_state_by_id": {},
+        "last_market_data_timestamp": None,
         "last_options_data_timestamp": None, "last_alert": None,
         "data_source": "Tradier production consolidated feed", "data_freshness": {},
         "discord_configured": bool(_intraday_discord_webhook()),
@@ -1664,6 +1665,11 @@ async def run_intraday_cycle(app, *, now: datetime | None = None) -> dict[str, A
                 setup["setup_state"] = result.state
                 row.payload_json = _json(setup)
                 logger.info("[IntradayWatch] %s %s -> %s", row.symbol, prior, result.state)
+            # This setup_id's own scalar state, written from the same result.state used for
+            # row.state above. per_symbol_state[symbol] below is deliberately a LIST (a symbol
+            # can carry multiple registered setups); a consumer that wants ONE setup's current
+            # state must use this map, never read the per-symbol list as if it were scalar.
+            status["setup_state_by_id"][row.setup_id] = result.state
             status["per_symbol_state"].setdefault(row.symbol, []).append({
                 "setup_id": row.setup_id, "state": result.state,
                 "reason": result.reason, "option_strike_selection": option_selection,
