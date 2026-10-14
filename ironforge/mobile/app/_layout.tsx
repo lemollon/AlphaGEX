@@ -31,10 +31,21 @@ import { Wordmark } from '@/components/Brand'
 import { ToastHost } from '@/components/ToastHost'
 import { TradeBannerHost } from '@/components/TradeBannerHost'
 import { initializeApiPinning, onApiPinningError } from '@/security/ssl-pinning'
+import { installCrashReporting } from '@/monitoring/crashReport'
 import { showToast } from '@/notifications/toast'
 import { StepUpHost } from '@/components/StepUpHost'
 import { ConnectivityBanner } from '@/components/ConnectivityBanner'
 import { LegalReacceptGate } from '@/components/LegalReacceptGate'
+
+/**
+ * Crash/error reporting first, before anything else in this file — the whole
+ * point is to catch a failure in the layout's own startup sequence (including
+ * SSL pinning init right below), not just failures deep inside the app.
+ * monitoring/sentry.ts's initMonitoring() only reaches app/(tabs), which
+ * misses sign-in, password reset, and the whole enrollment funnel; this is
+ * the only place that is live for every screen in the app.
+ */
+installCrashReporting()
 
 /**
  * Certificate pinning has to be live before anything in this app can make a

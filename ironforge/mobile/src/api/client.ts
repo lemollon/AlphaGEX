@@ -19,6 +19,7 @@ import { mutate as swrMutate } from 'swr'
 import { setItem, getItem, deleteItem, AFTER_FIRST_UNLOCK } from '@/api/storage'
 import { ApiError } from '@/api/errors'
 import { reportNetworkSuccess, reportNetworkFailure } from '@/live/connectivity'
+import { reportClientError } from '@/monitoring/crashReport'
 
 export { ApiError }
 
@@ -49,7 +50,16 @@ export class AuthExpiredError extends Error {
  * every caller already shows something a customer can act on instead of a
  * crash-ish string, with no per-screen change needed.
  */
-function throwSecureConnectionError(): never {
+function throwSecureConnectionError(cause?: unknown): never {
+  // Report the REAL native error before converting it to the friendly
+  // message below — "Secure connection failed" is what the customer sees,
+  // but what actually tripped (SSL pin mismatch, DNS, timeout, offline) only
+  // exists in `cause`, and would otherwise vanish the instant this throws.
+  reportClientError({
+    kind: 'network_error',
+    message: cause instanceof Error ? cause.message : String(cause ?? 'unknown fetch failure'),
+    stack: cause instanceof Error ? cause.stack : undefined,
+  })
   throw new Error('Secure connection to IronForge failed. Check your connection and try again.')
 }
 
@@ -235,9 +245,9 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     })
-  } catch {
+  } catch (fetchErr) {
     reportNetworkFailure()
-    throwSecureConnectionError()
+    throwSecureConnectionError(fetchErr)
   }
   reportNetworkSuccess()
 

@@ -23,6 +23,10 @@ vi.mock('@/api/storage', () => ({
   AFTER_FIRST_UNLOCK: 'AFTER_FIRST_UNLOCK',
 }))
 
+// crashReport.ts imports `Platform` from 'react-native' directly, which Vitest's node
+// environment cannot parse (Flow syntax) — same reasoning as the mocks above.
+vi.mock('@/monitoring/crashReport', () => ({ reportClientError: () => {} }))
+
 const { shouldLock } = await import('./session')
 
 /**

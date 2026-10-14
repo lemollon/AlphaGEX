@@ -12,6 +12,11 @@ vi.mock('expo-constants', () => ({
   default: { expoConfig: { extra: { apiBase: 'https://example.test' } } },
 }))
 
+// crashReport.ts imports `Platform` from 'react-native' directly, which Vitest's node
+// environment cannot parse (Flow syntax) — same reasoning as the expo-constants/storage
+// mocks above: keep client.ts real, mock the edge it reaches into.
+vi.mock('@/monitoring/crashReport', () => ({ reportClientError: () => {} }))
+
 const store = new Map<string, string>()
 
 vi.mock('@/api/storage', () => ({

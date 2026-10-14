@@ -41,6 +41,12 @@ describe('isPublicPath', () => {
       'allow',
     )
   })
+  it('treats the client crash/error beacon as public (a crash can happen before sign-in)', () => {
+    expect(isPublicPath('/api/client-error')).toBe(true)
+    expect(
+      decideAccess({ pathname: '/api/client-error', isApi: true, hasSession: false, hasServiceToken: false }),
+    ).toBe('allow')
+  })
   it('treats operator pages and bot routes as non-public', () => {
     // NB: '/' IS public — it is the marketing homepage. This assertion used to
     // claim otherwise and had been failing since the homepage shipped.
