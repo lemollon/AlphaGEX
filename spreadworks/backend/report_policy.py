@@ -1679,6 +1679,18 @@ def dealer_positioning_story(blocks):
     surfaced in the per-field appendix under "### Market Control". Zero new producer fields."""
     return _narrative_market_control(blocks["market_control"]) or "Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
 
+def surface_smile_story(blocks):
+    """Promotes _narrative_surface's existing per-symbol ATM IV + term-structure-shape +
+    IV-vs-realized-gap read and _narrative_smile's existing per-symbol skew-lean read into
+    one top-level "Surface, smile & term structure" section, same promotion pattern as
+    options_flow_story/dealer_positioning_story. Both narrative builders already existed and
+    were already tested; they only ever surfaced separately in the per-field appendix under
+    "### Surface" and "### Smile". Zero new producer fields."""
+    parts = [p for p in (_narrative_surface(blocks["surface"]), _narrative_smile(blocks["smile"])) if p]
+    if not parts:
+        return "Vol surface and skew coverage is too thin to read a shape right now."
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+
 def edge_board(blocks):
     """Leron: "the edge board is not providing strike or expirations." The qualified contract
     packages for each horizon are already computed (build_strategy_blocks' row["contracts"]) and
@@ -1832,6 +1844,7 @@ def render_markdown(payload):
     lines.extend(["## 🧭 Market story",market_story(blocks,mission_side,regime_label)])
     lines.extend(["## 📊 Options flow",options_flow_story(blocks)])
     lines.extend(["## 🏛️ Dealer positioning",dealer_positioning_story(blocks)])
+    lines.extend(["## 📐 Surface, smile & term structure",surface_smile_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -2368,6 +2381,7 @@ def render_opening_html(payload):
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,html_mission_side,html_regime_label))+"</p>"
     out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
+    out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
