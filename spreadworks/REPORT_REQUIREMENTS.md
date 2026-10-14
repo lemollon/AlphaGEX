@@ -431,3 +431,5 @@ two trading weeks, 20 roughly a month. Any performance comparison must use the
 same verified cohort and fill/cost methodology; it is not forward assurance.
 
 Stored UTC database clocks must regain their explicit UTC offset on reads; restoring timezone identity must never reset the original observation time or age. The strict CI job includes the refresh, source and scanner regression suites.
+
+2026-10-14: contract_packages and day_strategy.contracts were permanently unavailable on every report because the stored option_strike_selection is stamped at the setup's last ENTRY_READY transition, not at report-build time, so qualify_package()'s <=90s freshness check always rejected it. Report generation now re-fetches a live option selection for each currently ENTRY_READY setup at build time (same fetch_option_selection() the watcher itself calls) and only fills these fields when they are still unavailable — never overrides a package the normal path already qualified. No new producer fields, no contract version change.

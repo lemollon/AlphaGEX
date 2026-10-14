@@ -17,6 +17,7 @@ from .report_producers import observation, unavailable, number, collect_breadth,
 from .report_trading_volatility_scan import collect_trade_volatility_scan
 from .report_ledger import scorecard, qualify_package, mark_open_positions
 from .report_policy import build_strategy_blocks, finite_tree, render_opening_html, field_label, ct_str
+from .intraday_watch import fetch_option_selection
 from .report_assets import DELIVERY_VERSION, inspect_png, chart_id_from_ref, portable_pdf, portable_zip, markdown_report_pdf
 logger=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/spreadworks/reports',tags=['Full Options Reports'])
@@ -559,6 +560,61 @@ def previous_reports(now):
     prior=json.loads(rows[-1][1]) if rows else {}
     return morning,prior
 
+_PACKAGE_FIELDS={
+    'expiry':lambda p:p.get('expiration'), 'strikes':lambda p:[l['strike'] for l in p['legs']],
+    'legs':lambda p:p['legs'], 'bid_ask':lambda p:[{k:l.get(k) for k in ('symbol','bid','ask','bid_size','ask_size','exchange_timestamp')} for l in p['legs']],
+    'greeks':lambda p:[{k:l.get(k) for k in ('symbol','delta','gamma','theta','vega','iv')} for l in p['legs']],
+    'oi':lambda p:[{'symbol':l['symbol'],'open_interest':l.get('open_interest')} for l in p['legs']],
+    'volume':lambda p:[{'symbol':l['symbol'],'volume':l.get('volume')} for l in p['legs']],
+    'debit_credit':lambda p:{k:p.get(k) for k in ('natural_debit','natural_credit')},
+    'max_risk_reward':lambda p:p.get('payoff'), 'breakeven':lambda p:(p.get('payoff') or {}).get('breakeven'),
+    'liquidity':lambda p:[{'symbol':l['symbol'],'spread':round(l['ask']-l['bid'],4),'oi':l.get('open_interest'),'volume':l.get('volume')} for l in p['legs']]}
+
+async def refresh_live_contract_packages(app,blocks,plan,runtime,core,now):
+    """Leron, 2026-10-14: "what strikes are the sellers at" / "there is no details about what
+    are the strikes" -- contract_packages and day_strategy.contracts were permanently
+    unavailable in every report, every day. Root cause: qualify_package() requires each leg's
+    quote to be <=90s old (RULES' fresh-BBO discipline), but the option_strike_selection
+    intraday_watch.py persists is stamped at whatever moment that setup last transitioned to
+    ENTRY_READY -- not at report-generation time, which runs on its own separate schedule.
+    By the time a report builds, minutes or hours later, that snapshot is always stale, so the
+    90s check rejects it every single time. This re-fetches a live option selection for each
+    currently ENTRY_READY setup right now, at report-build time, using the exact same
+    fetch_option_selection() the watcher itself calls -- no new data source, no new selection
+    logic, just fresher timing. Only overwrites a field that is currently unavailable; never
+    second-guesses a package the normal (stored-snapshot) path already qualified."""
+    setup_list=plan.get('setups') or []
+    state_by_id=runtime.get('setup_state_by_id') or {}
+    states=runtime.get('per_symbol_state') or {}
+    def setup_state(setup_id,symbol):
+        if setup_id in state_by_id:return state_by_id[setup_id]
+        for row in (states.get(symbol) or []):
+            if isinstance(row,dict) and row.get('setup_id')==setup_id:return row.get('state')
+        return None
+    packages=[]
+    for setup in setup_list:
+        setup_id=setup.get('setup_id');symbol=setup.get('symbol')
+        if not setup_id or not symbol or setup_state(setup_id,symbol)!='ENTRY_READY':continue
+        current_price=(core.get('surface',{}).get(symbol) or {}).get('spot')
+        try:
+            selection,_reason=await fetch_option_selection(app,dict(setup,current_price=current_price),now)
+        except Exception as exc:
+            logger.warning('[FullReport] live contract-package refetch failed for %s: %s',setup_id,exc)
+            continue
+        if not selection:continue
+        package=qualify_package(selection,now)
+        if package:packages.append(dict(package,setup_id=setup_id,setup_state='ENTRY_READY'))
+    if not packages:return
+    min_ts=min((ms._parse_ts(l['exchange_timestamp']) for p in packages for l in p['legs']),default=None)
+    for field,extract in _PACKAGE_FIELDS.items():
+        current=blocks['contract_packages'].get(field)
+        if isinstance(current,dict) and current.get('status')!='unavailable':continue
+        value=[{'setup_id':p['setup_id'],'strategy':p['strategy'],'value':extract(p)} for p in packages]
+        blocks['contract_packages'][field]=observation(value,'Report-time fresh per-leg chain qualification',min_ts,now)
+    day_contracts=blocks.get('day_strategy',{}).get('contracts')
+    if isinstance(day_contracts,dict) and day_contracts.get('status')=='unavailable':
+        blocks['day_strategy']['contracts']=observation(packages,'Report-time fresh per-leg chain qualification',min_ts,now)
+
 async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     started=now or datetime.now(UTC)
     read_failures={}
@@ -620,6 +676,10 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
     blocks['event_calendar']['next_five_trading_days']=observation([d.isoformat() for d in days],'Trading-calendar dates, excludes known holidays',now,now)
     build_strategy_blocks(blocks,core,plan,runtime,paper,morning,prior,now)
     forward_control_outlook(blocks,now)
+    try:
+        await refresh_live_contract_packages(app,blocks,plan,runtime,core,now)
+    except Exception as exc:
+        logger.warning('[FullReport] refresh_live_contract_packages failed: %s',exc)
     if 'paper' in read_failures:
         for name in ('paper_scorecard','trigger_accountability','position_management'):
             blocks[name]={field:unavailable('Paper ledger unavailable: '+read_failures['paper']) for field in REQUIREMENTS[name]}
