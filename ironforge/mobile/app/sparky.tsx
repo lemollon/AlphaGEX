@@ -114,10 +114,24 @@ export default function SparkyScreen() {
               }
               onClose={close}
             />
+            {/*
+              🚨 'padding' NEEDS AN ACCURATE DISTANCE FROM THE TOP OF THE SCREEN, AND THIS
+              VIEW DOESN'T HAVE ONE. 'padding' behaviour pads its own bottom by (keyboard
+              height − keyboardVerticalOffset), where that offset is meant to be this view's
+              own distance from the true screen top. This Sheet is a custom, non-full-screen
+              bottom sheet (Sheet.tsx: absolute, bottom:0, maxHeight 88% of window) — above
+              this KeyboardAvoidingView sits the grab handle AND SheetHeader, easily 100-200px
+              not accounted for by the hardcoded `keyboardVerticalOffset={8}` above. The result:
+              'padding' under-compensated by roughly that much, leaving the composer sitting
+              BEHIND the keyboard instead of above it — confirmed by a customer screenshot
+              showing the keyboard covering the entire message area.
+              'height' has no such dependency: it shrinks THIS view's own rendered height by
+              the keyboard's height directly, correct regardless of where the view sits on
+              screen. No offset prop needed.
+            */}
             <KeyboardAvoidingView
               style={{ flex: 1 }}
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              keyboardVerticalOffset={8}
+              behavior={Platform.OS === 'ios' ? 'height' : undefined}
             >
               <ScrollView
                 ref={scroller}
