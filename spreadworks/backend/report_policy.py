@@ -1631,22 +1631,32 @@ def _what_changed_today_html(blocks):
         return ""
     return '<h2>\U0001f4c8 What changed today</h2><p>' + " ".join(html.escape(l) for l in lines) + "</p>"
 
-def market_story(blocks):
-    """Three independent fragments (regime verdict, premium suitability, gamma read) joined
-    into one paragraph. A blind join produced run-ons like "...UNAVAILABLE — no timestamped
-    observation Gamma sign is mixed..." when a fragment is itself an UNAVAILABLE disclosure
-    with no trailing punctuation — each fragment now ends with its own sentence stop."""
-    parts = [display(blocks["risk_on_defensive"]["verdict"], compact=True),
+def market_story(blocks, mission_side=None, regime_label=None):
+    """Leron, 2026-10-10: "each section should flow into each [other]" -- the flagship
+    paragraph right under the mission call was still just the flat verdict label plus two
+    unrelated reads, none of them actually cross-referencing one another, while that richer
+    tie-in logic already existed in section_meaning("market_control", ...) and in
+    _narrative_risk_on_defensive's price-leader sentence -- both built for exactly this kind
+    of synthesis but only ever surfaced in the per-field appendix further down the report.
+    Four fragments now: the real price-action read (who's leading, breadth confirmation or
+    pushback), market_control's dealer-positioning read with its agree/conflict callback to
+    the mission verdict above, premium suitability, then the gamma read. Zero new producer
+    fields -- every fragment is an existing function call. _narrative_risk_on_defensive can
+    return None (verdict unavailable); falls back to the flat verdict display rather than
+    dropping the opening sentence entirely."""
+    parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or display(blocks["risk_on_defensive"]["verdict"], compact=True),
+             section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
              display(blocks["premium_selling"]["suitability"], compact=True),
              section_meaning("gamma", blocks["gamma"])]
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
 
-def market_story_html(blocks):
-    """Same three fragments as market_story(), without the "[LIVE NOW; updated ...]" bracket
+def market_story_html(blocks, mission_side=None, regime_label=None):
+    """Same four fragments as market_story(), without the "[LIVE NOW; updated ...]" bracket
     tag glued onto each sentence — the scoreboard immediately above this paragraph already
     shows that same reliability info as its own pill, so repeating it inline here just adds
     clutter to a paragraph meant to read as plain prose."""
-    parts = [_value_text(blocks["risk_on_defensive"]["verdict"]),
+    parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or _value_text(blocks["risk_on_defensive"]["verdict"]),
+             section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
              _value_text(blocks["premium_selling"]["suitability"]),
              section_meaning("gamma", blocks["gamma"])]
     return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
@@ -1798,7 +1808,10 @@ def render_markdown(payload):
     lines.extend(["## Today vs forward","| Horizon | Thesis | Status |","|---|---|---|"])
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks[name];lines.append("| "+name.replace("_"," ")+" | "+display(_thesis_display_item(row["thesis"])).replace("|","\\|")+" | "+display(row["status"]).replace("|","\\|")+" |")
-    lines.extend(["## 🧭 Market story",market_story(blocks)])
+    mission_side=_side_label((blocks["risk_on_defensive"]["verdict"] or {}).get("value"))
+    regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
+    regime_label=regime_label_item.get("value") if isinstance(regime_label_item.get("value"),str) else None
+    lines.extend(["## 🧭 Market story",market_story(blocks,mission_side,regime_label)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         lines.append("| "+str(rank)+" | "+setup.replace("|","\\|")+" | "+evidence.replace("|","\\|")+" | "+trigger.replace("|","\\|")+" | "+conflict.replace("|","\\|")+" | "+status.replace("|","\\|")+" |")
@@ -1806,9 +1819,6 @@ def render_markdown(payload):
     lines.extend("- "+t for t in biggest_traps(blocks))
     lines.append("## 🧮 If/then day plan")
     lines.extend("- **"+k+"**: "+v for k,v in if_then_day_plan(blocks))
-    mission_side=_side_label((blocks["risk_on_defensive"]["verdict"] or {}).get("value"))
-    regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
-    regime_label=regime_label_item.get("value") if isinstance(regime_label_item.get("value"),str) else None
     # Leron, repeatedly: "a long boring ass scroll of data that means nothing to me." Every
     # section already gets a narrative summary (SECTION_SUMMARY_SECTIONS covers all 33) -- the
     # raw field:value dump that used to run first, for every field of every section, was
@@ -2332,7 +2342,10 @@ def render_opening_html(payload):
         cell_html=item_cell_html(_thesis_display_item(row.get("thesis",{})))+divider+item_cell_html(row.get("status",{}))+'</div>'
         out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
-    out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks))+"</p>"
+    html_mission_side=_side_label((blocks.get("risk_on_defensive",{}).get("verdict") or {}).get("value"))
+    html_regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
+    html_regime_label=html_regime_label_item.get("value") if isinstance(html_regime_label_item.get("value"),str) else None
+    out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,html_mission_side,html_regime_label))+"</p>"
     out+='<h2>🧩 Edge board</h2><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
