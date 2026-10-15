@@ -274,7 +274,24 @@ PROHIBITED_VISUALS = ("mermaid", "ascii", "decorative_ai")
 # every single report (full_options_report.py: "Exact same-time futures vs cash-index basis
 # unavailable; SPY is not substituted for SPX"), which alone made complete_live_data
 # impossible forever, for every report kind, regardless of how fresh everything else was.
-DESIGNED_UNAVAILABLE = {("futures_context", "basis")}
+# Leron, 2026-10-15: same question again -- the 2026-10-12 fix only covered that one field.
+# full_options_report.py/report_producers.py build macro.* and the rest of futures_context.*
+# with observation(..., delayed=True), which report_producers.observation() hardcodes to
+# status="historical" no matter how fresh the underlying fetch is (FRED daily Treasury
+# yields, Yahoo 5-minute-delayed ES/NQ continuous futures). Those fields can never be "live"
+# at any time of day, on any report kind -- same permanent-impossibility class as basis.
+DESIGNED_UNAVAILABLE = {
+    ("futures_context", "basis"),
+    ("futures_context", "es_mes"),
+    ("futures_context", "nq"),
+    ("futures_context", "overnight_range"),
+    ("macro", "rates"),
+    ("macro", "curve"),
+    ("macro", "dollar"),
+    ("macro", "fx"),
+    ("macro", "commodities"),
+    ("macro", "move"),
+}
 
 def validate_report(blocks):
     """Validate actual structured output, including explicit per-field disclosures.
