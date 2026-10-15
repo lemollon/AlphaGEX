@@ -52,11 +52,11 @@ const SUGGESTIONS = [
  * on one row, then on every tab's whole surface). Rather than add a fifth patch on top of
  * a custom modal implementation that nothing else in the app uses this way, Sparky is now
  * a plain pushed screen — exactly how it worked before the sheet redesign, and exactly
- * how every other non-sheet screen in this app behaves: React Navigation's native stack
- * mounts one screen at a time and gates touches to the background screen itself, so the
- * whole class of "background screen still interactive/still mounted" bug no longer has
- * anywhere to live. `/notifications`, `/agents/[bot]`, `/trade/[id]` and
- * `/notification-preferences` still use the Sheet — this change is scoped to Sparky only.
+ * how every other screen in this app behaves: React Navigation's native stack mounts one
+ * screen at a time and gates touches to the background screen itself, so the whole class
+ * of "background screen still interactive/still mounted" bug no longer has anywhere to
+ * live. `/notifications`, `/agents/[bot]`, `/trade/[id]` and `/notification-preferences`
+ * were converted the same way shortly after, as a precaution (see Sheet.tsx's doc comment).
  */
 export default function SparkyScreen() {
   const { colors: color } = useTheme()

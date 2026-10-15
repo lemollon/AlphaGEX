@@ -1,20 +1,22 @@
 import { useEffect, useMemo } from 'react'
-import { View, Text, ScrollView, StyleSheet } from 'react-native'
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router'
+import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useLocalSearchParams, useRouter } from 'expo-router'
 import useSWR from 'swr'
+// Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
+import Ionicons from '@expo/vector-icons/Ionicons'
 import { api, ApiError } from '@/api/client'
 import type { TradeDetailResponse } from '@/api/types'
 import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel, Money, OutcomeBadge, AgentBadge, Loading, ErrorState } from '@/components/ui'
-import { Sheet, SheetHeader } from '@/components/Sheet'
 import { PnlChart } from '@/components/PnlChart'
 import { track } from '@/analytics/track'
 import { trackEvent } from '@/analytics/trackEvent'
 
 /**
- * Trade detail sheet — APP-019/022, mobile addendum §2 "Trade sheet".
+ * Trade detail — APP-019/022, mobile addendum §2 "Trade sheet".
  *
  * Every field below can legitimately be null: the server only ever fills a field
  * from a column that actually exists for this trade, never fabricates one, so
@@ -38,32 +40,35 @@ export default function TradeDetailScreen() {
     }
   }, [data?.trade])
 
+  const accent = data?.trade ? agentAccent(data.trade.bot) : undefined
+
   return (
-    <>
-      <Stack.Screen
-        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
-      />
-      <Sheet
-        accent={data?.trade ? agentAccent(data.trade.bot) : undefined}
-        onClose={() => router.back()}
-      >
-        {(close) => (
-          <>
-            <SheetHeader title="Trade" onClose={close} />
-            {isLoading ? (
-              <Loading label="Loading trade…" />
-            ) : error || !data ? (
-              <ErrorState
-                message={error instanceof ApiError ? error.humanMessage : 'Could not load this trade.'}
-                onRetry={() => mutate()}
-              />
-            ) : (
-              <Content data={data} />
-            )}
-          </>
-        )}
-      </Sheet>
-    </>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: color.bg }}>
+      <View style={[s.header, accent ? { borderTopColor: accent, borderTopWidth: 3 } : null]}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={s.backBtn}
+        >
+          <Ionicons name="chevron-back" size={26} color={color.text} />
+        </Pressable>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18, flex: 1 }]} numberOfLines={1}>
+          Trade
+        </Text>
+      </View>
+      {isLoading ? (
+        <Loading label="Loading trade…" />
+      ) : error || !data ? (
+        <ErrorState
+          message={error instanceof ApiError ? error.humanMessage : 'Could not load this trade.'}
+          onRetry={() => mutate()}
+        />
+      ) : (
+        <Content data={data} />
+      )}
+    </SafeAreaView>
   )
 }
 
@@ -229,6 +234,7 @@ const makeStyles = (color: ColorTokens) =>
     borderBottomColor: color.border,
     borderBottomWidth: 1,
   },
+  backBtn: { padding: space.xs },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   legRow: {
     flexDirection: 'row',

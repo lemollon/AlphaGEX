@@ -1014,11 +1014,11 @@ function time(iso: string): string {
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
-  // See the matching comment in app/(tabs)/index.tsx's Shell — the 10.4 sheet
-  // redesign (/sparky, /notifications, /agents/[bot], /trade/[id]) left every
-  // tab's own buttons reachable by touches meant for the sheet presented on
-  // top of it. This has nothing to do with ThreadSheet below (a native Modal,
-  // which already blocks the background on its own).
+  // See the matching comment in app/(tabs)/index.tsx's Shell — legacy
+  // defense-in-depth from the 10.4 sheet redesign, no longer load-bearing now
+  // that /sparky, /notifications, /agents/[bot], /trade/[id] are all plain
+  // pushed screens. This has nothing to do with ThreadSheet below (a native
+  // Modal, which already blocks the background on its own).
   const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>

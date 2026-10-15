@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert } from 'react-native'
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter, useLocalSearchParams } from 'expo-router'
 import * as WebBrowser from 'expo-web-browser'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -29,7 +30,6 @@ import { Card, SectionLabel, Money, Loading, ErrorState } from '@/components/ui'
 import { formatPnl } from '@/components/chart-geometry'
 import { periodTone, type PeriodTone } from '@/live/period-stats'
 import { Mascot } from '@/components/Brand'
-import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Confetti } from '@/components/Confetti'
 import { LiveTradeCard } from '@/components/LiveTradeCard'
 import { showToast } from '@/notifications/toast'
@@ -193,10 +193,9 @@ export default function AgentDetailScreen() {
 }
 
 /**
- * Agent sheet chrome (mobile addendum §2 "Agent sheet"): agent-color accent border,
- * mascot + status header, close "X". Presented as a `transparentModal` route so the
- * tab underneath stays visible and sliding this away (drag, scrim tap, or Android
- * back) reveals it exactly where it was.
+ * Agent detail chrome: agent-color accent border, back chevron, mascot + status
+ * header. A plain pushed screen — not the `transparentModal` Sheet this used to be
+ * (same rebuild as app/sparky.tsx; see its doc comment for why).
  */
 function Shell({
   bot,
@@ -215,28 +214,34 @@ function Shell({
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
+  const accent = agentAccent(bot)
   return (
-    <>
-      <Stack.Screen
-        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
-      />
-      <Sheet accent={agentAccent(bot)} onClose={() => router.back()}>
-        {(close) => (
-          <>
-            <SheetHeader
-              title={AGENT_LABEL[bot]}
-              subtitle={subtitle}
-              left={left}
-              right={
-                dotColor ? <View style={[s.dot, { backgroundColor: dotColor, marginRight: space.sm }]} /> : null
-              }
-              onClose={close}
-            />
-            {children}
-          </>
-        )}
-      </Sheet>
-    </>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: color.bg }}>
+      <View style={[s.header, { borderTopColor: accent, borderTopWidth: 3 }]}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={s.backBtn}
+        >
+          <Ionicons name="chevron-back" size={26} color={color.text} />
+        </Pressable>
+        {left}
+        <View style={{ flex: 1 }}>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]} numberOfLines={1}>
+            {AGENT_LABEL[bot]}
+          </Text>
+          {subtitle ? (
+            <Text style={[type.label, { color: color.textDim, marginTop: 2 }]} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : null}
+        </View>
+        {dotColor ? <View style={[s.dot, { backgroundColor: dotColor }]} /> : null}
+      </View>
+      {children}
+    </SafeAreaView>
   )
 }
 
@@ -1095,6 +1100,7 @@ const makeStyles = (color: ColorTokens) =>
     borderBottomColor: color.border,
     borderBottomWidth: 1,
   },
+  backBtn: { padding: space.xs },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   dot: { width: 8, height: 8, borderRadius: 4 },
