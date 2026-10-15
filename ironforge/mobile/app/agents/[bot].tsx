@@ -153,7 +153,7 @@ export default function AgentDetailScreen() {
     <Shell
       bot={bot}
       router={router}
-      left={<Mascot bot={bot} size={36} />}
+      left={<Mascot bot={bot} size={56} />}
       subtitle={headerSubtitle}
       dotColor={liveAgent?.state ? dotColorFor(liveAgent.state.dot, color) : color.muted}
       pillLabel={headerPillLabel}
@@ -258,15 +258,20 @@ function Shell({
           accessibilityLabel="Back"
           style={s.backBtn}
         >
-          <Ionicons name="chevron-back" size={26} color={color.text} />
+          <Ionicons name="chevron-back" size={24} color={color.text} />
         </Pressable>
+        {/* App images (2026-10-14): a hero header — large avatar, large agent-color
+            title, status pill — not the compact nav-bar sizing this used to have.
+            Still a plain pushed screen's header (the back chevron above, not the
+            design's drag handle, which was a bottom-sheet affordance that doesn't
+            apply since the Sparky-remount fix moved this off that presentation). */}
         {left}
         <View style={{ flex: 1 }}>
-          <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18 }]} numberOfLines={1}>
+          <Text style={[type.title, { color: accent, fontFamily: font.display }]} numberOfLines={1}>
             {AGENT_LABEL[bot]}
           </Text>
           {subtitle ? (
-            <Text style={[type.label, { color: color.textDim, marginTop: 2 }]} numberOfLines={1}>
+            <Text style={[type.body, { color: color.textDim, marginTop: 2 }]} numberOfLines={2}>
               {subtitle}
             </Text>
           ) : null}
@@ -1154,7 +1159,7 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     gap: space.md,
     paddingHorizontal: space.lg,
-    paddingVertical: space.md,
+    paddingVertical: space.lg,
     borderBottomColor: color.border,
     borderBottomWidth: 1,
   },

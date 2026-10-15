@@ -89,6 +89,23 @@ export const SESSION_LABEL: Record<AgentBot, string> = {
   ember: 'All day',
 }
 
+/**
+ * "Starts {session}" — the Forge tab's idle "Your agents" row, specifically for
+ * the one real server state this replaces: WORKING_WAITING with a gray dot
+ * (webapp's state.ts "{agent} is Standing By" — the session's market window
+ * hasn't opened yet today). The SAME key with a BLUE dot ("Looking for an
+ * Opportunity") is a live scan in progress and keeps showing its own real
+ * headline — only the gray-dot "not open yet" case gets this short label (app
+ * images, 2026-10-14: "Starts midday" on an idle Flame row). Ember never reaches
+ * AgentRow (it has no {bot}_positions table — see index.tsx's ownsEmber note),
+ * so only spark/flame are ever actually read from this map.
+ */
+export const STARTS_LABEL: Record<AgentBot, string> = {
+  spark: 'Starts 8:30 AM',
+  flame: 'Starts midday',
+  ember: 'Starts all day',
+}
+
 export const NEXT_SESSION_SHORT: Record<AgentBot, string> = {
   spark: 'at 8:30 AM',
   flame: 'at midday',
