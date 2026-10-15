@@ -271,18 +271,17 @@ export default function CommunityScreen() {
   return (
     <Shell>
       {/*
-        APP-054 composer fix: this screen had NO keyboard avoidance at all — the
-        feed ScrollView and the post composer View sat as plain siblings, so the
-        keyboard simply drew on top of whatever was at the bottom of the screen,
-        covering the composer entirely (same customer-reported symptom as the
-        Sparky sheet, different root cause there — see app/sparky.tsx's note:
-        that one HAD a KeyboardAvoidingView but with a wrong offset for its
-        nested-Sheet layout; this one never had one to begin with). This is a
-        plain full-screen tab route, not nested in a custom sheet, so the same
-        'padding' + no explicit offset pattern already proven correct on
-        sign-in.tsx/change-password.tsx/etc. applies directly here.
+        APP-054 composer fix, revised 2026-10-15: 'padding' still left the keyboard
+        covering this composer for a customer, even after the original APP-054 fix
+        added a KeyboardAvoidingView here at all. 'padding' relies on this view
+        re-measuring its own on-screen bottom edge after the keyboard listener
+        fires; nested two levels inside Shell's SafeAreaView + focus-gated View
+        (see Shell below), that measurement proved unreliable here. 'height'
+        instead shrinks this view by exactly the keyboard's height directly, with
+        no post-layout measurement step — the same fix that resolved the
+        identical symptom on app/sparky.tsx (user-confirmed 2026-10-15).
       */}
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <ScrollView
         ref={scrollRef}
         contentContainerStyle={{ padding: space.lg }}
@@ -761,7 +760,10 @@ function ThreadSheet({
           </Pressable>
         </View>
 
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        {/* Same 'padding' -> 'height' fix as the main composer above (2026-10-15) — this
+            reply composer is additionally nested inside a native <Modal>, another layer
+            where 'padding's post-layout self-measurement can miss. */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
         <ScrollView contentContainerStyle={{ padding: space.lg, flexGrow: 1 }}>
           {parent ? (
             <Card style={{ marginBottom: space.lg }}>
