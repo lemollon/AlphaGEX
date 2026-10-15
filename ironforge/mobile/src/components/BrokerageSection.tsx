@@ -27,7 +27,7 @@ import type { BrokerageConnection, BrokerageConnections, LiveAgents } from '@/ap
 import { brokerLabel, health, maskTail, type HealthKey } from '@/api/brokerage'
 import { requestStepUp } from '@/auth/stepUp'
 import { assignedAgentLabels } from '@/agents/assignment'
-import { space, radius, type, font } from '@/theme/tokens'
+import { space, radius, type, font, agentAccent } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, SectionLabel } from '@/components/ui'
@@ -164,7 +164,7 @@ export function BrokerageSection() {
   return (
     <>
       <View style={{ marginTop: space.xl }}>
-        <SectionLabel>Brokerage Connections</SectionLabel>
+        <SectionLabel>Brokerage</SectionLabel>
       </View>
       <Card>
         {isLoading ? (
@@ -193,15 +193,25 @@ export function BrokerageSection() {
           ))
         )}
 
+        {/* App images (2026-10-14): a plain row matching ConnectionRow's shape
+            ("+" avatar, label, "tastytrade, Robinhood" subtitle, chevron) —
+            not a bordered button. */}
         <Pressable
           onPress={() => void openPortal()}
           disabled={busy}
           accessibilityRole="button"
-          style={[s.outlineBtn, busy && { opacity: 0.5 }]}
+          style={[s.row, connections.length > 0 && s.rowDivider, busy && { opacity: 0.5 }]}
         >
-          <Text style={[type.body, { color: color.accentText, fontFamily: font.bodyMedium }]}>
-            {busy ? 'Opening…' : 'Connect Another Brokerage'}
-          </Text>
+          <View style={s.avatar}>
+            <Ionicons name="add" size={20} color={color.textDim} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+              {busy ? 'Opening…' : 'Connect another brokerage'}
+            </Text>
+            <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>tastytrade, Robinhood</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={color.muted} />
         </Pressable>
       </Card>
     </>
@@ -225,6 +235,23 @@ function ConnectionRow({
   const h = health(conn.status)
   const name = brokerLabel(conn.broker ?? conn.provider)
   const masks = conn.accounts.map((a) => a.mask).filter((m): m is string => !!m)
+  // App images (2026-10-14): the mask and assigned agents sit on ONE line
+  // ("•••• 4821 · Spark, Flame"), each agent name in its own accent color —
+  // not a separate gray "Assigned: …" line. "Not available"/"No agent yet"
+  // keep the old plain wording since those aren't real agent names to color.
+  const assignedNode =
+    assigned === null ? (
+      <Text style={[type.label, { color: color.muted }]}>Not available</Text>
+    ) : assigned.length > 0 ? (
+      assigned.map((label, i) => (
+        <Text key={label}>
+          {i > 0 ? <Text style={[type.label, { color: color.textDim }]}>, </Text> : null}
+          <Text style={[type.label, { color: agentAccent(label.toLowerCase()) }]}>{label}</Text>
+        </Text>
+      ))
+    ) : (
+      <Text style={[type.label, { color: color.muted }]}>No agent yet</Text>
+    )
 
   return (
     <Pressable
@@ -240,26 +267,20 @@ function ConnectionRow({
       <View style={{ flex: 1 }}>
         <View style={s.rowCenter}>
           <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold }]}>{name}</Text>
-          <View style={[s.dot, { backgroundColor: healthColor(h.key, color) }]} />
-          <Text style={[type.label, { color: healthColor(h.key, color) }]}>{h.label}</Text>
+          <View style={[s.healthPill, { backgroundColor: `${healthColor(h.key, color)}22` }]}>
+            <View style={[s.dot, { backgroundColor: healthColor(h.key, color) }]} />
+            <Text style={[type.label, { color: healthColor(h.key, color) }]}>{h.label}</Text>
+          </View>
         </View>
-        {masks.length ? (
-          <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
-            {masks.map((m) => maskTail(m)).join('   ')}
-          </Text>
-        ) : null}
-        <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>
-          {assigned === null
-            ? 'Assigned: Not available'
-            : assigned.length > 0
-              ? `Assigned: ${assigned.join(', ')}`
-              : 'Assigned: No agent yet'}
+        <Text style={[type.label, { color: color.textDim, marginTop: 2 }]}>
+          {masks.length ? masks.map((m) => maskTail(m)).join('   ') : null}
+          {masks.length ? <Text style={{ color: color.textDim }}> · </Text> : null}
+          {assignedNode}
         </Text>
       </View>
 
-      <View style={s.rowCenter}>
-        <Text style={[type.label, { color: color.textDim }]}>Manage</Text>
-        <Ionicons name="chevron-forward" size={16} color={color.muted} />
+      <View style={s.manageBtn}>
+        <Text style={[type.label, { color: color.accentText, fontFamily: font.bodyMedium }]}>Manage</Text>
       </View>
     </Pressable>
   )
@@ -280,12 +301,19 @@ const makeStyles = (color: ColorTokens) =>
       justifyContent: 'center',
     },
     dot: { width: 7, height: 7, borderRadius: 4 },
-    outlineBtn: {
-      marginTop: space.lg,
-      borderWidth: 1,
-      borderColor: color.accent,
-      borderRadius: radius.md,
-      paddingVertical: space.md,
+    healthPill: {
+      flexDirection: 'row',
       alignItems: 'center',
+      gap: 4,
+      borderRadius: radius.pill,
+      paddingHorizontal: space.sm,
+      paddingVertical: 2,
+    },
+    manageBtn: {
+      borderWidth: 1,
+      borderColor: color.border,
+      borderRadius: radius.pill,
+      paddingHorizontal: space.md,
+      paddingVertical: space.xs,
     },
   })

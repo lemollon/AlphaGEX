@@ -95,7 +95,10 @@ export const type = {
 /** Outcome badge colours — must match HistoryTrade.outcome_kind from the API. */
 export const outcomeColor: Record<string, string> = {
   profit: color.pos,
-  auto: color.spark,
+  // App images (Logan, 2026-10-14) show "Auto close" as a neutral gray pill on
+  // both Spark and Flame trades — not tinted to whichever agent happened to
+  // close that way, which `color.spark` (Spark's own brand blue) wrongly did.
+  auto: color.textDim,
   stop: color.neg,
   manual: color.textDim,
   expired: color.textDim,

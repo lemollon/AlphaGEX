@@ -568,7 +568,6 @@ function PauseResumeControl({
   const [pending, setPending] = useState(false)
   if (bot === 'ember' && !EMBER_PAUSE_UI_ENABLED) return null
   const paused = activation?.paused ?? false
-  const accent = agentAccent(bot)
 
   async function doToggle(nextPaused: boolean) {
     setPending(true)
@@ -643,16 +642,14 @@ function PauseResumeControl({
     <Pressable
       onPress={() => (paused ? void handleResumeTap() : confirmToggle(true))}
       disabled={pending || !activation}
-      // Full-width FILLED pill (10.4 design `.btn-c`/`.btn-stop` — "Pause {Name}" is
-      // agent-accent, "Resume {Name}" is the up colour), not the bordered ghost this
-      // used to be — see fidelity audit "Pause/Resume button".
-      style={[
-        s.pauseResumeBtn,
-        { backgroundColor: paused ? color.pos : accent, opacity: pending || !activation ? 0.5 : 1 },
-      ]}
+      // App images (2026-10-14): a bordered outline pill in the standard "negative"
+      // red, same style regardless of agent or paused/resume state — matching the
+      // Account tab's "Pause/Resume all agents" button (s.pauseAllBtn there), not
+      // the agent-accent/green FILLED pill this used to be.
+      style={[s.pauseResumeBtn, { opacity: pending || !activation ? 0.5 : 1 }]}
     >
-      <Ionicons name="pause" size={16} color={color.bg} />
-      <Text style={[type.body, { color: color.bg, fontFamily: font.bodyBold }]}>
+      <Ionicons name="pause" size={16} color={color.neg} />
+      <Text style={[type.body, { color: color.neg, fontFamily: font.bodyBold }]}>
         {pending ? 'Working…' : paused ? `Resume ${label}` : `Pause ${label}`}
       </Text>
     </Pressable>
@@ -1116,6 +1113,8 @@ const makeStyles = (color: ColorTokens) =>
     marginTop: space.lg,
     flexDirection: 'row',
     gap: space.sm,
+    borderWidth: 1,
+    borderColor: color.neg,
     borderRadius: radius.pill,
     paddingVertical: space.md,
     alignItems: 'center',

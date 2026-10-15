@@ -39,6 +39,8 @@ import { greetingForHour } from '@/live/greeting'
 import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
 import { AGENT_LABEL, AGENT_BLURB, NEXT_SESSION_SHORT } from '@/agents/copy'
+import { getPlanCatalog } from '@/enroll/api'
+import type { PlanCatalog } from '@/enroll/types'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
 import { manageSubscriptionUrl } from '@/billing/store-policy'
 import { isStale, staleLabel } from '@/live/staleness'
@@ -123,6 +125,10 @@ export default function ForgeScreen() {
     api<EmberStatusResponse>(p),
     { refreshInterval: 60_000, shouldRetryOnError: false },
   )
+  // Price pill on an "Add {Agent}" row (app images, 2026-10-14) — same public plan
+  // catalogue the Account tab's own addable-agent rows already read (GET
+  // /api/public/plans, unauthenticated, real prices). SWR shares the cache key.
+  const { data: catalog } = useSWR<PlanCatalog>('/api/public/plans', () => getPlanCatalog())
 
   // Sub-5s positions/P&L push (dev-handoff /ws/positions contract) — additive on
   // top of the 60s /api/live/agents poll above, never a replacement for it: state,
@@ -218,7 +224,10 @@ export default function ForgeScreen() {
   // Hero chart state — which period is charted, and the point under a finger while
   // dragging (mobile addendum §2 step 3: "tap a period tile to chart it, drag to
   // explore"). Scrubbing never mutates server data, just what the hero reads.
-  const [heroPeriod, setHeroPeriod] = useState<HeroPeriod>('today')
+  // 10.4 design (app images, "Forge" screen): the Past month tile is selected by
+  // default, not Today — the same default-selection gap the Ledger tab's Month
+  // chip already had fixed (see ledger.tsx's matching comment).
+  const [heroPeriod, setHeroPeriod] = useState<HeroPeriod>('month')
   const [scrub, setScrub] = useState<AccountPoint | null>(null)
 
   const refreshing = summary.isValidating || agents.isValidating
@@ -576,7 +585,12 @@ export default function ForgeScreen() {
         ) : null}
 
         {unownedBots.map((bot) => (
-          <AddAgentRow key={bot} bot={bot} onPress={() => router.push(agentDetailHref(bot))} />
+          <AddAgentRow
+            key={bot}
+            bot={bot}
+            priceLabel={addAgentPriceLabel(bot, catalog)}
+            onPress={() => router.push(agentDetailHref(bot))}
+          />
         ))}
 
         <Text style={s.disclosure}>
@@ -643,6 +657,14 @@ function AlertBanner({
   )
 }
 
+/** Real monthly price only — Ember is free, Spark/Flame come from the public plan
+ *  catalogue. Returns null while the catalogue is still loading, never a guess. */
+function addAgentPriceLabel(bot: AgentBot, catalog: PlanCatalog | undefined): string | null {
+  if (bot === 'ember') return 'Free'
+  const entry = catalog?.bots.find((b) => b.slug === bot)
+  return entry ? `$${entry.price_monthly}/mo` : null
+}
+
 function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
   const map: Record<PeriodTone, string> = {
     pos: color.pos,
@@ -660,7 +682,15 @@ function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
  *  and a second, Forge-local copy of that logic (with a hardcoded "$50/mo" tag,
  *  the way the app.html prototype does it) would be guessing at a billing-
  *  sensitive number this screen has no real source for. */
-function AddAgentRow({ bot, onPress }: { bot: AgentBot; onPress: () => void }) {
+function AddAgentRow({
+  bot,
+  priceLabel,
+  onPress,
+}: {
+  bot: AgentBot
+  priceLabel: string | null
+  onPress: () => void
+}) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const accent = agentAccent(bot)
@@ -677,6 +707,11 @@ function AddAgentRow({ bot, onPress }: { bot: AgentBot; onPress: () => void }) {
           {AGENT_BLURB[bot]}
         </Text>
       </View>
+      {priceLabel ? (
+        <View style={[s.pricePill, { backgroundColor: `${color.warn}22` }]}>
+          <Text style={[type.label, { color: color.warn, fontFamily: font.bodyMedium }]}>{priceLabel}</Text>
+        </View>
+      ) : null}
       <Ionicons name="chevron-forward" size={17} color={color.muted} />
     </Pressable>
   )
@@ -895,6 +930,12 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pricePill: {
+    borderRadius: radius.pill,
+    paddingHorizontal: space.sm,
+    paddingVertical: 4,
+    marginRight: space.sm,
   },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
