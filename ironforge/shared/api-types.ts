@@ -53,6 +53,17 @@ export interface CommunityMessage {
   reply_count?: number
   /** The message this is a reply to. Present on rows returned by the replies endpoint. */
   parent_id?: string | null
+  /**
+   * The most recent reply, for an inline preview under the parent post in the main
+   * feed (app images, 2026-10-14). Only present on top-level feed rows with at least
+   * one reply; absent (not null) on a server that predates this field.
+   */
+  latest_reply?: {
+    sender_name: string
+    sender_type: CommunitySenderType
+    message: string
+    created_at: string
+  }
 }
 
 /** GET /api/community/messages?channel=… */

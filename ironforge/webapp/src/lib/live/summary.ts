@@ -640,6 +640,7 @@ export async function getLiveTrade(
       unrealized_pnl: null,
       unrealized_pnl_pct: null,
       pnl_source: 'none',
+      contracts: 0,
       target_dollars: null,
       stop_dollars: null,
       auto_close_at: null,
@@ -818,6 +819,7 @@ export async function getLiveTrade(
       return {
         series: seriesByPosition.get(String(p.position_id ?? '')) ?? [],
         position_id: String(p.position_id ?? ''),
+        contracts: pContracts,
         opened_at: pOpened ? pOpened.toISOString() : null,
         opened_date_label: pOpened
           ? pOpened.toLocaleDateString('en-US', {
@@ -934,6 +936,7 @@ export async function getLiveTrade(
     pnl_source: pnlSource,
     // Mirrors positions[0], same as every other scalar field in this return —
     // already computed once inside the positions.map above.
+    contracts: positions[0]?.contracts ?? contracts,
     target_dollars: positions[0]?.target_dollars ?? null,
     stop_dollars: positions[0]?.stop_dollars ?? null,
     auto_close_at: positions[0]?.auto_close_at ?? null,
