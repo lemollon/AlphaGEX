@@ -39,7 +39,7 @@ import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/c
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
 import { decryptSecret } from '@/lib/crypto/secret-box'
-import { getProductionPauseState } from '@/lib/tradier'
+import { getProductionPauseState, canPlaceLiveOrders, isSparkCustomerEligible, isFlameCustomerEligible } from '@/lib/tradier'
 import { normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import { flintMaxLoss } from '@/lib/flint'
 import {
@@ -140,14 +140,21 @@ import { isExecutorArmed } from './armed'
 export { isExecutorArmed }
 
 /**
- * A Flame-only customer arm. The legacy customer switch controls both Spark
- * and Flame; using it to activate a newly approved Flame rollout would also
- * activate Spark. This preserves that switch while allowing Flame customers
- * to mirror the same master entry rule independently. Unset remains off.
+ * A per-agent customer arm. The legacy customer switch controls both Spark
+ * and Flame; using it to activate a newly approved single-agent rollout would
+ * also activate the other. This preserves that switch while allowing Flame
+ * and Spark customers to mirror their own master entry rule independently.
+ * Unset remains off for both. SPARK_CUSTOMER_EXECUTOR_ENABLED mirrors
+ * FLAME_CUSTOMER_EXECUTOR_ENABLED's exact naming/behavior — it only arms the
+ * customer-mirror path; SPARK's own live-order capability is the separate
+ * canPlaceLiveOrders('spark')/isSparkLiveArmed() gate checked elsewhere.
  */
 export function isExecutorArmedForAgent(agent: string): boolean {
   if (isExecutorArmed()) return true
-  return agent.toLowerCase() === 'flame' && process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED === 'true'
+  const a = agent.toLowerCase()
+  if (a === 'flame') return process.env.FLAME_CUSTOMER_EXECUTOR_ENABLED === 'true'
+  if (a === 'spark') return process.env.SPARK_CUSTOMER_EXECUTOR_ENABLED === 'true'
+  return false
 }
 
 /**
@@ -456,6 +463,37 @@ async function mirrorOneOpen(
     return
   }
 
+  // SPARK per-account eligibility (product decision, 2026-10-15): this account's
+  // own SPARK subscription must be active AND its own equity must clear
+  // SPARK_MIN_EQUITY (default $5,000) — see isSparkCustomerEligible in tradier.ts.
+  // Reuses the SAME live bpCents read above as "equity," never a second broker
+  // call, exactly like FLINT's own equity source (see the FLINT block below).
+  // The multi-bot capital-split (an account also running FLAME) is explicitly
+  // deferred — this does not check for FLAME on the same account.
+  if (agent === 'spark') {
+    const subscribed = c.subscription_status === 'active' || c.subscription_status === 'trialing'
+    if (!isSparkCustomerEligible(bpCents / 100, subscribed)) {
+      await markSkipped(rowId, 'spark_not_eligible')
+      return
+    }
+  }
+
+  // FLAME per-account eligibility (product decision, 2026-10-15): this account's
+  // own FLAME subscription must be active AND its own equity must clear
+  // FLAME_MIN_EQUITY (default $2,000) — see isFlameCustomerEligible in tradier.ts.
+  // Reuses the SAME live bpCents read above as "equity," never a second broker
+  // call, exactly like SPARK's own block above. This is an ADDITIONAL check on
+  // top of isExecutorArmedForAgent('flame')/FLAME_CUSTOMER_EXECUTOR_ENABLED —
+  // it does not replace that check, and never touches isFlameLiveArmed() or
+  // FLAME's existing master live-order path.
+  if (agent === 'flame') {
+    const subscribed = c.subscription_status === 'active' || c.subscription_status === 'trialing'
+    if (!isFlameCustomerEligible(bpCents / 100, subscribed)) {
+      await markSkipped(rowId, 'flame_not_eligible')
+      return
+    }
+  }
+
   const cfg = (c.config_json ?? {}) as { max_deployment_pct?: number }
   const pct = Number(cfg.max_deployment_pct)
   if (!Number.isFinite(pct) || pct <= 0 || pct > 100) { await markSkipped(rowId, 'bad_config'); return }
@@ -634,6 +672,13 @@ export async function mirrorOpenToCustomers(m: MasterOpen): Promise<void> {
     if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
     const agent = m.botName.toLowerCase()
     if (!CUSTOMER_AGENTS.has(agent)) return
+
+    // SPARK customer mirroring additionally requires SPARK's OWN global live-arm
+    // gate (SPARK_LIVE_ARMED + creds + unpaused production-pause row — see
+    // isSparkLiveArmed() in tradier.ts). Per-customer-account eligibility
+    // (subscribed + equity >= SPARK_MIN_EQUITY) is checked per customer below,
+    // in mirrorOneOpen, via isSparkCustomerEligible — both must be true.
+    if (agent === 'spark' && !canPlaceLiveOrders('spark')) return
 
     // Fleet kill switch: the same production pause that halts the master's real-money
     // accounts halts customer mirroring. Unknown reads as ENGAGED (fail closed).

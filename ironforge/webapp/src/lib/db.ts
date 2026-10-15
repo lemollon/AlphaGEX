@@ -630,6 +630,21 @@ async function ensureTablesOnce(): Promise<void> {
       )
     } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
 
+    // SPARK kill switch: born PAUSED, same reasoning as KINDLE above. SPARK's
+    // canPlaceLiveOrders() gate (tradier.ts isSparkLiveArmed) was hard-coded false
+    // until this PR; without this seed, the moment an operator sets SPARK_LIVE_ARMED
+    // and SPARK's Tradier creds, a MISSING pause row would read as paused=false
+    // (unpaused) by default in getProductionPauseState — the wrong default for a
+    // bot that has never placed a live order before. Seeding paused=true guarantees
+    // SPARK still cannot place a real order until an explicit, deliberate unpause.
+    try {
+      await client.query(
+        `INSERT INTO ironforge_production_pause (bot_name, paused, paused_by, paused_reason)
+         VALUES ('SPARK', TRUE, 'system', 'born paused — SPARK live-order path added 2026-10-15, awaiting operator unpause')
+         ON CONFLICT (bot_name) DO NOTHING`,
+      )
+    } catch { /* table may not exist on a pre-migration deploy; INIT_DDL creates it above */ }
+
     // Add missing columns to existing positions tables (safe to run repeatedly)
     for (const bot of ALL_BOTS) {
       for (const col of ['sandbox_order_id TEXT', 'sandbox_close_order_id TEXT', 'person TEXT',
