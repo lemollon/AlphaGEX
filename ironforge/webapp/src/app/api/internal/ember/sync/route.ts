@@ -8,8 +8,9 @@ export const dynamic = 'force-dynamic'
 /**
  * POST /api/internal/ember/sync
  *
- * Server-to-server only — called by dev/meltup/ember/reflex_sync.py, never by
- * a browser. Auth is a shared secret (env EMBER_SYNC_SECRET) in the
+ * Server-to-server only — called by dev/meltup/ember/reflex_sync.py and its
+ * CINDER/TALON siblings (BUILD_SPEC_SHARED_SLEEVE.md Part 3), never by a
+ * browser. Auth is a shared secret (env EMBER_SYNC_SECRET) in the
  * `x-ember-sync-secret` header; an UNSET secret rejects every request (503,
  * never "accept anything" when the env var is missing — same fail-closed
  * convention as every other gate in this codebase).
@@ -17,7 +18,7 @@ export const dynamic = 'force-dynamic'
  * Body:
  *   {
  *     "trades": [{
- *       "source_ref": "SYMBOL|2026-10-05",   // REFLEX's own reflex_key(), unique
+ *       "source_ref": "SYMBOL|2026-10-05",   // the sleeve's own idempotency key, unique
  *       "symbol": "SYMBOL",
  *       "opened_at": "2026-10-05T14:32:00Z" | null,
  *       "closed_at": "2026-10-05T19:58:00Z" | null,
@@ -26,7 +27,8 @@ export const dynamic = 'force-dynamic'
  *       "entry_price": 12.34 | null,
  *       "exit_price": 12.90 | null,
  *       "pnl": 5.60 | null,
- *       "status": "open" | "closed"
+ *       "status": "open" | "closed",
+ *       "strategy": "reflex" | "cinder" | "talon"   // optional — defaults to "reflex" (see upsertEmberTrade)
  *     }],
  *     "status": {
  *       "state": "ok" | "blocked" | "error" | ...,
@@ -86,6 +88,7 @@ export async function POST(req: NextRequest) {
       entryPrice: typeof t.entry_price === 'number' ? t.entry_price : null,
       exitPrice: typeof t.exit_price === 'number' ? t.exit_price : null,
       pnl: typeof t.pnl === 'number' ? t.pnl : null,
+      strategy: typeof t.strategy === 'string' ? t.strategy : null,
     }
     try {
       await upsertEmberTrade(trade)

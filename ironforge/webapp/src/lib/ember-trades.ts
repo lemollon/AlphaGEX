@@ -1,11 +1,16 @@
 /**
- * EMBER's own trade book — a READ-ONLY mirror of REFLEX's reflex_state.json
- * (dev/meltup/ember/run_reflex.py), synced in by reflex_sync.py
- * (POST /api/internal/ember/sync). This is EMBER's own execution record, not
- * a read of the customer's brokerage account: a customer can own more than
- * one reflex position at once, but each row here is one REFLEX
- * symbol|signal_date slot, same idempotency key the bot itself uses
- * (reflex_key() in run_reflex.py).
+ * EMBER's own trade book — a READ-ONLY mirror of its execution sleeves'
+ * local state: REFLEX (dev/meltup/ember/run_reflex.py), and — as of the
+ * shared-sleeve build (BUILD_SPEC_SHARED_SLEEVE.md) — CINDER and TALON too,
+ * synced in by reflex_sync.py and its siblings (POST /api/internal/ember/sync).
+ * This is EMBER's own execution record, not a read of the customer's
+ * brokerage account: a customer can own more than one position at once, but
+ * each row here is one bot's symbol|signal_date slot, same idempotency key
+ * the bot itself uses (e.g. reflex_key() in run_reflex.py).
+ *
+ * The `strategy` column (reflex | cinder | talon) distinguishes which sleeve
+ * produced a row — see upsertEmberTrade's doc comment for the default when a
+ * caller omits it, and getEmberEquityCurve/getEmberTrades for how reads use it.
  *
  * Nothing in this file places, cancels, or closes an order, and nothing here
  * is written by the webapp's own scanner — the only writer is the sync route.
@@ -31,14 +36,24 @@ async function ensureTables(): Promise<void> {
        exit_price NUMERIC(14,4),
        pnl NUMERIC(14,2),
        status TEXT NOT NULL DEFAULT 'open',
+       strategy TEXT NOT NULL DEFAULT 'reflex',
        source_ref TEXT NOT NULL,
        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
        UNIQUE (source_ref)
      )`,
   )
+  // Migration for deploys where ember_trades pre-dates the shared-sleeve
+  // build (today's reflex-only rows all default to 'reflex' — correct,
+  // since reflex was the only writer until CINDER/TALON came online).
+  await dbExecute(
+    `ALTER TABLE ${TRADES_TABLE} ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT 'reflex'`,
+  )
   await dbExecute(
     `CREATE INDEX IF NOT EXISTS idx_ember_trades_opened_at ON ${TRADES_TABLE} (opened_at DESC)`,
+  )
+  await dbExecute(
+    `CREATE INDEX IF NOT EXISTS idx_ember_trades_strategy ON ${TRADES_TABLE} (strategy)`,
   )
   await dbExecute(
     `CREATE TABLE IF NOT EXISTS ${STATUS_TABLE} (
@@ -52,6 +67,9 @@ async function ensureTables(): Promise<void> {
   _tablesReady = true
 }
 
+/** Which sleeve produced the trade — see BUILD_SPEC_SHARED_SLEEVE.md Part 3. */
+export type EmberStrategy = 'reflex' | 'cinder' | 'talon'
+
 export interface EmberTradeUpsert {
   sourceRef: string
   symbol: string
@@ -63,6 +81,10 @@ export interface EmberTradeUpsert {
   exitPrice?: number | null
   pnl?: number | null
   status: string
+  /** Defaults to 'reflex' when omitted — REFLEX was ember_trades' only writer
+   *  before CINDER/TALON existed, and reflex_sync.py's own payload may not
+   *  send this field yet even after this column ships. */
+  strategy?: string | null
 }
 
 export interface EmberTradeRow {
@@ -76,21 +98,22 @@ export interface EmberTradeRow {
   exit_price: string | null
   pnl: string | null
   status: string
+  strategy: string
   source_ref: string
 }
 
 /**
- * Upsert ONE trade by its `source_ref` (REFLEX's own symbol|signal_date key).
- * Idempotent by construction — ON CONFLICT (source_ref) DO UPDATE means
- * calling this twice with the same source_ref and payload never creates a
- * second row; it just re-states the same trade (e.g. open -> closed).
+ * Upsert ONE trade by its `source_ref` (each sleeve's own symbol|signal_date
+ * key). Idempotent by construction — ON CONFLICT (source_ref) DO UPDATE
+ * means calling this twice with the same source_ref and payload never
+ * creates a second row; it just re-states the same trade (e.g. open -> closed).
  */
 export async function upsertEmberTrade(trade: EmberTradeUpsert): Promise<void> {
   await ensureTables()
   await query(
     `INSERT INTO ${TRADES_TABLE}
-       (opened_at, closed_at, symbol, legs, qty, entry_price, exit_price, pnl, status, source_ref)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       (opened_at, closed_at, symbol, legs, qty, entry_price, exit_price, pnl, status, strategy, source_ref)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      ON CONFLICT (source_ref) DO UPDATE SET
        opened_at = EXCLUDED.opened_at,
        closed_at = EXCLUDED.closed_at,
@@ -101,6 +124,7 @@ export async function upsertEmberTrade(trade: EmberTradeUpsert): Promise<void> {
        exit_price = EXCLUDED.exit_price,
        pnl = EXCLUDED.pnl,
        status = EXCLUDED.status,
+       strategy = EXCLUDED.strategy,
        updated_at = NOW()`,
     [
       trade.openedAt ?? null,
@@ -112,15 +136,28 @@ export async function upsertEmberTrade(trade: EmberTradeUpsert): Promise<void> {
       trade.exitPrice ?? null,
       trade.pnl ?? null,
       trade.status,
+      trade.strategy ?? 'reflex',
       trade.sourceRef,
     ],
   )
 }
 
-export async function getEmberTrades(limit = 200): Promise<EmberTradeRow[]> {
+/** `strategy` filters to one sleeve (reflex | cinder | talon); omitted or
+ *  undefined returns the combined book across all three. */
+export async function getEmberTrades(limit = 200, strategy?: string): Promise<EmberTradeRow[]> {
   await ensureTables()
+  if (strategy) {
+    return query<EmberTradeRow>(
+      `SELECT id, opened_at::text, closed_at::text, symbol, legs, qty, entry_price, exit_price, pnl, status, strategy, source_ref
+         FROM ${TRADES_TABLE}
+        WHERE strategy = $1
+        ORDER BY opened_at DESC NULLS LAST, id DESC
+        LIMIT $2`,
+      [strategy, limit],
+    )
+  }
   return query<EmberTradeRow>(
-    `SELECT id, opened_at::text, closed_at::text, symbol, legs, qty, entry_price, exit_price, pnl, status, source_ref
+    `SELECT id, opened_at::text, closed_at::text, symbol, legs, qty, entry_price, exit_price, pnl, status, strategy, source_ref
        FROM ${TRADES_TABLE}
       ORDER BY opened_at DESC NULLS LAST, id DESC
       LIMIT $1`,
@@ -229,15 +266,27 @@ function windowedCurve(full: EmberEquityPoint[], cutoffMs: number | null): Ember
  * then steps through today's own trades in their stored order — the finest
  * resolution the real data actually supports, never a fabricated intraday
  * bucket.
+ *
+ * `strategy` (reflex | cinder | talon) narrows the curve to one sleeve's own
+ * trades; omitted or undefined sums realized P&L across ALL of them, so the
+ * existing chart shows COMBINED Ember P&L by default without a rebuild.
  */
-export async function getEmberEquityCurve(period: EmberEquityPeriod): Promise<EmberEquityCurve> {
+export async function getEmberEquityCurve(period: EmberEquityPeriod, strategy?: string): Promise<EmberEquityCurve> {
   await ensureTables()
-  const rows = await query<{ id: number; closed_at: string | null; pnl: string | null }>(
-    `SELECT id, closed_at::text, pnl
-       FROM ${TRADES_TABLE}
-      WHERE status = 'closed' AND pnl IS NOT NULL AND closed_at IS NOT NULL
-      ORDER BY closed_at, id`,
-  )
+  const rows = strategy
+    ? await query<{ id: number; closed_at: string | null; pnl: string | null }>(
+        `SELECT id, closed_at::text, pnl
+           FROM ${TRADES_TABLE}
+          WHERE status = 'closed' AND pnl IS NOT NULL AND closed_at IS NOT NULL AND strategy = $1
+          ORDER BY closed_at, id`,
+        [strategy],
+      )
+    : await query<{ id: number; closed_at: string | null; pnl: string | null }>(
+        `SELECT id, closed_at::text, pnl
+           FROM ${TRADES_TABLE}
+          WHERE status = 'closed' AND pnl IS NOT NULL AND closed_at IS NOT NULL
+          ORDER BY closed_at, id`,
+      )
   if (rows.length === 0) return { points: [], period_pnl: null }
 
   let running = 0

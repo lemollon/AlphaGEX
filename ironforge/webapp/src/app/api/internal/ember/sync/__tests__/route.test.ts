@@ -93,6 +93,22 @@ describe('POST /api/internal/ember/sync — trade upserts', () => {
     expect(upsertEmberTrade).toHaveBeenCalledTimes(1)
   })
 
+  it('passes a string strategy through to upsertEmberTrade, and null when omitted', async () => {
+    await POST(
+      req(
+        {
+          trades: [
+            { source_ref: 'XYZ|2026-10-15', symbol: 'XYZ', status: 'open', strategy: 'cinder' },
+            { source_ref: 'ABC|2026-10-15', symbol: 'ABC', status: 'open' },
+          ],
+        },
+        'test-secret',
+      ),
+    )
+    expect(upsertEmberTrade).toHaveBeenNthCalledWith(1, expect.objectContaining({ strategy: 'cinder' }))
+    expect(upsertEmberTrade).toHaveBeenNthCalledWith(2, expect.objectContaining({ strategy: null }))
+  })
+
   it('syncs the status heartbeat when present', async () => {
     const res = await POST(
       req(

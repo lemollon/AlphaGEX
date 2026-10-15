@@ -71,9 +71,14 @@ function buildSeries(raw: EquityCurvePoint[]): SeriesPoint[] {
  * not a reuse of it — Ember's real data shape is fundamentally different and
  * reusing that component would fabricate fields it doesn't have:
  *   - No `ember_equity_snapshots` table, no `starting_capital`, no live
- *     Tradier/broker balance read. REFLEX (Ember's execution engine) only
- *     ever syncs its own trade log and a status heartbeat into this webapp
+ *     Tradier/broker balance read. REFLEX, CINDER, and TALON (Ember's three
+ *     execution sleeves, BUILD_SPEC_SHARED_SLEEVE.md Part 3) each sync their
+ *     own trade log into the SAME ember_trades book, tagged by `strategy`
  *     (see /api/ember/equity-curve's own comment for the full trail).
+ *   - This component never passes `strategy` to the API, so it always draws
+ *     the COMBINED curve across all three sleeves — that's the default this
+ *     task shipped, not a per-sleeve chart; the API supports per-strategy
+ *     filtering for a future rebuild if one is ever needed.
  *   - So this charts CUMULATIVE REALIZED P&L from Ember's own closed trades
  *     — the only honest $ figure that exists — never an "Account Value",
  *     which would imply a balance this pipeline doesn't track.

@@ -83,6 +83,22 @@ function fmtTime(iso: string | null): string {
   return d.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+/**
+ * Which of Ember's sleeves placed this trade (BUILD_SPEC_SHARED_SLEEVE.md
+ * Part 3 — REFLEX, CINDER, and TALON all land in the same ember_trades book
+ * now). Pre-existing rows default to 'reflex' at the DB layer (see
+ * ember-trades.ts), so this always has a value even for trades synced before
+ * CINDER/TALON existed. NOTE (flagged, not resolved here): this surfaces the
+ * sleeve's internal codename directly — EmberWorkspaceClient's own header
+ * comment documents a 2026-10-04 binding decision that REFLEX is never named
+ * in customer-facing copy, since Ember is sold as a single agent. Showing
+ * "Reflex"/"Cinder"/"Talon" per-row is what this task explicitly asked for;
+ * flag for a product-copy pass before treating this as final customer copy.
+ */
+function strategyLabel(strategy: string): string {
+  return strategy.charAt(0).toUpperCase() + strategy.slice(1)
+}
+
 /** closed+profit = up, closed+loss = down, anything still open = neutral accent. */
 function statusClass(status: string, pnl: number | null): string {
   if (status === 'closed') return pnl != null && pnl < 0 ? 'text-[var(--bad)]' : 'text-[var(--up)]'
@@ -214,6 +230,7 @@ export default function EmberWorkspaceClient() {
                     <th className="px-4 py-3 font-semibold">Opened</th>
                     <th className="px-4 py-3 font-semibold">Closed</th>
                     <th className="px-4 py-3 font-semibold">Symbol</th>
+                    <th className="px-4 py-3 font-semibold">Strategy</th>
                     <th className="px-4 py-3 font-semibold">Qty</th>
                     <th className="px-4 py-3 font-semibold">Entry</th>
                     <th className="px-4 py-3 font-semibold">Exit</th>
@@ -229,6 +246,14 @@ export default function EmberWorkspaceClient() {
                         <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{fmtTime(t.opened_at)}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{fmtTime(t.closed_at)}</td>
                         <td className="whitespace-nowrap px-4 py-3 font-semibold text-[var(--fg)]">{t.symbol}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span
+                            className="rounded-full px-2 py-0.5 text-xs font-medium"
+                            style={{ backgroundColor: `${EMBER_AGENT.accent}22`, color: EMBER_AGENT.accentDark }}
+                          >
+                            {strategyLabel(t.strategy)}
+                          </span>
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.qty ?? '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.entry_price ?? '—'}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-[var(--muted)]">{t.exit_price ?? '—'}</td>
