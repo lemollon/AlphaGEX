@@ -270,6 +270,7 @@ import {
   getDailyHistory,
   getCallSpreadEntryCredit,
   placeCallSpreadOrderAllAccounts,
+  placeStokeOrderAllAccounts,
   getGammaExposureComponents,
 } from './tradier'
 import {
@@ -291,6 +292,19 @@ import {
   FLINT_GAMMA_UPSIZE_MIN_SESSIONS,
   type FlintGammaContext,
 } from './flint'
+import {
+  getStokeMode,
+  getStokeMaxContracts,
+  getStokeGuardBuffer,
+  getStokeOtmOffset,
+  getStokeMinCredit,
+  getStokeFloorAmount,
+  computeStokeStrikes,
+  meetsStokeCreditFloor,
+  isStokeVixGateEligible,
+  isStokeGuardTriggered,
+  decideStokeContractsForCushion,
+} from './stoke'
 import {
   getFlameSkipWeekdays,
   isWeekdayInSkipSet,
@@ -561,7 +575,7 @@ async function vixDecayBlock(asofDate: string, ceiling: number): Promise<string 
  * bars before `asofDate`; an unavailable or incomplete history returns null
  * so headline-only entries fail closed.
  */
-async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
+export async function priorSpySessionWasUp(asofDate: string): Promise<boolean | null> {
   try {
     const history = await getDailyHistory('SPY', 10)
     const completed = history
@@ -1303,6 +1317,79 @@ async function getFlintPaperCumulativeRealizedPnl(botName: string): Promise<numb
   } catch (e) {
     console.warn(`[scanner] getFlintPaperCumulativeRealizedPnl(${botName}) failed (fail-closed to 0):`, e)
     return 0
+  }
+}
+
+/**
+ * STOKE's own cumulative realized P&L on ONE real account (person +
+ * account_type) — the SAME real brokerage account FLAME's EBB put side and
+ * FLINT's call side also trade. STOKE settles into its own
+ * flame_stoke_positions table and never touches FLINT's or EBB's own P&L,
+ * so this is the ONLY input (alongside stoke_account_floor) STOKE's own
+ * profit gate (evaluateStokeProfitGate, stoke.ts) ever reads for its
+ * cushion. Fails closed to 0 — correct for every account STOKE has never
+ * filled a trade on. STOKE is FLAME-only, so there is no `bot` filter.
+ */
+export async function getStokeCumulativeRealizedPnl(
+  person: string,
+  accountType: 'production' | 'sandbox' = 'production',
+): Promise<number> {
+  try {
+    await ensureStokeTable()
+    const rows = await query<{ total: string | number | null }>(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM ${STOKE_TABLE}
+        WHERE person = $1 AND account_type = '${accountType}'
+          AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL`,
+      [person],
+    )
+    return num(rows[0]?.total)
+  } catch (e) {
+    console.warn(`[scanner] getStokeCumulativeRealizedPnl(${person}, ${accountType}) failed (fail-closed to 0):`, e)
+    return 0
+  }
+}
+
+/**
+ * Paper-book side of getStokeCumulativeRealizedPnl — STOKE's always-on
+ * paper book (flame_stoke_positions rows with account_type='paper', person
+ * NULL — the entry opened at tryOpenStoke's own "PAPER BOOK" branch below).
+ * Fails closed to 0.
+ */
+async function getStokePaperCumulativeRealizedPnl(): Promise<number> {
+  try {
+    await ensureStokeTable()
+    const rows = await query<{ total: string | number | null }>(
+      `SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM ${STOKE_TABLE}
+        WHERE account_type = 'paper'
+          AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL`,
+    )
+    return num(rows[0]?.total)
+  } catch (e) {
+    console.warn(`[scanner] getStokePaperCumulativeRealizedPnl() failed (fail-closed to 0):`, e)
+    return 0
+  }
+}
+
+/**
+ * STOKE's rule-R1-equivalent inputs for its OWN always-on paper book —
+ * `floor` is STOKE's own dedicated standing floor (STOKE_FLOOR_AMOUNT,
+ * stoke.ts — never FLAME's/EBB's paper-account floor, never FLINT's).
+ * `pnl` is STOKE's own cumulative paper-book realized P&L
+ * (getStokePaperCumulativeRealizedPnl). Both inputs fail closed to a
+ * documented default (never null) on their own, but the return type stays
+ * nullable to match evaluateStokeProfitGate's general fail-closed shape.
+ */
+async function getStokePaperLedger(): Promise<{ floor: number | null; pnl: number | null }> {
+  try {
+    const floor = getStokeFloorAmount()
+    const pnl = await getStokePaperCumulativeRealizedPnl()
+    return {
+      floor: Number.isFinite(floor) ? floor : null,
+      pnl: Number.isFinite(pnl) ? pnl : null,
+    }
+  } catch (e: unknown) {
+    console.warn(`[scanner] STOKE: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
+    return { floor: null, pnl: null }
   }
 }
 
@@ -4778,6 +4865,49 @@ async function ensureFlintTable(): Promise<void> {
   _flintTableReady = true
 }
 
+/**
+ * STOKE's own table — mirrors flint_positions's schema byte-for-byte
+ * (PREREG_STOKE_BUILD.md, 2026-10-15), but entirely separate: STOKE never
+ * shares a row, a dedup count, or a P&L sum with FLINT or EBB. STOKE is
+ * FLAME-only, so `bot` defaults to 'flame' and is never checked against
+ * another value — kept for schema symmetry with flint_positions, not
+ * because another bot ever writes here.
+ */
+const STOKE_TABLE = 'flame_stoke_positions'
+let _stokeTableReady = false
+
+async function ensureStokeTable(): Promise<void> {
+  if (_stokeTableReady) return
+  await dbExecute(
+    `CREATE TABLE IF NOT EXISTS ${STOKE_TABLE} (
+       id SERIAL PRIMARY KEY,
+       position_id TEXT UNIQUE NOT NULL,
+       ticker TEXT NOT NULL DEFAULT 'SPY',
+       expiration DATE NOT NULL,
+       call_short_strike NUMERIC NOT NULL,
+       call_long_strike NUMERIC NOT NULL,
+       contracts INTEGER NOT NULL,
+       entry_credit NUMERIC NOT NULL,
+       collateral_required NUMERIC NOT NULL,
+       underlying_at_entry NUMERIC,
+       close_price NUMERIC,
+       realized_pnl NUMERIC,
+       status TEXT NOT NULL DEFAULT 'open',
+       close_reason TEXT,
+       account_type TEXT NOT NULL DEFAULT 'paper',
+       person TEXT,
+       mode TEXT NOT NULL,
+       sandbox_order_id TEXT,
+       bot TEXT NOT NULL DEFAULT 'flame',
+       open_time TIMESTAMP NOT NULL DEFAULT NOW(),
+       close_time TIMESTAMP,
+       open_date DATE NOT NULL,
+       created_at TIMESTAMP NOT NULL DEFAULT NOW()
+     )`,
+  )
+  _stokeTableReady = true
+}
+
 /* ------------------------------------------------------------------ */
 /*  FLINT forward-logging — daily dealer-gamma context.                 */
 /*                                                                      */
@@ -5515,6 +5645,333 @@ async function settleFlintExpired(ct: Date): Promise<string> {
     out.push(`${p.position_id}=settled`)
   }
   return out.length ? `FLINT settle[${out.join(' ')}]` : ''
+}
+
+/* ================================================================== */
+/*  STOKE — SPY 0DTE call credit spread, a third FLAME sleeve.          */
+/*  Fires ONLY on days EBB's own VIX-decay gate ratio SKIPS the put     */
+/*  side (ratio > 0.80) AND yesterday's SPY session closed DOWN         */
+/*  (PREREG_STOKE_BUILD.md, 2026-10-15, "K1" filter). Own table          */
+/*  (flame_stoke_positions), own arm switch (STOKE_MODE), own            */
+/*  production path (placeStokeOrderAllAccounts, tradier.ts). Never      */
+/*  reads or writes FLINT's or EBB's ledger, sizing, or P&L.             */
+/* ================================================================== */
+
+/**
+ * Entry. Called every scan cycle for FLAME only (see the call site below);
+ * internally a no-op unless mode != off and inside FLAME's own 13:05-13:10
+ * CT entry window (isInEntryWindow reused byte-for-byte, same as FLINT).
+ *
+ * Gate 1: today's EBB VIX-decay ratio must be a SKIP day for FLAME
+ * (ratio > VIX_DECAY_CEILING.flame = 0.80) — the exact same vixDecayCheck
+ * computation EBB's own put side gates on. Gate 2: yesterday's SPY session
+ * must have closed DOWN (priorSpySessionWasUp(asofDate) === false) — the
+ * exact same function FLINT's own prior-day-up filter calls, testing the
+ * opposite direction. Both gates fail CLOSED on a null/unreadable read,
+ * same direction as every other real-money gate in this file.
+ *
+ * The paper book is gated by its OWN rule (decideStokeContractsForCushion
+ * against getStokePaperLedger) — never FLAME's/EBB's shared paper ledger,
+ * never FLINT's. Each production/sandbox account's own gate + BP check run
+ * inside placeStokeOrderAllAccounts (tradier.ts). One trade per account per
+ * day, fixed size — no ladder, no upsize.
+ */
+async function tryOpenStoke(bot: BotDef, ct: Date): Promise<string> {
+  const mode = getStokeMode()
+  if (mode === 'off') return ''
+  if (!isConfigured()) return ''
+  if (!isInEntryWindow(ct, bot)) return ''
+
+  await ensureStokeTable()
+
+  const asofDate = ct.toISOString().slice(0, 10)
+  const vix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+  if (!isStokeVixGateEligible(vix.ratio, VIX_DECAY_CEILING.flame)) {
+    const reason = vix.ratio == null ? 'skip:gate1_vix_ratio_unreadable' : 'skip:gate1_not_vix_skip_day'
+    console.log(`[scanner] STOKE: no_trade | ${reason}(ratio=${vix.ratio ?? 'n/a'})`)
+    return `STOKE: no_trade | ${reason}`
+  }
+
+  const priorSpyUp = await priorSpySessionWasUp(asofDate)
+  if (priorSpyUp !== false) {
+    const reason = priorSpyUp === true ? 'skip:gate2_prior_spy_up' : 'skip:gate2_prior_spy_history_unavailable'
+    console.log(`[scanner] STOKE: no_trade | ${reason}`)
+    return `STOKE: no_trade | ${reason}`
+  }
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.log('[scanner] STOKE: no_trade | skip:no_quote')
+    return 'STOKE: no_trade | skip:no_quote'
+  }
+
+  const expiration = getTargetExpiration(0) // 0DTE, same-day
+  const { short: callShort, long: callLong } = computeStokeStrikes(spot, getStokeOtmOffset())
+
+  const credit = await getCallSpreadEntryCredit('SPY', expiration, callShort, callLong)
+  if (!credit) {
+    console.log('[scanner] STOKE: no_trade | skip:no_quotes')
+    return 'STOKE: no_trade | skip:no_quotes'
+  }
+  const minCredit = getStokeMinCredit()
+  if (!meetsStokeCreditFloor(credit.callCredit, minCredit)) {
+    console.log(`[scanner] STOKE: no_trade | skip:call_credit_too_low($${credit.callCredit.toFixed(2)})`)
+    return 'STOKE: no_trade | skip:call_credit_too_low'
+  }
+
+  const contracts = getStokeMaxContracts()
+  const width = callLong - callShort
+  const positionId = `STOKE-SPY-${expiration.replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`
+
+  // ---- PAPER BOOK — STOKE's own profit gate against its OWN paper ledger.
+  let paperDecision: string
+  const paperToday = await query(
+    `SELECT COUNT(*) AS cnt FROM ${STOKE_TABLE}
+     WHERE open_date = ${CT_TODAY} AND account_type = 'paper'`,
+  )
+  if (int(paperToday[0]?.cnt) >= 1) {
+    paperDecision = 'skip:already_traded_today'
+    console.log(`[scanner] STOKE: no_trade | paper ${paperDecision}`)
+  } else {
+    const paperLedger = await getStokePaperLedger()
+    const decision = decideStokeContractsForCushion(
+      contracts, contracts, paperLedger.floor, paperLedger.pnl, callShort, callLong, credit.callCredit,
+    )
+    const gate = decision.gate
+    if (decision.contracts < 1) {
+      paperDecision = gate.reason ?? 'skip:stoke_profit_cushion(unreadable)'
+      console.log(`[scanner] STOKE: no_trade | paper ${paperDecision}`)
+    } else {
+      const collateral = Math.max(0, (width - credit.callCredit) * 100) * decision.contracts
+      await query(
+        `INSERT INTO ${STOKE_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, person, mode, bot, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open','paper',NULL,$9,'flame', NOW(), ${CT_TODAY})`,
+        [positionId, expiration, callShort, callLong, decision.contracts, credit.callCredit, collateral, spot, mode],
+      )
+      console.log(
+        `[scanner] STOKE SPY: ${decision.contracts}x ${callShort}/${callLong}C exp ${expiration} ` +
+        `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
+      )
+      paperDecision = 'traded'
+    }
+  }
+
+  if (mode !== 'live') return `STOKE: paper=${paperDecision}`
+
+  // ---- SANDBOX + PRODUCTION ACCOUNT(S) — every account FLAME's own put
+  // spread places on, each gated INDEPENDENTLY of the paper book and of
+  // every other account, inside placeStokeOrderAllAccounts (tradier.ts),
+  // which re-verifies gate 1 + gate 2 itself before touching any account.
+  try {
+    const live = await placeStokeOrderAllAccounts('SPY', expiration, callShort, callLong, contracts, credit.callCredit, positionId)
+    const fills = Object.entries(live)
+    if (fills.length === 0) {
+      const armNote = canPlaceLiveOrders('flame') ? '' : ` (production:disarmed(${describeLiveGate('flame')}))`
+      console.log(`[scanner] STOKE: live:no_fill${armNote}`)
+      return `STOKE: paper=${paperDecision} live:no_fill${armNote}`
+    }
+    for (const [key, info] of fills) {
+      const hasFill = info.fill_price != null && info.fill_price > 0
+      const pCredit = hasFill ? info.fill_price! : credit.callCredit
+      const pContracts = info.contracts
+      const pCollateral = Math.max(0, (width - pCredit) * 100) * pContracts
+      const pPerson = key.split(':')[0] || 'PRODUCTION'
+      const pAccountType = info.account_type === 'production' ? 'production' : 'sandbox'
+      const pId = `${positionId}-${pAccountType}-${pPerson.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+      await query(
+        `INSERT INTO ${STOKE_TABLE} (
+           position_id, ticker, expiration, call_short_strike, call_long_strike,
+           contracts, entry_credit, collateral_required, underlying_at_entry,
+           status, account_type, person, mode, bot, sandbox_order_id, open_time, open_date
+         ) VALUES ($1,'SPY',$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,'flame',$12, NOW(), ${CT_TODAY})`,
+        [pId, expiration, callShort, callLong, pContracts, pCredit, pCollateral, spot, pAccountType, pPerson, mode, String(info.order_id)],
+      )
+      console.log(
+        `[scanner] STOKE ${pAccountType === 'production' ? 'LIVE' : 'SANDBOX'} FILL [${pPerson}]: ${pId} ${pContracts}x @ $${pCredit.toFixed(4)}`,
+      )
+    }
+  } catch (e: unknown) {
+    console.error(`[scanner] STOKE live placement failed: ${e instanceof Error ? e.message : String(e)}`)
+  }
+
+  return `STOKE: paper=${paperDecision}`
+}
+
+/**
+ * Assignment guard for STOKE — mirrors closeFlintAtRiskBeforeBell's
+ * 14:57-15:00 CT window and buffer semantics (spot within, or above, the
+ * buffer of the short strike), but against flame_stoke_positions only, with
+ * its OWN buffer (STOKE_GUARD_BUFFER, default $0.25). A buffer of 0 (env
+ * set to '' or '0') disables the guard — the position then holds to expiry
+ * unguarded, same fail-safe direction as FLINT's own guard.
+ */
+async function closeStokeAtRiskBeforeBell(ct: Date): Promise<string> {
+  if (getStokeMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  const { startHHMM, endHHMM } = assignmentGuardWindow(ct)
+  if (hhmm < startHHMM || hhmm >= endHHMM) return ''
+
+  const buffer = getStokeGuardBuffer()
+  if (!(buffer > 0)) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts,
+            entry_credit, account_type, mode, person
+       FROM ${STOKE_TABLE}
+      WHERE status = 'open' AND expiration = $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const spot = q?.last ?? 0
+  if (!(spot > 0)) {
+    console.warn(`[scanner] STOKE ASSIGNMENT GUARD NO QUOTE: no SPY price at ${hhmm} CT — holds to settlement unguarded.`)
+    void sendOpsPush({
+      title: 'STOKE assignment guard: NO SPY QUOTE',
+      body: `${rows.length} open STOKE position${rows.length === 1 ? '' : 's'} at ${hhmm} CT with no SPY price — ` +
+        `holding to settlement completely unguarded.`,
+      severity: 'critical',
+    }).catch(() => { /* an alert must never take a scan cycle down */ })
+    return 'STOKE guard:no_quote'
+  }
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    if (!isStokeGuardTriggered(spot, shortStrike, buffer)) {
+      out.push(`${p.position_id}=clear@${spot.toFixed(2)}`)
+      continue
+    }
+
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+    const expiration = p.expiration?.toISOString?.()?.slice(0, 10) || String(p.expiration).slice(0, 10)
+
+    let costToClose = width
+    try {
+      const [csQ, clQ] = await Promise.all([
+        getOptionQuote(buildOccSymbol('SPY', expiration, shortStrike, 'C')),
+        getOptionQuote(buildOccSymbol('SPY', expiration, longStrike, 'C')),
+      ])
+      if (csQ && clQ) costToClose = Math.min(Math.max(0, csQ.ask - clQ.bid), width)
+    } catch { /* keep the fail-safe worst case */ }
+
+    const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
+
+    const claimed = await dbExecute(
+      `UPDATE ${STOKE_TABLE}
+         SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [costToClose, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_closed`)
+      continue
+    }
+    console.log(
+      `[scanner] STOKE GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
+      `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+
+    if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
+      if (!p.person) {
+        console.error(
+          `[scanner] STOKE LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
+          `refusing to guess which account to close.`,
+        )
+      } else {
+        try {
+          await placeStokeOrderAllAccounts(
+            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+            { close: true, targetPerson: p.person },
+          )
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error(`[scanner] STOKE LIVE GUARD CLOSE FAILED ${p.position_id}: ${msg}`)
+          void sendOpsPush({
+            title: `STOKE assignment guard FAILED to close ${p.position_id}`,
+            body: `${p.person} ${p.account_type} short ${shortStrike}C — broker buy-back failed (${msg}). ` +
+              `IronForge's own ledger already shows this closed; the real position may still be open. ` +
+              `Reconcile the broker account directly.`,
+            severity: 'critical',
+          }).catch(() => { /* an alert must never take a scan cycle down */ })
+          void postOpsAlert({
+            botName: 'flame',
+            title: 'STOKE assignment guard could NOT close at-risk position',
+            body: `${p.position_id} (${p.person}, ${p.account_type}) short ${shortStrike}C buy-back failed: ${msg}`,
+            severity: 'critical',
+          }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
+        }
+      }
+    }
+    out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
+  }
+  return out.length ? `STOKE guard[${out.join(' ')}]` : ''
+}
+
+/**
+ * Settlement at expiry for STOKE — hold to close, no stop, no take-profit
+ * (spec). Books intrinsic value of the call spread against SPY's close,
+ * clamped to the wing width, mirroring settleFlintExpired's convention.
+ */
+async function settleStokeExpired(ct: Date): Promise<string> {
+  if (getStokeMode() === 'off') return ''
+  const hhmm = ctHHMM(ct)
+  if (hhmm < assignmentGuardWindow(ct).endHHMM) return ''
+
+  const todayStr = ct.toISOString().slice(0, 10)
+  const rows = await query(
+    `SELECT position_id, expiration, call_short_strike, call_long_strike, contracts, entry_credit
+       FROM ${STOKE_TABLE}
+      WHERE status = 'open' AND expiration <= $1`,
+    [todayStr],
+  )
+  if (rows.length === 0) return ''
+
+  const q = await getQuote('SPY')
+  const closePx = q?.last ?? null
+
+  const out: string[] = []
+  for (const p of rows) {
+    const shortStrike = num(p.call_short_strike)
+    const longStrike = num(p.call_long_strike)
+    const contracts = int(p.contracts)
+    const entryCredit = num(p.entry_credit)
+    const width = longStrike - shortStrike
+
+    const intrinsic = closePx != null && closePx > 0
+      ? Math.min(Math.max(0, closePx - shortStrike), width)
+      : width
+
+    const realizedPnl = Math.round((entryCredit - intrinsic) * 100 * contracts * 100) / 100
+
+    const claimed = await dbExecute(
+      `UPDATE ${STOKE_TABLE}
+         SET status = 'expired', close_reason = 'settled_at_expiry', close_price = $1,
+             realized_pnl = $2, close_time = NOW()
+       WHERE position_id = $3 AND status = 'open'`,
+      [intrinsic, realizedPnl, p.position_id],
+    )
+    if (claimed === 0) {
+      out.push(`${p.position_id}=already_settled`)
+      continue
+    }
+    console.log(
+      `[scanner] STOKE SETTLED ${p.position_id}: close=${closePx != null ? '$' + closePx.toFixed(2) : 'unknown'} ` +
+      `short ${shortStrike}C intrinsic=$${intrinsic.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
+    )
+    out.push(`${p.position_id}=settled`)
+  }
+  return out.length ? `STOKE settle[${out.join(' ')}]` : ''
 }
 
 /* ------------------------------------------------------------------ */
@@ -9536,6 +9993,33 @@ async function scanBot(bot: BotDef): Promise<void> {
         console.error('[scanner] FLINT entry failed:', e)
       }
 
+      // STOKE — SPY 0DTE call credit spread, a third FLAME sleeve
+      // (STOKE_MODE, default off). Own table and arm switch, entirely
+      // separate from FLINT's and EBB's. Same entry window as FLINT/EBB
+      // (13:05-13:10 CT), same bot='flame' scope. Guard and settle run
+      // every cycle (no-op most minutes); entry fires inside its own gates
+      // (EBB-skip VIX ratio + prior-day-SPY-down). Wrapped like every other
+      // guard/settle/entry above: a failure here must never take FLAME's
+      // own put-side or FLINT's own cycle down.
+      try {
+        const stokeGuarded = await closeStokeAtRiskBeforeBell(ct)
+        if (stokeGuarded) console.log(`[scanner] ${stokeGuarded}`)
+      } catch (e) {
+        console.error('[scanner] STOKE assignment guard failed:', e)
+      }
+      try {
+        const stokeSettled = await settleStokeExpired(ct)
+        if (stokeSettled) console.log(`[scanner] ${stokeSettled}`)
+      } catch (e) {
+        console.error('[scanner] STOKE settlement failed:', e)
+      }
+      try {
+        const stokeTraded = await tryOpenStoke(bot, ct)
+        if (stokeTraded) console.log(`[scanner] ${stokeTraded}`)
+      } catch (e) {
+        console.error('[scanner] STOKE entry failed:', e)
+      }
+
       // FLAME v2 SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE).
       // Own table (flame_v2_call_positions), own guard/settle — see
       // flame-v2/call-spread-live.ts. Entry itself fires from inside
@@ -11591,6 +12075,12 @@ export const _testing = {
   getFlintPaperCumulativeRealizedPnl,
   tryOpenFlint,
   FLINT_TABLE,
+  getStokeCumulativeRealizedPnl,
+  tryOpenStoke,
+  closeStokeAtRiskBeforeBell,
+  settleStokeExpired,
+  STOKE_TABLE,
+  priorSpySessionWasUp,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },
   get _scanStartedAt() { return _scanStartedAt },

@@ -6200,6 +6200,397 @@ export async function placeCallSpreadOrderAllAccounts(
   return results
 }
 
+/* ================================================================== */
+/*  STOKE — SPY 0DTE call credit spread, a third FLAME sleeve           */
+/*  (PREREG_STOKE_BUILD.md, 2026-10-15). Own table (flame_stoke_        */
+/*  positions), own floor table (stoke_account_floor), own order path    */
+/*  (placeStokeOrderAllAccounts below). Entirely additive — does not     */
+/*  touch FLINT's or EBB's own tables, functions, or call sites.         */
+/* ================================================================== */
+
+/**
+ * stoke_account_floor — STOKE's OWN per-account profit-gate floor, byte-
+ * for-byte the same seed-once-never-move shape as flint_account_floor
+ * (getOrSeedFlintAccountFloor above) but in its own dedicated table, never
+ * shared with FLINT or EBB. Seeding rule, evaluated at most ONCE per
+ * (person, account_type):
+ *   1. A configured funded/starting amount for this account, if the schema
+ *      carries one (same documented no-op today as FLINT's own check).
+ *   2. Otherwise, `currentEquity` — this account's OWN equity the FIRST
+ *      time STOKE ever evaluates it.
+ * Once a row exists it is READ-ONLY: this function never raises OR lowers
+ * floor_amount on a later call. `accountId` is stored for audit only.
+ */
+export async function getOrSeedStokeAccountFloor(
+  person: string,
+  accountType: 'sandbox' | 'production',
+  accountId: string | null,
+  currentEquity: number | null,
+): Promise<number | null> {
+  try {
+    const { query: dbq, dbExecute: dbx } = await import('./db')
+    await dbx(
+      `CREATE TABLE IF NOT EXISTS stoke_account_floor (
+         id SERIAL PRIMARY KEY,
+         person TEXT NOT NULL,
+         account_type TEXT NOT NULL,
+         account_id TEXT,
+         floor_amount NUMERIC NOT NULL,
+         source TEXT NOT NULL,
+         set_at TIMESTAMP NOT NULL DEFAULT NOW(),
+         UNIQUE (person, account_type)
+       )`,
+    )
+
+    const existing = await dbq(
+      `SELECT floor_amount FROM stoke_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    if (existing.length > 0) {
+      const n = Number(existing[0].floor_amount)
+      return Number.isFinite(n) ? n : null
+    }
+
+    let configured: number | null = null
+    try {
+      const rows = await dbq(
+        `SELECT funded_amount FROM ironforge_accounts WHERE person = $1 AND type = $2 AND is_active = TRUE LIMIT 1`,
+        [person, accountType],
+      )
+      const n = Number(rows[0]?.funded_amount)
+      configured = Number.isFinite(n) && n > 0 ? n : null
+    } catch {
+      configured = null
+    }
+
+    const seedAmount = configured ?? currentEquity
+    if (seedAmount == null || !Number.isFinite(seedAmount) || seedAmount <= 0) return null
+
+    const source = configured != null ? 'configured_funded_amount' : 'first_evaluated_equity'
+    await dbq(
+      `INSERT INTO stoke_account_floor (person, account_type, account_id, floor_amount, source, set_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (person, account_type) DO NOTHING`,
+      [person, accountType, accountId, seedAmount, source],
+    )
+    console.log(`[tradier] STOKE floor SEEDED for ${person}:${accountType} = $${seedAmount.toFixed(2)} (source=${source})`)
+
+    // Re-read rather than trust seedAmount — same concurrent-race protection
+    // as getOrSeedFlintAccountFloor above.
+    const after = await dbq(
+      `SELECT floor_amount FROM stoke_account_floor WHERE person = $1 AND account_type = $2`,
+      [person, accountType],
+    )
+    const n = Number(after[0]?.floor_amount)
+    return Number.isFinite(n) ? n : seedAmount
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getOrSeedStokeAccountFloor('${person}', '${accountType}') failed: ${msg}`)
+    return null
+  }
+}
+
+/**
+ * STOKE's floor+equity pair for a SANDBOX mirror account — floor comes from
+ * stoke_account_floor (see getOrSeedStokeAccountFloor above), seeded once
+ * per account and never moved. `equity` is per-account, read the same way
+ * getFlintSandboxLedger reads it. null on any read failure.
+ */
+async function getStokeSandboxLedger(person: string, accountId: string | null): Promise<{ floor: number | null; equity: number | null }> {
+  try {
+    const allocated = await getAllocatedCapitalForAccount(person, 'sandbox')
+    const equity = allocated?.equity ?? null
+    const floor = await getOrSeedStokeAccountFloor(person, 'sandbox', accountId, equity)
+    return { floor, equity }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getStokeSandboxLedger('${person}') failed: ${msg}`)
+    return { floor: null, equity: null }
+  }
+}
+
+/**
+ * How many flame_stoke_positions rows already exist today for this account
+ * — the "one trade per account per day" check, run BEFORE the profit gate
+ * and BP read, same convention as getFlintTradedTodayCount. Fails OPEN on a
+ * read error (returns 0) — a convenience de-dup, not the primary control.
+ * STOKE is FLAME-only (PREREG_STOKE_BUILD.md), so there is no bot column to
+ * filter on, unlike FLINT's shared flint_positions table.
+ */
+async function getStokeTradedTodayCount(
+  person: string,
+  accountType: 'production' | 'sandbox' = 'production',
+): Promise<number> {
+  try {
+    const { query: dbq, CT_TODAY: ctToday } = await import('./db')
+    const rows = await dbq(
+      `SELECT COUNT(*) AS cnt FROM flame_stoke_positions
+        WHERE account_type = $1 AND person = $2 AND open_date = ${ctToday}`,
+      [accountType, person],
+    )
+    return Number(rows[0]?.cnt) || 0
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tradier] getStokeTradedTodayCount('${person}', '${accountType}') failed: ${msg}`)
+    return 0
+  }
+}
+
+/**
+ * Places (or closes) STOKE's 2-leg call spread on every account FLAME's own
+ * put spread places on — the SAME resolveEligibleAccounts('flame') list
+ * FLINT's own placeCallSpreadOrderAllAccounts uses, split into sandbox and
+ * production exactly the same way, with the SAME pause/arm gates:
+ *   - PRODUCTION requires canPlaceLiveOrders('flame') == isFlameLiveArmed(),
+ *     the production kill-switch (getProductionPauseState) and the
+ *     per-owner pause (getOwnerPauseState) — a disarmed/paused FLAME drops
+ *     ONLY the production account(s).
+ *   - SANDBOX mirrors are fake money and are NOT gated by the production
+ *     arm switch or either pause layer.
+ *
+ * A deliberately SEPARATE, independent function from both
+ * placeIcOrderAllAccounts and placeCallSpreadOrderAllAccounts (FLINT) —
+ * STOKE never shares a table, a ledger, a floor, or a call site with either
+ * sleeve. `buildLegs` is reused as-is (leg-symbol/side/qty only, no
+ * put/call awareness) by passing the call symbols in the put-leg slots.
+ *
+ * On OPEN only (opts.close !== true), gates run in order, before any
+ * account's own order is placed:
+ *   1. Gate 1 + Gate 2 (PREREG_STOKE_BUILD.md's "K1" filter), evaluated
+ *      ONCE, market-wide — not per account: today's EBB VIX-decay ratio
+ *      must be a SKIP day (ratio > 0.80, byte-for-byte the same
+ *      vixDecayCheck/VIX_DECAY_CEILING.flame computation EBB's own put side
+ *      uses) AND yesterday's SPY session must have closed DOWN
+ *      (priorSpySessionWasUp(asofDate) === false, byte-for-byte the same
+ *      function FLINT's own prior-day-up filter calls, just testing the
+ *      opposite direction). A null/unreadable read on EITHER gate fails
+ *      CLOSED — zero accounts, logged, never guessed. `expiration` is used
+ *      as the asof date since STOKE trades 0DTE only (expiration ===
+ *      trade date).
+ *   2. one STOKE trade per account per day (flame_stoke_positions row for
+ *      today, scoped by account_type).
+ *   3. STOKE's OWN profit gate (evaluateStokeProfitGate/
+ *      decideStokeContractsForCushion, stoke.ts): cushion = min(this
+ *      account's own stoke_account_floor row, STOKE_FLOOR_AMOUNT) + STOKE's
+ *      own cumulative realized P&L on THIS account — never FLAME's/EBB's
+ *      shared equity, never FLINT's floor or P&L.
+ *   4. buying power: option BP must clear STOKE_BP_FLOOR_PER_CONTRACT per
+ *      contract.
+ * An account that fails any of these is skipped — logged, never thrown —
+ * and is simply absent from the returned map; every OTHER account still
+ * gets its own independent shot. `opts.close` (assignment-guard buy-back)
+ * skips gates 1, 2, 3, and 4 entirely: a buy-back must never be blocked by
+ * a gate meant for new risk.
+ *
+ * `opts.close` REQUIRES `opts.targetPerson` and closes EXACTLY that one
+ * account — same fail-closed "no targetPerson touches zero accounts" rule
+ * as placeCallSpreadOrderAllAccounts's own close path.
+ *
+ * Returns Record<"Name:sandbox"|"Name:production", SandboxOrderInfo> —
+ * empty when nothing is eligible. Never throws into the caller.
+ */
+export async function placeStokeOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  callShort: number,
+  callLong: number,
+  contracts: number,
+  entryCredit: number,
+  positionId: string,
+  opts?: { close?: boolean; targetPerson?: string },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const closing = opts?.close === true
+  const botName = 'flame' // STOKE is a FLAME-only sleeve (PREREG_STOKE_BUILD.md)
+
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
+    productionAccts = []
+  }
+  if (productionAccts.length > 0) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] STOKE production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — fall through, matches placeCallSpreadOrderAllAccounts */ }
+  }
+  if (productionAccts.length > 0) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(`[tradier] STOKE owner-paused: ${dropped.join(', ')} — removing from this order. Sandbox unaffected.`)
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] STOKE guard close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter((a) => a.name === opts.targetPerson)
+  }
+  if (allAccts.length === 0) return results
+
+  // Gate 1 + Gate 2 — see doc comment above. Evaluated ONCE, market-wide,
+  // never for `closing` (a buy-back must never be blocked by an entry gate).
+  if (!closing) {
+    try {
+      const { vixDecayCheck, VIX_DECAY_CEILING, priorSpySessionWasUp } = await import('./scanner')
+      const asofDate = expiration // 0DTE: expiration IS the trade date
+      const vix = await vixDecayCheck(asofDate, VIX_DECAY_CEILING.flame)
+      const gate1 = vix.ratio != null && vix.ratio > VIX_DECAY_CEILING.flame
+      if (!gate1) {
+        console.log(`[tradier] STOKE: skip:gate1_not_vix_skip_day(ratio=${vix.ratio ?? 'unreadable'})`)
+        return results
+      }
+      const priorSpyUp = await priorSpySessionWasUp(asofDate)
+      if (priorSpyUp !== false) {
+        console.log(`[tradier] STOKE: skip:gate2_prior_spy_not_down(priorSpyUp=${priorSpyUp})`)
+        return results
+      }
+    } catch (err: unknown) {
+      console.warn(`[tradier] STOKE gate evaluation failed (fail-closed, zero accounts): ${err instanceof Error ? err.message : String(err)}`)
+      return results
+    }
+  }
+
+  const occCs = buildOccSymbol(ticker, expiration, callShort, 'C')
+  const occCl = buildOccSymbol(ticker, expiration, callLong, 'C')
+  const sides = closing
+    ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
+    : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
+
+  const { decideStokeContractsForCushion, STOKE_BP_FLOOR_PER_CONTRACT, getStokeFloorAmount } = await import('./stoke')
+
+  for (const acct of allAccts) {
+    const isProd = acct.type === 'production'
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] STOKE`
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+      if (!accountId) {
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)
+        continue
+      }
+
+      let acctContracts = contracts
+
+      if (!closing) {
+        const alreadyToday = await getStokeTradedTodayCount(acct.name, isProd ? 'production' : 'sandbox')
+        if (alreadyToday >= 1) {
+          console.log(`${label}: skip:already_traded_today`)
+          continue
+        }
+
+        const { floor: perAccountFloor, equity } = isProd
+          ? await (async () => {
+              const allocated = await getAllocatedCapitalForAccount(acct.name, 'production')
+              const eq = allocated?.equity ?? null
+              const fl = await getOrSeedStokeAccountFloor(acct.name, 'production', accountId, eq)
+              return { floor: fl, equity: eq }
+            })()
+          : await getStokeSandboxLedger(acct.name, accountId)
+        const stokeFloor = perAccountFloor == null ? null : Math.min(perAccountFloor, getStokeFloorAmount())
+        const { getStokeCumulativeRealizedPnl } = await import('./scanner')
+        const stokePnl = await getStokeCumulativeRealizedPnl(acct.name, isProd ? 'production' : 'sandbox')
+
+        const r1 = decideStokeContractsForCushion(contracts, contracts, stokeFloor, stokePnl, callShort, callLong, entryCredit)
+        if (r1.contracts < 1) {
+          console.warn(`${label}: ${r1.gate.reason ?? 'skip:stoke_profit_cushion(unreadable)'}`)
+          continue
+        }
+        acctContracts = r1.contracts
+
+        // Buying power: STOKE_BP_FLOOR_PER_CONTRACT per contract.
+        const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
+        if (bp == null) {
+          console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING order. This is NOT an insufficient-funds decision.`)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
+          continue
+        }
+        const requiredBp = STOKE_BP_FLOOR_PER_CONTRACT * acctContracts
+        if (bp < requiredBp) {
+          console.warn(`${label}: skip:stoke_insufficient_bp(bp=$${bp.toFixed(0)}<need=$${requiredBp.toFixed(0)})`)
+          continue
+        }
+      }
+
+      const orderBody: Record<string, string> = {
+        class: 'multileg',
+        symbol: ticker,
+        type: 'market',
+        duration: 'day',
+        ...buildLegs(occCs, occCl, '', '', acctContracts, sides, true),
+        tag: `STOKE-${positionId}`.slice(0, 255),
+      }
+
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+      if (!result) {
+        console.error(`${label}: Order POST returned null (HTTP error)`)
+        continue
+      }
+      if (result.errors) {
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        continue
+      }
+      if (!result?.order?.id) {
+        console.error(`${label}: Order POST returned no order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
+        continue
+      }
+
+      let fillPrice: number | null = null
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, isProd ? 0 : 90_000, acct.baseUrl)
+      } catch (pollErr: unknown) {
+        console.error(`${label}: fill poll failed: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`)
+      }
+
+      if (fillPrice == null) {
+        try {
+          const orderCheck = await sandboxGet(`/accounts/${accountId}/orders/${result.order.id}`, undefined, acct.apiKey, acct.baseUrl)
+          const status = orderCheck?.order?.status || 'unknown'
+          if (['rejected', 'canceled', 'expired'].includes(status)) {
+            const reason = orderCheck?.order?.reason_description || orderCheck?.order?.reject_reason || orderCheck?.order?.reason || 'no reason provided'
+            console.error(`${label}: order ${result.order.id} was ${status.toUpperCase()} by Tradier: "${reason}" — NOT recording.`)
+            continue
+          }
+          console.warn(`${label}: order ${result.order.id} status="${status}" with no fill price after polling — recording at modelled credit $${entryCredit.toFixed(4)}.`)
+        } catch (checkErr: unknown) {
+          console.warn(`${label}: could not verify order status: ${checkErr instanceof Error ? checkErr.message : String(checkErr)}`)
+        }
+      }
+
+      const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+      results[resultKey] = {
+        order_id: result.order.id,
+        contracts: acctContracts,
+        fill_price: fillPrice,
+        account_type: acct.type ?? 'sandbox',
+      }
+      console.log(
+        `[tradier] STOKE ${closing ? 'LIVE GUARD CLOSE' : isProd ? 'LIVE FILL' : 'SANDBOX FILL'} [${acct.name}]: ` +
+        `${acctContracts}x order ${result.order.id} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
+      )
+    } catch (err: unknown) {
+      console.error(`${label}: order failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return results
+}
+
 /**
  * FLAME v2 — SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE=live
  * only; see flame-v2/flags.ts and flame-v2/call-spread-live.ts). 14:05 ET
