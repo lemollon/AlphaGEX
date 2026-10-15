@@ -97,13 +97,18 @@ export function Balance({ value }: { value: number | null | undefined }) {
   )
 }
 
-/** Profit Target / Auto Close / Stop Loss — driven by the API's normalized outcome_kind. */
+/**
+ * Profit Target / Auto Close / Stop Loss — driven by the API's normalized
+ * outcome_kind. A filled tinted pill (app images, 2026-10-14), same
+ * `${tone}22`-background-no-border convention as livePill/marketPill/aiTag
+ * elsewhere in the app — not the outlined border this used to be.
+ */
 export function OutcomeBadge({ kind, label }: { kind: string; label: string }) {
   const { colors: color, resolveTone } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const c = outcomeColor[kind] ? resolveTone(outcomeColor[kind]) : color.textDim
   return (
-    <View style={[s.badge, { borderColor: c }]}>
+    <View style={[s.badge, { backgroundColor: `${c}22`, borderWidth: 0 }]}>
       <Text
         style={[type.label, { color: c, fontFamily: font.bodyMedium }]}
         maxFontSizeMultiplier={MAX_FONT_SCALE}

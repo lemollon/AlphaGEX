@@ -18,7 +18,6 @@ import {
 import * as Haptics from 'expo-haptics'
 import { useFocusEffect, useIsFocused, useScrollToTop } from '@react-navigation/native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import Svg, { Path } from 'react-native-svg'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import useSWR from 'swr'
@@ -34,7 +33,7 @@ import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
-import { AppHeader, Mascot, SPARKY_AVATAR } from '@/components/Brand'
+import { AppHeader, SPARKY_AVATAR } from '@/components/Brand'
 import { applyHeart, FLAME, HEART } from '@/community/reactions'
 import { trackEvent } from '@/analytics/trackEvent'
 import { initials, channelAccent, bubbleTint, isAiSender, isSparkySender } from '@/community/identity'
@@ -300,7 +299,7 @@ export default function CommunityScreen() {
             consistent rows on the Account tab's Help card instead of living here. */}
         {welcomeDismissed === false ? (
           <View style={s.welcome}>
-            <Mascot bot="flame" size={54} />
+            <ForgeAvatar size={54} />
             <View style={{ flex: 1 }}>
               <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 17 }]}>
                 Welcome to Forge Community
@@ -435,6 +434,14 @@ export default function CommunityScreen() {
         </View>
       </ScrollView>
 
+      {/* App images (2026-10-14): "AI monitored · Community standards active" sits
+          above the composer bar as its own row with a shield glyph, not as a caption
+          line inside the composer card. */}
+      <View style={s.aiMonitoredRow}>
+        <Ionicons name="shield-checkmark-outline" size={14} color={color.pos} />
+        <Text style={[type.label, { color: color.muted }]}>AI monitored · Community standards active</Text>
+      </View>
+
       <View style={s.composer}>
         {postError ? (
           <Text style={[type.label, { color: color.neg, marginBottom: space.sm }]}>{postError}</Text>
@@ -466,12 +473,13 @@ export default function CommunityScreen() {
             multiline
           />
           <Pressable onPress={send} disabled={posting || !draft.trim()} style={s.send}>
-            <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
+            {posting ? (
+              <Text style={{ color: color.text, fontSize: 16 }}>…</Text>
+            ) : (
+              <Ionicons name="send" size={17} color={color.text} />
+            )}
           </Pressable>
         </View>
-        <Text style={[type.label, { color: color.muted, marginTop: space.sm }]}>
-          AI monitored · Community standards active
-        </Text>
       </View>
       </KeyboardAvoidingView>
 
@@ -841,7 +849,11 @@ function ThreadSheet({
               multiline
             />
             <Pressable onPress={() => void send()} disabled={posting || !draft.trim()} style={s.send}>
-              <Text style={{ color: color.text, fontSize: 16 }}>{posting ? '…' : '➤'}</Text>
+              {posting ? (
+                <Text style={{ color: color.text, fontSize: 16 }}>…</Text>
+              ) : (
+                <Ionicons name="send" size={17} color={color.text} />
+              )}
             </Pressable>
           </View>
         </View>
@@ -884,31 +896,25 @@ function Avatar({ message }: { message: CommunityMessage }) {
 }
 
 /**
- * The generic "Forge" (platform/AI) post avatar — a near-black square with the forge
- * shield glyph in the brand accent (design `.cav.forge`, `--av` background), always
- * this fixed look regardless of light/dark theme, same as the design's own `--av` token.
+ * The generic "Forge" (platform/AI) avatar — a near-black square with a sparkle glyph
+ * in the brand accent (app images, 2026-10-14: same icon on the "Forge AI" post avatar
+ * and the welcome banner), always this fixed look regardless of light/dark theme, same
+ * as the design's own `--av` token.
  */
-function ForgeAvatar() {
+function ForgeAvatar({ size = 40 }: { size?: number }) {
   const { colors: color } = useTheme()
   return (
-    <View style={{ width: 40, height: 40, borderRadius: 11, backgroundColor: '#0B0B0F', alignItems: 'center', justifyContent: 'center' }}>
-      <Svg width={22} height={22} viewBox="0 0 24 24">
-        <Path
-          d="M12 3l7.5 3v5.5c0 4.6-3.1 8.3-7.5 9.5-4.4-1.2-7.5-4.9-7.5-9.5V6L12 3z"
-          stroke={color.accent}
-          strokeWidth={1.8}
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <Path
-          d="M8 14l2.5-2.5 2 2L16 10"
-          stroke={color.accent}
-          strokeWidth={1.8}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="none"
-        />
-      </Svg>
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: Math.round(size * 0.275),
+        backgroundColor: '#0B0B0F',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <Ionicons name="sparkles" size={Math.round(size * 0.55)} color={color.accent} />
     </View>
   )
 }
@@ -972,9 +978,9 @@ function ReactionRow({ message, onPress }: { message: CommunityMessage; onPress:
         accessibilityLabel={mine ? 'Remove your heart' : 'Add a heart'}
         style={s.reactBtn}
       >
-        <Animated.Text style={{ fontSize: 15, opacity: mine ? 1 : 0.45, transform: [{ scale }] }}>
-          {HEART}
-        </Animated.Text>
+        <Animated.View style={{ transform: [{ scale }] }}>
+          <Ionicons name={mine ? 'heart' : 'heart-outline'} size={16} color={mine ? color.accentText : color.muted} />
+        </Animated.View>
         <Text
           style={[
             type.label,
@@ -1074,6 +1080,13 @@ const makeStyles = (color: ColorTokens) =>
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: space.lg,
+  },
+  aiMonitoredRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: space.xs,
+    paddingVertical: space.sm,
   },
   scrim: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000', opacity: 0.6 },
   sheet: {

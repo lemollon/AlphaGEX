@@ -141,7 +141,7 @@ export default function LedgerScreen() {
   const loadError = agent === 'ember' ? emberSWR.error : error && !data
 
   const agentChips = [
-    { key: 'all', label: 'All Agents' },
+    { key: 'all', label: 'All agents' },
     ...AGENT_CHIP_BOTS.filter((b) => b === 'ember' ? ownsEmber : ownedBots.includes(b)).map((b) => ({
       key: b,
       label: AGENT_LABEL[b],
