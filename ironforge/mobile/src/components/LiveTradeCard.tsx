@@ -85,9 +85,21 @@ export function LiveTradeCard({
         </View>
       </View>
 
-      <View style={s.pnlRow}>
-        <Text style={[type.label, { color: color.muted }]}>Profit &amp; loss so far</Text>
-        <Money value={trade.unrealized_pnl} size="hero" />
+      <View style={[s.pnlRow, s.pnlRowBetween]}>
+        <View>
+          <Text style={[type.label, { color: color.muted }]}>Profit &amp; loss so far</Text>
+          <Money value={trade.unrealized_pnl} size="hero" />
+        </View>
+        {/* App images (2026-10-14): contract count beside the P&L. Optional field —
+            older servers don't send it, so this renders nothing rather than "0". */}
+        {trade.contracts != null ? (
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={[type.title, { color: color.text, fontFamily: font.bodyBold }]}>
+              {trade.contracts}
+            </Text>
+            <Text style={[type.label, { color: color.muted }]}>contracts</Text>
+          </View>
+        ) : null}
       </View>
 
       {fraction != null ? (
@@ -171,6 +183,7 @@ const makeStyles = (color: ColorTokens) =>
     },
     liveDot: { width: 6, height: 6, borderRadius: 3 },
     pnlRow: { marginTop: space.md },
+    pnlRowBetween: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
     lifeBlock: { marginTop: space.md, gap: 6 },
     lifeRow: { flexDirection: 'row', justifyContent: 'space-between' },
     bar: { height: 6, borderRadius: radius.pill, overflow: 'hidden' },

@@ -78,7 +78,25 @@ export async function getFeed(channelSlug: string, viewerUserId: string | null):
                      ) r),
                     '[]'::json
                   ) AS reactions,
-                  (SELECT COUNT(*)::int FROM community_messages r WHERE r.parent_id = m.id) AS reply_count
+                  (SELECT COUNT(*)::int FROM community_messages r WHERE r.parent_id = m.id) AS reply_count,
+                  -- Inline reply preview (app images, 2026-10-14) — the most recent
+                  -- reply to THIS post, same block/visibility guard as the thread
+                  -- itself (a blocked member's reply must not preview either).
+                  (SELECT json_build_object(
+                     'sender_name', r.sender_name,
+                     'sender_type', r.sender_type,
+                     'message', r.message,
+                     'created_at', r.created_at
+                   )
+                   FROM community_messages r
+                   WHERE r.parent_id = m.id
+                     AND NOT EXISTS (
+                       SELECT 1 FROM community_blocks b
+                       WHERE b.blocker_id = $2::uuid AND b.blocked_id = r.user_id
+                     )
+                   ORDER BY r.created_at DESC
+                   LIMIT 1
+                  ) AS latest_reply
            FROM community_messages m
            JOIN community_channels c ON c.id = m.channel_id
            -- $1 NULL means "every channel" (the aggregate tab). Written as a guard
@@ -132,6 +150,14 @@ function mapMessageRow(m: any, viewerUserId: string | null): CommunityMessage {
     channel_name: String(m.channel_name),
     reply_count: Number(m.reply_count ?? 0),
     parent_id: m.parent_id != null ? String(m.parent_id) : null,
+    latest_reply: m.latest_reply
+      ? {
+          sender_name: String(m.latest_reply.sender_name),
+          sender_type: m.latest_reply.sender_type as CommunityMessage['sender_type'],
+          message: String(m.latest_reply.message),
+          created_at: new Date(m.latest_reply.created_at).toISOString(),
+        }
+      : undefined,
   }
 }
 

@@ -45,6 +45,8 @@ import {
   TRADING_SCHEDULE,
   RISK_SUMMARY,
 } from '@/agents/copy'
+import { getPlanCatalog } from '@/enroll/api'
+import type { PlanCatalog } from '@/enroll/types'
 
 function dotColorFor(dot: string, color: ColorTokens): string {
   const map: Record<string, string> = {
@@ -90,6 +92,9 @@ export default function AgentDetailScreen() {
   const connsSWR = useSWR<BrokerageConnections>('/api/brokerage/connections', (p: string) =>
     api<BrokerageConnections>(p),
   )
+  // Plan row (app images, 2026-10-14) — same public plan catalogue the Account
+  // tab and the Add-agent flow already read. SWR shares the cache key.
+  const { data: catalog } = useSWR<PlanCatalog>('/api/public/plans', () => getPlanCatalog())
 
   const loading =
     agentsSWR.isLoading || entitlementsSWR.isLoading || pauseSWR.isLoading || connsSWR.isLoading
@@ -140,25 +145,34 @@ export default function AgentDetailScreen() {
       dotColor={liveAgent?.state ? dotColorFor(liveAgent.state.dot, color) : color.muted}
     >
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
-        <Card>
-          <SectionLabel>How it works</SectionLabel>
-          <Text style={[type.body, { color: color.textDim }]}>{AGENT_DESCRIPTION[bot]}</Text>
-          <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
-            {TRADING_SCHEDULE[bot]}
-          </Text>
-          <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-            Account requirements
-          </Text>
-          <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
-            {ACCOUNT_REQUIREMENTS}
-          </Text>
-          <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
-            Risk summary
-          </Text>
-          <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
-            {RISK_SUMMARY}
-          </Text>
-        </Card>
+        {/* App images (2026-10-14): an active/paused agent's screen goes straight
+            from the header into the KPI grid — no "How it works" card. That
+            disclosure already happened at activation time (risk + authorization
+            acknowledgement, see ActivationFlow below) and still lives in Account's
+            Agreements & Disclosures; repeating it here on every visit isn't in the
+            design. Still shown for setup_required/switch/add-agent, where it's the
+            only description of the agent on screen. */}
+        {action.kind === 'active' || action.kind === 'paused' ? null : (
+          <Card>
+            <SectionLabel>How it works</SectionLabel>
+            <Text style={[type.body, { color: color.textDim }]}>{AGENT_DESCRIPTION[bot]}</Text>
+            <Text style={[type.body, { color: color.textDim, marginTop: space.md }]}>
+              {TRADING_SCHEDULE[bot]}
+            </Text>
+            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+              Account requirements
+            </Text>
+            <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+              {ACCOUNT_REQUIREMENTS}
+            </Text>
+            <Text style={[type.label, { color: color.muted, marginTop: space.md }]}>
+              Risk summary
+            </Text>
+            <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
+              {RISK_SUMMARY}
+            </Text>
+          </Card>
+        )}
 
         {/* Ember's own trade book/status (#3177) — shown to any Ember OWNER
             regardless of automation-activation state: Ember's execution
@@ -176,6 +190,7 @@ export default function AgentDetailScreen() {
             liveAgent={liveAgent}
             activation={activations.find((a) => a.agent === bot) ?? null}
             connections={connsSWR.data}
+            catalog={catalog}
             agentsSWR={agentsSWR}
             connsSWR={connsSWR}
             pauseSWR={pauseSWR}
@@ -245,13 +260,27 @@ function Shell({
   )
 }
 
-/** Active or Paused: live status, assigned account, latest trade, pause/resume. */
+/**
+ * Active or Paused: KPI grid, bars, embedded live card, a plain Brokerage/Plan/
+ * Community fact table, pause/resume — app images order (2026-10-14).
+ *
+ * The old "Current status" card (headline/subtitle/check_line, a separate
+ * "Brokerage account" line, a "Latest trade" summary) isn't in the design, but
+ * nothing it showed is actually lost: `state.headline` is already the Shell
+ * header's subtitle, "today" is already the KPI grid's first tile, and a real
+ * resume-blocking `check_line` is already surfaced at the moment it matters by
+ * handleResumeTap()'s Alert in PauseResumeControl below. The one genuinely new
+ * failure mode here — `state`/`trade` unavailable, or a check_line present even
+ * though resume hasn't been tapped yet — gets a small warning row instead of a
+ * full card, so that information still has somewhere to live.
+ */
 function CurrentAgentSection({
   bot,
   label,
   liveAgent,
   activation,
   connections,
+  catalog,
   agentsSWR,
   connsSWR,
   pauseSWR,
@@ -261,6 +290,7 @@ function CurrentAgentSection({
   liveAgent: LiveAgent | null
   activation: AutomationActivation | null
   connections: BrokerageConnections | undefined
+  catalog: PlanCatalog | undefined
   agentsSWR: ReturnType<typeof useSWR<LiveAgents>>
   connsSWR: ReturnType<typeof useSWR<BrokerageConnections>>
   pauseSWR: ReturnType<typeof useSWR<AutomationPauseResponse>>
@@ -271,61 +301,33 @@ function CurrentAgentSection({
   const trade = liveAgent?.trade ?? null
   const sole = soleConnection(connections)
   const accent = agentAccent(bot)
+  const priceLabel = bot === 'ember' ? 'Free' : catalog?.bots.find((b) => b.slug === bot)?.price_monthly
 
   return (
     <>
-      <Card style={{ marginTop: space.lg, borderColor: accent }}>
-        <SectionLabel>Current status</SectionLabel>
-        {liveAgent?.error === 'state' || !state ? (
-          <Text style={[type.body, { color: color.warn }]}>
+      {liveAgent?.error === 'state' || !state ? (
+        <View style={[s.warnRow, { marginTop: space.lg }]}>
+          <Ionicons name="alert-circle-outline" size={16} color={color.warn} />
+          <Text style={[type.body, { color: color.warn, flex: 1 }]}>
             Status is unavailable for {label} right now.
           </Text>
-        ) : (
-          <>
-            <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-              {state.headline}
-            </Text>
-            <Text style={[type.label, { color: color.textDim, marginTop: space.xs }]}>
-              {state.subtitle}
-            </Text>
-            {state.check_line ? (
-              <Text style={[type.label, { color: color.muted, marginTop: space.xs }]}>
-                {state.check_line}
-              </Text>
-            ) : null}
-          </>
-        )}
-
-        <View style={s.divider} />
-        <Text style={[type.label, { color: color.muted }]}>Brokerage account</Text>
-        <Text style={[type.body, { color: color.text, marginTop: space.xs }]}>
-          {sole
-            ? `${brokerLabel(sole.broker ?? sole.provider)}${sole.mask ? `  ${maskTail(sole.mask)}` : ''}`
-            : 'Not available'}
-        </Text>
-
-        <View style={s.divider} />
-        <Text style={[type.label, { color: color.muted, marginBottom: space.xs }]}>
-          Latest trade
-        </Text>
-        {liveAgent?.error === 'trade' ? (
-          <Text style={[type.body, { color: color.warn }]}>
+        </View>
+      ) : state.check_line ? (
+        <View style={[s.warnRow, { marginTop: space.lg }]}>
+          <Ionicons name="alert-circle-outline" size={16} color={color.warn} />
+          <Text style={[type.body, { color: color.warn, flex: 1 }]}>{state.check_line}</Text>
+        </View>
+      ) : null}
+      {liveAgent?.error === 'trade' ? (
+        <View style={[s.warnRow, { marginTop: space.lg }]}>
+          <Ionicons name="alert-circle-outline" size={16} color={color.warn} />
+          <Text style={[type.body, { color: color.warn, flex: 1 }]}>
             Position details are unavailable right now.
           </Text>
-        ) : trade?.active ? (
-          <View style={s.rowBetween}>
-            <Text style={[type.body, { color: color.text }]}>Open position</Text>
-            <Money value={trade.unrealized_pnl} />
-          </View>
-        ) : trade?.today_result ? (
-          <View style={s.rowBetween}>
-            <Text style={[type.body, { color: color.text }]}>Today&apos;s result</Text>
-            <Money value={trade.today_result.pnl} />
-          </View>
-        ) : (
-          <Text style={[type.body, { color: color.textDim }]}>No recent trade.</Text>
-        )}
-      </Card>
+        </View>
+      ) : null}
+
+      <PerformanceSection liveAgent={liveAgent} accent={accent} />
 
       {/* Embedded live-trade chart/progress/stage footer (10.4 design agentSheet()'s
           reproduced liveCard) — the SAME component the Forge tab's "Live now" strip
@@ -337,7 +339,26 @@ function CurrentAgentSection({
         </View>
       ) : null}
 
-      <PerformanceSection liveAgent={liveAgent} accent={accent} />
+      <Card style={{ marginTop: space.lg }}>
+        <View style={s.factRow}>
+          <Text style={[type.label, { color: color.muted }]}>Brokerage</Text>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+            {sole
+              ? `${brokerLabel(sole.broker ?? sole.provider)}${sole.mask ? `  ${maskTail(sole.mask)}` : ''}`
+              : 'Not available'}
+          </Text>
+        </View>
+        <View style={[s.factRow, s.factRowDivider]}>
+          <Text style={[type.label, { color: color.muted }]}>Plan</Text>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+            {priceLabel == null ? '—' : priceLabel === 'Free' ? 'Free' : `$${priceLabel}/month`}
+          </Text>
+        </View>
+        <View style={[s.factRow, s.factRowDivider]}>
+          <Text style={[type.label, { color: color.muted }]}>Community</Text>
+          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>Included</Text>
+        </View>
+      </Card>
 
       <PauseResumeControl
         bot={bot}
@@ -1102,6 +1123,9 @@ const makeStyles = (color: ColorTokens) =>
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   dot: { width: 8, height: 8, borderRadius: 4 },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.md },
+  warnRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
+  factRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.md },
+  factRowDivider: { borderTopWidth: 1, borderTopColor: color.border },
   actionBtn: {
     marginTop: space.lg,
     borderWidth: 1,

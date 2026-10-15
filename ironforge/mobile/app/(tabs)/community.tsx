@@ -386,6 +386,11 @@ export default function CommunityScreen() {
                   <Text style={[type.body, { color: color.textDim, marginTop: space.sm }]}>
                     {m.message}
                   </Text>
+                  {isAiSender(m.sender_type) ? (
+                    <Text style={[type.label, { color: color.muted, marginTop: space.xs }]}>
+                      {aiCaption(m.channel_slug)}
+                    </Text>
+                  ) : null}
                   <View style={s.rowCenter}>
                     <ReactionRow message={m} onPress={() => void toggleHeart(m.id)} />
                     <Pressable
@@ -403,6 +408,46 @@ export default function CommunityScreen() {
                       </Text>
                     </Pressable>
                   </View>
+
+                  {/* Inline reply preview (app images, 2026-10-14) — the most recent
+                      reply, shown right under the parent post. Absent on a server
+                      that predates latest_reply, so this is additive, never a gap. */}
+                  {m.latest_reply ? (
+                    <Pressable
+                      onPress={() => setThreadFor(m)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Reply from ${m.latest_reply.sender_name}: ${m.latest_reply.message}`}
+                      style={s.replyPreview}
+                    >
+                      <View style={s.replyPreviewRail} />
+                      <Avatar
+                        message={{
+                          id: 'latest-reply-preview',
+                          sender_name: m.latest_reply.sender_name,
+                          sender_type: m.latest_reply.sender_type,
+                          message: m.latest_reply.message,
+                          created_at: m.latest_reply.created_at,
+                          reactions: [],
+                        }}
+                      />
+                      <View style={{ flex: 1 }}>
+                        <View style={s.rowCenter}>
+                          <Text style={[type.label, { color: color.text, fontFamily: font.bodyBold }]}>
+                            {m.latest_reply.sender_name}
+                          </Text>
+                          {isAiSender(m.latest_reply.sender_type) ? (
+                            <View style={s.aiTag}>
+                              <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
+                            </View>
+                          ) : null}
+                          <Text style={[type.label, { color: color.muted }]}>{time(m.latest_reply.created_at)}</Text>
+                        </View>
+                        <Text style={[type.label, { color: color.textDim, marginTop: 2 }]} numberOfLines={2}>
+                          {m.latest_reply.message}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
                 </View>
               </View>
             </Card>
@@ -1014,6 +1059,22 @@ function showGuidelines() {
   )
 }
 
+/**
+ * AI-authorship caption under an AI post's body (app images, 2026-10-14: "AI-generated
+ * market update" on a Market Talk post, "AI-generated briefing" on a News post). The
+ * "AI" badge next to the sender name is the real APP-057 authorship disclosure — this
+ * caption is supplementary, so a channel this map doesn't recognize (including the
+ * "All" aggregate channel every scheduled Forge post is tagged with today) falls back
+ * to a generic, still-honest "AI-generated post" rather than guessing a wrong category.
+ */
+const AI_CAPTION_BY_CHANNEL: Record<string, string> = {
+  'market-talk': 'AI-generated market update',
+  'news-events': 'AI-generated briefing',
+}
+function aiCaption(channelSlug: string | undefined): string {
+  return (channelSlug && AI_CAPTION_BY_CHANNEL[channelSlug]) || 'AI-generated post'
+}
+
 function time(iso: string): string {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
@@ -1106,6 +1167,14 @@ const makeStyles = (color: ColorTokens) =>
   reactRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.md },
   reactBtn: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   replyBtn: { marginTop: space.md, marginLeft: space.md, paddingVertical: space.xs },
+  replyPreview: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: space.sm,
+    marginTop: space.md,
+    paddingLeft: space.md,
+  },
+  replyPreviewRail: { width: 2, alignSelf: 'stretch', backgroundColor: color.border, borderRadius: 1 },
   chipScroll: { marginVertical: space.lg },
   chipRow: { flexDirection: 'row', gap: space.sm, paddingRight: space.lg },
   chip: {

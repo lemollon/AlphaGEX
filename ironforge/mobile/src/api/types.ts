@@ -122,6 +122,9 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Contracts open on this trade (app images, 2026-10-14). Optional — an older
+   *  server predates this field; the live card falls back to not showing a count. */
+  contracts?: number
   /** Mirrors positions[0] — see LiveOpenPosition. Drives the lifecycle line. */
   target_dollars?: number | null
   stop_dollars?: number | null

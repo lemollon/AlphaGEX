@@ -190,6 +190,10 @@ export interface LiveOpenPosition {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Contracts open on THIS position (app images, 2026-10-14: shown beside the
+   *  live card's P&L). Straight off the position row, same source every other
+   *  per-position dollar figure here already reads from. */
+  contracts: number
   /**
    * Lifecycle line (UAT round two, mock #1). Dollar profit at the configured
    * profit target and dollar loss at the configured stop, derived from this
@@ -257,6 +261,8 @@ export interface LiveTrade {
   unrealized_pnl: number | null
   unrealized_pnl_pct: number | null
   pnl_source: 'live' | 'scanner_snapshot' | 'none'
+  /** Mirrors positions[0].contracts. */
+  contracts: number
   /** Mirrors positions[0] — see LiveOpenPosition for the lifecycle-line contract. */
   target_dollars: number | null
   stop_dollars: number | null
