@@ -24,13 +24,25 @@ export async function GET(req: NextRequest) {
     // customer typically has no ironforge_customer_bots mapping yet, so their first
     // entry lands on the empty branch, and that is exactly the moment the activation
     // confirmation must render.
-    const activationConfirmation = await getActivationConfirmation(viewer.customerId)
+    //
+    // membership is fetched here too, same reasoning: a Community-only member (no
+    // Spark/Flame bot) always lands on the empty branch below, and used to get no
+    // `membership` key at all — every page that reads CustomerShell's plan card off
+    // this response (dashboard, brokerage, settings, community) showed "No
+    // membership" for a real, active (free) Community member, contradicting the
+    // Billing page's own separate /api/billing/entitlements-based fetch, which
+    // correctly showed "Active". getMembership() already reads the billing DB, not
+    // the trading one getLiveSummary below depends on, so it needs no bot to resolve.
+    const [activationConfirmation, membership] = await Promise.all([
+      getActivationConfirmation(viewer.customerId),
+      getMembership(viewer.customerId),
+    ])
     if (!viewer.bot) {
       // Viewer has no live account (fresh signup / anonymous): empty state,
       // never another account's data.
-      return NextResponse.json({ empty: true, viewer, activation_confirmation: activationConfirmation })
+      return NextResponse.json({ empty: true, viewer, activation_confirmation: activationConfirmation, membership })
     }
-    const [summary, membership, milestones] = await Promise.all([
+    const [summary, milestones] = await Promise.all([
       getLiveSummary(viewer.bot, {
         allowAggregate: viewer.isOperator,
         person: viewer.person,
@@ -39,10 +51,6 @@ export async function GET(req: NextRequest) {
         // and the bot's default mode applies.
         mode: modeParam,
       }),
-      // Real entitlement from customer_bot_subscriptions. getLiveSummary() reads
-      // the trading DB and has no billing context, so it returns a neutral card;
-      // this replaces it with the viewer's actual plan/trial where one exists.
-      getMembership(viewer.customerId),
       // Same pattern as membership above: getLiveSummary has no customerId, so
       // it returns milestones: null; this resolves the real tenure/scan-count
       // badges and the spread below replaces the placeholder.
