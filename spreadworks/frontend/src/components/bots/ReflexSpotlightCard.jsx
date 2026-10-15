@@ -29,8 +29,8 @@ export default function ReflexSpotlightCard() {
         label: 'Backtest avg/trade',
         value: '+3.52%',
         color: GREEN,
-        sub: '2,702 trades · 605 symbols · 3.5y backtest',
       }}
+      statsLine="2,702 trades · 605 symbols · 3.5y backtest"
       footer={[
         {
           label: 'Total',

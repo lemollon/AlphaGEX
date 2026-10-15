@@ -45,6 +45,7 @@ export default function TalonSpotlightCard() {
         botStats={null}
         linkTo="/talon"
         headline={{ label: 'Total P&L', value: '…', color: '#64748b' }}
+        statsLine="…"
         footer={[
           { label: 'Total', value: '…' },
           { label: 'Equity', value: '…' },
@@ -58,6 +59,7 @@ export default function TalonSpotlightCard() {
 
   const winRate = status.win_rate != null ? `${Math.round(status.win_rate * 100)}% win` : 'no closed trades yet';
   const n = status.closed_trades || 0;
+  const openN = status.open_positions ?? 0;
 
   return (
     <BotCard
@@ -70,12 +72,13 @@ export default function TalonSpotlightCard() {
         color: pnlColor(status.total_pnl),
         sub: `since ${money(status.starting_balance)} paper start`,
       }}
+      statsLine={`${winRate} · ${n} trade${n === 1 ? '' : 's'}`}
       footer={[
         { label: 'Total', value: signedMoney(status.total_pnl), color: pnlColor(status.total_pnl) },
         { label: 'Equity', value: money(status.current_balance) },
-        { label: 'Open', value: status.open_positions ?? 0 },
+        { label: 'Open', value: openN },
       ]}
-      atRiskText={`${winRate} · ${n} trade${n === 1 ? '' : 's'}`}
+      atRiskText={openN > 0 ? `${openN} open position${openN === 1 ? '' : 's'}` : 'no open positions'}
       scanText={status.updated_at ? `updated ${relativeTime(status.updated_at)}` : 'no sync yet'}
     />
   );

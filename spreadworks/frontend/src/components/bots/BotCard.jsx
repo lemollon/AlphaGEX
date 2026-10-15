@@ -213,6 +213,14 @@ function AccountChip({ account }) {
 //   accountOverride    — { label, color } replaces the Paper/Live $ chip
 //   headline           — { label, value, color, sub } replaces the whole
 //                         "Today" block (skips the today/realized math)
+//   statsLine          — string, replaces the Sparkline+TradesLine slot
+//                         between the headline and the footer divider. A bot
+//                         with no botStats (REFLEX, TALON) still needs SOME
+//                         node in this slot, or its footer row sits ~45px
+//                         higher than every botStats-backed card next to it
+//                         in the same grid row — the real cause of REFLEX
+//                         visually "not matching" the rest of the fleet
+//                         (2026-10-15).
 //   footer             — [{ label, value, color, title }, × 3] replaces the
 //                         Total/Equity/Open 3-col grid
 //   atRiskText         — string, forces the "At risk" line even with no
@@ -220,7 +228,7 @@ function AccountChip({ account }) {
 //   scanText           — string, replaces "scanned Xm ago" on the bottom row
 export default function BotCard({
   row, botStats, isOpen,
-  linkTo, statusOverride, accountOverride, headline, footer, atRiskText, scanText,
+  linkTo, statusOverride, accountOverride, headline, statsLine, footer, atRiskText, scanText,
 }) {
   const id = row.bot;
   const meta = BOT_REGISTRY[id] || {};
@@ -434,11 +442,17 @@ export default function BotCard({
             )}
           </div>
 
-          {botStats && !botStats.error && (
-            <>
-              <Sparkline series={botStats.equity_series} />
-              <TradesLine trades={botStats.trades} />
-            </>
+          {statsLine ? (
+            <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: MUTED, marginTop: 4 }}>
+              {statsLine}
+            </div>
+          ) : (
+            botStats && !botStats.error && (
+              <>
+                <Sparkline series={botStats.equity_series} />
+                <TradesLine trades={botStats.trades} />
+              </>
+            )
           )}
 
           {/* total / equity / open */}
