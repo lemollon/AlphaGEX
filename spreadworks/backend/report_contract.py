@@ -291,14 +291,102 @@ DESIGNED_UNAVAILABLE = {
     ("macro", "fx"),
     ("macro", "commodities"),
     ("macro", "move"),
+    # Same permanent-impossibility class, different mechanism: report_policy.normalize_item()
+    # unconditionally relabels any producer value older than 90 seconds as "historical" with
+    # this exact reason, regardless of the field's own 600s live window. TradingVolatility's
+    # vendor engine is a periodic snapshot, not a sub-90s feed, and fetch+render alone takes
+    # longer than that -- these fields are for all practical purposes never "live".
+    ("candidate_analysis", "symbols"),
+    ("candidate_analysis", "catalysts"),
+    ("candidate_analysis", "quote_chain_freshness"),
+    ("candidate_analysis", "liquidity"),
+    ("candidate_analysis", "conditional_triggers"),
+    ("engine_consensus", "squeeze"),
+    ("engine_consensus", "trading_volatility_status"),
+    ("engine_consensus", "contradictions"),
+    ("trade_volatility_scan", "top_long_setups"),
+    ("trade_volatility_scan", "top_short_setups"),
+    ("trade_volatility_scan", "income_setups"),
+    ("trade_volatility_scan", "put_call_ratio"),
+    ("trade_volatility_scan", "expected_move_trend"),
+    ("day_strategy", "tv_structure_check"),
+    ("near_forward_strategy", "tv_structure_check"),
+    ("forward_strategy", "tv_structure_check"),
 }
 
-def validate_report(blocks):
+# Fields that are unavailable/historical only because this is the day's FIRST checkpoint,
+# generated before the market opens (kind="morning", sent 7:35 AM CT, open is 8:30 AM CT).
+# Every one of these is produced from live market/options activity (realized vol, chain IV,
+# trade-time flow, breadth, value area, gamma, same-day baselines) and genuinely refreshes to
+# "live" once trading resumes -- unlike DESIGNED_UNAVAILABLE above, this is NOT a permanent
+# exemption: a market_open or intraday report still showing these as historical/unavailable
+# is a real problem and must still read INCOMPLETE. Leron, 2026-10-15: "loosen it" -- scoped
+# to the morning checkpoint only, so a normal pre-market morning reads COMPLETE.
+MORNING_PRE_OPEN_UNAVAILABLE = {
+    ("breadth", "advance_decline"), ("breadth", "up_down_volume"),
+    ("breadth", "percent_above_vwap"), ("breadth", "new_highs_lows"),
+    ("candidate_analysis", "surface"),
+    # Options cannot trade before the 8:30 AM open -- "No freshly qualified conditional
+    # package; options closed..." is unconditionally true at 7:35 AM, not a "no trigger
+    # fired" gap. A market_open/intraday report with these still unavailable is real news.
+    ("contract_packages", "expiry"), ("contract_packages", "strikes"), ("contract_packages", "legs"),
+    ("contract_packages", "bid_ask"), ("contract_packages", "greeks"), ("contract_packages", "oi"),
+    ("contract_packages", "volume"), ("contract_packages", "debit_credit"),
+    ("contract_packages", "max_risk_reward"), ("contract_packages", "breakeven"), ("contract_packages", "liquidity"),
+    ("day_strategy", "thesis"), ("day_strategy", "evidence"), ("day_strategy", "conflicts"), ("day_strategy", "contracts"),
+    ("near_forward_strategy", "thesis"), ("near_forward_strategy", "evidence"),
+    ("near_forward_strategy", "conflicts"), ("near_forward_strategy", "contracts"),
+    ("forward_strategy", "thesis"), ("forward_strategy", "evidence"),
+    ("forward_strategy", "conflicts"), ("forward_strategy", "contracts"),
+    ("expected_move", "percent"), ("expected_move", "dollars"), ("expected_move", "lower"),
+    ("expected_move", "upper"), ("expected_move", "reference_spot"), ("expected_move", "expiry"),
+    ("expected_move", "method"), ("expected_move", "budget_used"), ("expected_move", "price_location"),
+    ("flow", "provider_provenance"), ("flow", "exchange_timestamp"), ("flow", "retrieval_timestamp"),
+    ("flow", "age"), ("flow", "classified_coverage"), ("flow", "unclassified_coverage"),
+    ("flow", "calls_bought"), ("flow", "calls_sold"), ("flow", "puts_bought"), ("flow", "puts_sold"),
+    ("flow", "expiry_buckets"), ("flow", "price_vix_confirmation"),
+    ("forward_strikes", "expiries"), ("forward_strikes", "strikes"), ("forward_strikes", "contracts"),
+    ("forward_strikes", "premium"), ("forward_strikes", "prints"),
+    ("forward_strikes", "contemporaneous_bid_ask"), ("forward_strikes", "initiation_estimate"),
+    ("futures_context", "index_confirmation"),
+    ("gamma", "coverage"), ("gamma", "net_gex"), ("gamma", "flip"), ("gamma", "walls"), ("gamma", "expiry_buckets"),
+    ("horizon_comparison", "morning_baseline"), ("horizon_comparison", "current"),
+    ("horizon_comparison", "forward_options"), ("horizon_comparison", "futures_confirmation"),
+    ("market_control", "control_side"), ("market_control", "control_evidence"),
+    ("market_control", "control_confidence"), ("market_control", "forward_control_outlook"),
+    ("morning_comparison", "morning_timestamp"), ("morning_comparison", "price_location"),
+    ("morning_comparison", "move_usage"), ("morning_comparison", "chop_status"),
+    ("morning_comparison", "stall_risk"), ("morning_comparison", "setup_status"),
+    ("morning_comparison", "regime_shift"), ("morning_comparison", "regime_label_shift"),
+    ("premium_selling", "suitability"), ("premium_selling", "iv_rv_meaning_today"),
+    ("premium_selling", "forward_implications"), ("premium_selling", "credit_structure_fit"),
+    ("premium_selling", "avoid"),
+    ("profile", "poc"), ("profile", "vah"), ("profile", "val"), ("profile", "hvn"),
+    ("profile", "lvn"), ("profile", "method"), ("profile", "acceptance_rejection"),
+    ("range_stall", "chop_low"), ("range_stall", "midpoint"), ("range_stall", "chop_high"),
+    ("range_stall", "room_to_edges"), ("range_stall", "two_fresh_confirmations"),
+    ("range_stall", "actual_rejection"), ("range_stall", "first_touch_watch"), ("range_stall", "breakout_ends_chop"),
+    ("risk_on_defensive", "verdict"), ("risk_on_defensive", "evidence"), ("risk_on_defensive", "conflicts"),
+    ("risk_on_defensive", "change_vs_baselines"), ("risk_on_defensive", "regime_label"),
+    ("sector_credit", "relative_returns"), ("sector_credit", "leadership"), ("sector_credit", "credit_confirmation"),
+    ("smile", "expiry"), ("smile", "put_25d_iv"), ("smile", "atm_iv"), ("smile", "call_25d_iv"),
+    ("smile", "strikes"), ("smile", "delta_method"),
+    ("surface", "atm_iv"), ("surface", "skew_25d"), ("surface", "term_0dte"), ("surface", "term_1_5dte"),
+    ("surface", "term_6_20dte"), ("surface", "term_21plus"), ("surface", "iv_vs_realized"),
+    ("surface", "vix_family"), ("surface", "interpretation"),
+    ("visuals", "market_map_png"), ("visuals", "smile_term_png"), ("visuals", "flow_png"),
+    ("visuals", "baseline_comparison_png"), ("visuals", "gamma_expiry_png"), ("visuals", "sector_credit_png"),
+    ("visuals", "surface_png"), ("visuals", "term_structure_png"), ("visuals", "volume_profile_png"),
+}
+
+def validate_report(blocks, kind=None):
     """Validate actual structured output, including explicit per-field disclosures.
-    
+
     Each required field is {value: ..., status: live|historical|unavailable,
     reason: ..., source_timestamp: ..., age_seconds: ..., confidence: ...}.
-    Historical and unavailable fields never satisfy complete live data.
+    Historical and unavailable fields never satisfy complete live data, except the
+    designed-permanent exemptions above, and (for kind="morning" only) fields that are
+    structurally pre-open.
     """
     import math
     from .report_policy import finite_tree, parse_clock
@@ -337,7 +425,8 @@ def validate_report(blocks):
                     errors.append(key + ": invalid confidence")
             else:
                 errors.append(key + ": invalid status")
-    blocking_unavailable = [k for k in unavailable if tuple(k.split(".", 1)) not in DESIGNED_UNAVAILABLE]
+    exempt = DESIGNED_UNAVAILABLE | (MORNING_PRE_OPEN_UNAVAILABLE if kind == "morning" else set())
+    blocking_unavailable = [k for k in unavailable if tuple(k.split(".", 1)) not in exempt]
     return {"contract_version": CONTRACT_VERSION, "publishable": not errors,
             "complete_live_data": not errors and not blocking_unavailable,
             "errors": errors, "unavailable_fields": unavailable}
@@ -376,7 +465,7 @@ def prepare_report_delivery(payload):
             if field not in block:
                 block[field] = {"status": "unavailable",
                                 "reason": "Producer supplied no verified observation."}
-    check = validate_report(blocks)
+    check = validate_report(blocks, kind=payload.get("kind"))
     payload["report_validation"] = check
     payload["report_blocks"] = blocks
     if not check["publishable"]:
@@ -399,7 +488,7 @@ def validate_rendered_report(payload):
     import re
     from datetime import datetime, timezone
     blocks = payload.get("report_blocks") or {}
-    check = validate_report(blocks)
+    check = validate_report(blocks, kind=payload.get("kind"))
     errors = list(check["errors"])
     markdown = payload.get("report_markdown") or ""
     now = datetime.now(timezone.utc)
