@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StyleSheet } from 'react-native'
-import { Stack, useRouter } from 'expo-router'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
 import useSWRInfinite from 'swr/infinite'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
@@ -20,7 +21,6 @@ import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { Card, Loading, Empty, ErrorState } from '@/components/ui'
-import { Sheet, SheetHeader } from '@/components/Sheet'
 import { Mascot } from '@/components/Brand'
 
 /** Rows whose `data.agent` names a real agent get that agent's mascot (10.4 design:
@@ -129,110 +129,117 @@ export default function NotificationsScreen() {
   }
 
   return (
-    <>
-      <Stack.Screen
-        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
-      />
-      <Sheet onClose={() => router.back()}>
-        {(close) => (
-          <>
-            <SheetHeader
-              title="Notifications"
-              right={
-                unreadCount > 0 ? (
-                  <Pressable onPress={markAllRead} accessibilityRole="button" style={{ marginRight: space.sm }}>
-                    <Text style={[type.label, { color: color.accentText, fontFamily: font.bodyMedium }]}>
-                      Mark all read
-                    </Text>
-                  </Pressable>
-                ) : null
-              }
-              onClose={close}
-            />
-            {isLoading && !data ? (
-              <Loading label="Loading notifications…" />
-            ) : error && !data ? (
-              <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
-            ) : notifications.length === 0 ? (
-              <Empty
-                title="No notifications yet"
-                detail="Trade activity, brokerage alerts, and billing updates will show up here."
-              />
-            ) : (
-              <ScrollView
-                contentContainerStyle={{ padding: space.lg }}
-                onScroll={({ nativeEvent }) => {
-                  const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
-                  const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
-                  if (nearBottom && canLoadMore && !loadingMore) setSize(size + 1)
-                }}
-                scrollEventThrottle={200}
-              >
-                <Card style={{ padding: 0 }}>
-                  {notifications.map((item, i) => (
-                    <Pressable
-                      key={item.id}
-                      onPress={() => openNotification(item)}
-                      style={[s.row, i > 0 && s.rowDivider]}
-                      accessibilityRole="button"
-                      accessibilityLabel={`${item.title}. ${item.body}${item.read_at ? '' : '. Unread'}`}
-                    >
-                      {agentForNotification(item) ? (
-                        <View style={s.iconWrap}>
-                          <Mascot bot={agentForNotification(item)!} size={28} />
-                        </View>
-                      ) : (
-                        <View style={s.iconWrap}>
-                          <Ionicons name={iconForKind(item.kind)} size={20} color={color.textDim} />
-                        </View>
-                      )}
-                      <View style={{ flex: 1 }}>
-                        <View style={s.titleRow}>
-                          <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium, flex: 1 }]}>
-                            {item.title}
-                          </Text>
-                          {!item.read_at ? <View style={s.unreadDot} /> : null}
-                        </View>
-                        <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={2}>
-                          {item.body}
-                        </Text>
-                        <Text style={[type.label, { color: color.muted, marginTop: 4 }]}>{formatWhen(item.created_at)}</Text>
-                      </View>
-                    </Pressable>
-                  ))}
-                </Card>
-                {/* 10.4 design shows no pagination control at all — older rows load
-                    silently from the onScroll near-bottom check above. A spinner
-                    rather than a tappable button keeps that invisible, while still
-                    telling a member mid-fetch that more is on the way. */}
-                {loadingMore ? (
-                  <View style={s.loadMore}>
-                    <ActivityIndicator size="small" color={color.muted} />
-                  </View>
-                ) : null}
-              </ScrollView>
-            )}
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: color.bg }}>
+      <View style={s.header}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={s.backBtn}
+        >
+          <Ionicons name="chevron-back" size={26} color={color.text} />
+        </Pressable>
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18, flex: 1 }]} numberOfLines={1}>
+          Notifications
+        </Text>
+        {unreadCount > 0 ? (
+          <Pressable onPress={markAllRead} accessibilityRole="button">
+            <Text style={[type.label, { color: color.accentText, fontFamily: font.bodyMedium }]}>
+              Mark all read
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
 
-            <Pressable
-              onPress={() => {
-                close()
-                router.push('/notification-preferences')
-              }}
-              style={s.settingsRow}
-              accessibilityRole="button"
-            >
-              <Ionicons name="settings-outline" size={16} color={color.muted} />
-              <Text style={[type.label, { color: color.muted }]}>Notification settings</Text>
-            </Pressable>
-          </>
-        )}
-      </Sheet>
-    </>
+      {isLoading && !data ? (
+        <Loading label="Loading notifications…" />
+      ) : error && !data ? (
+        <ErrorState message={String((error as Error).message)} onRetry={() => mutate()} />
+      ) : notifications.length === 0 ? (
+        <Empty
+          title="No notifications yet"
+          detail="Trade activity, brokerage alerts, and billing updates will show up here."
+        />
+      ) : (
+        <ScrollView
+          contentContainerStyle={{ padding: space.lg }}
+          onScroll={({ nativeEvent }) => {
+            const { layoutMeasurement, contentOffset, contentSize } = nativeEvent
+            const nearBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 200
+            if (nearBottom && canLoadMore && !loadingMore) setSize(size + 1)
+          }}
+          scrollEventThrottle={200}
+        >
+          <Card style={{ padding: 0 }}>
+            {notifications.map((item, i) => (
+              <Pressable
+                key={item.id}
+                onPress={() => openNotification(item)}
+                style={[s.row, i > 0 && s.rowDivider]}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.title}. ${item.body}${item.read_at ? '' : '. Unread'}`}
+              >
+                {agentForNotification(item) ? (
+                  <View style={s.iconWrap}>
+                    <Mascot bot={agentForNotification(item)!} size={28} />
+                  </View>
+                ) : (
+                  <View style={s.iconWrap}>
+                    <Ionicons name={iconForKind(item.kind)} size={20} color={color.textDim} />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <View style={s.titleRow}>
+                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium, flex: 1 }]}>
+                      {item.title}
+                    </Text>
+                    {!item.read_at ? <View style={s.unreadDot} /> : null}
+                  </View>
+                  <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={2}>
+                    {item.body}
+                  </Text>
+                  <Text style={[type.label, { color: color.muted, marginTop: 4 }]}>{formatWhen(item.created_at)}</Text>
+                </View>
+              </Pressable>
+            ))}
+          </Card>
+          {/* 10.4 design shows no pagination control at all — older rows load
+              silently from the onScroll near-bottom check above. A spinner
+              rather than a tappable button keeps that invisible, while still
+              telling a member mid-fetch that more is on the way. */}
+          {loadingMore ? (
+            <View style={s.loadMore}>
+              <ActivityIndicator size="small" color={color.muted} />
+            </View>
+          ) : null}
+        </ScrollView>
+      )}
+
+      <Pressable
+        onPress={() => router.push('/notification-preferences')}
+        style={s.settingsRow}
+        accessibilityRole="button"
+      >
+        <Ionicons name="settings-outline" size={16} color={color.muted} />
+        <Text style={[type.label, { color: color.muted }]}>Notification settings</Text>
+      </Pressable>
+    </SafeAreaView>
   )
 }
 
 const makeStyles = (color: ColorTokens) =>
   StyleSheet.create({
+    header: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: space.md,
+      paddingHorizontal: space.lg,
+      paddingVertical: space.md,
+      borderBottomColor: color.border,
+      borderBottomWidth: 1,
+    },
+    backBtn: { padding: space.xs },
     row: { flexDirection: 'row', gap: space.md, paddingVertical: space.md, paddingHorizontal: space.lg },
     rowDivider: { borderTopWidth: 1, borderTopColor: color.border },
     iconWrap: {

@@ -1,22 +1,19 @@
 /**
  * Bottom sheet chrome (10.4 redesign, mobile addendum §2 "Sheets & components table"):
  * max 88% height, 26px top radius, grab handle; drag-down >90px or scrim tap dismisses;
- * scrolls inside (the screen supplies its own ScrollView); traps focus for VoiceOver via
+ * scrolls inside (caller supplies its own ScrollView); traps focus for VoiceOver via
  * `accessibilityViewIsModal`.
  *
- * Presentation is the ROUTE's own `transparentModal` Stack.Screen option — each sheet
- * screen (app/agents/[bot].tsx, app/trade/[id].tsx, app/notifications.tsx, app/sparky.tsx)
- * sets this on itself, which keeps the previous tab mounted and visible underneath a
- * transparent screen. This component then paints the scrim + sliding card on top of it,
- * with no second native Modal involved — nesting RN's own <Modal> inside an
- * already-modal-presented screen caused Android back-button and status-bar fights and
- * was dropped in favor of this single-layer approach.
- *
- * Because this is a normal expo-router screen (just transparently presented), deep links
- * (`ironforge://ledger/trade/{id}`, `/agents/spark`, etc.) and Android's hardware back
- * button both keep working exactly as any other route: a deep link mounts the screen (the
- * sheet slides up over whatever is already on screen), and back pops the route — which is
- * exactly "Android back closes an open sheet first" per the spec, for free.
+ * REBUILT 2026-10 (see 2026-10-14-sparky-blank-transcript-sheet-remount incident):
+ * this used to be presented via each route's own `presentation: 'transparentModal'`
+ * Stack.Screen option (app/sparky.tsx, app/agents/[bot].tsx, app/trade/[id].tsx,
+ * app/notifications.tsx, app/notification-preferences.tsx all did this), which kept
+ * the previous tab mounted underneath a transparent screen. That caused a customer-
+ * reproduced remount-loop bug in Sparky; all five were converted back to plain pushed
+ * screens with a manual back-chevron header. This component's only remaining caller is
+ * `EmberTradeSheet` in app/(tabs)/ledger.tsx, which renders it as an in-place overlay
+ * from local state (no route/transparentModal involved) — a plain conditionally-rendered
+ * child never has the background-screen-stays-mounted failure mode this traded away.
  */
 import { useEffect, useRef, useState } from 'react'
 import {

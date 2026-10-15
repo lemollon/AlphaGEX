@@ -784,17 +784,17 @@ function AgentRow({ agent, onPress }: { agent: LiveAgent; onPress: () => void })
 
 function Shell({ children }: { children: React.ReactNode }) {
   const { colors: color } = useTheme()
-  // Every sheet screen (/sparky, /notifications, /agents/[bot], /trade/[id]) used
-  // to be a plain full-screen pushed route; the 10.4 redesign made them all
-  // presentation:'transparentModal' sheets that deliberately keep THIS tab mounted
-  // and visible underneath (Sheet.tsx's own doc comment) — but React Navigation
-  // doesn't automatically stop a backgrounded screen from receiving touches just
-  // because another is presented on top of it the way these sheets are built.
-  // Confirmed live: a tap meant for a control inside a freshly-opened sheet also
-  // reaching a button here re-triggered navigation, reopening the sheet from
-  // scratch and wiping whatever it was about to show (#3332's Sparky repro).
-  // `pointerEvents="none"` while this tab isn't focused closes that for every
-  // button here at once, instead of gating each one individually.
+  // LEGACY DEFENSE-IN-DEPTH: /sparky, /notifications, /agents/[bot], /trade/[id]
+  // used to be presentation:'transparentModal' sheets that deliberately kept THIS
+  // tab mounted and visible underneath (Sheet.tsx's old doc comment) — React
+  // Navigation doesn't automatically stop a backgrounded screen from receiving
+  // touches just because another is presented on top of it the way those sheets
+  // were built. Confirmed live: a tap meant for a control inside a freshly-opened
+  // sheet also reached a button here, re-triggering navigation and reopening the
+  // sheet from scratch (#3332's Sparky repro). All four were converted back to
+  // plain pushed screens (2026-10-15, see the Sparky remount incident), which
+  // natively gates touches to a backgrounded screen — so this `pointerEvents`
+  // gate is no longer load-bearing, but left in place since it's harmless.
   const isFocused = useIsFocused()
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={['top']}>
