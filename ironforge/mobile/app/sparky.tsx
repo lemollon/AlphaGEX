@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   View,
   Text,
@@ -11,18 +11,17 @@ import {
   Linking,
   StyleSheet,
 } from 'react-native'
-import { Stack, useRouter } from 'expo-router'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
 // Deep import: `from '@expo/vector-icons'` reaches all 19 icon fonts.
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { sendSparkyMessage, SparkyUnavailableError, type SparkyTurn } from '@/api/sparky'
 import { SPARKY_AVATAR } from '@/components/Brand'
-import { Sheet, SheetHeader } from '@/components/Sheet'
 import { SUPPORT_EMAIL, supportMailto } from '@/support/contact'
 import { space, radius, type, font } from '@/theme/tokens'
 import { useTheme } from '@/theme/ThemeContext'
 import type { ColorTokens } from '@/theme/palette'
 import { trackEvent } from '@/analytics/trackEvent'
-import { reportClientError } from '@/monitoring/crashReport'
 
 /** 10.4 design `sugg` chips — exact copy, shown only on the empty state. */
 const SUGGESTIONS = [
@@ -39,77 +38,57 @@ const SUGGESTIONS = [
  * AI-authored message to be visibly labelled, and this whole screen is AI-authored.
  * The disclosure sits above the first message where it cannot be scrolled past unseen.
  *
- * History is server-side now (#264, POST /api/sparky/chat {message, conversationId}),
- * not screen-local — but this screen still starts a new conversationId every time it
- * mounts (the ref resets with the component), so reopening the sheet still begins a
- * visually fresh chat even though the server could resume the prior one if asked to.
+ * History is server-side (#264, POST /api/sparky/chat {message, conversationId}), not
+ * screen-local — but this screen still starts a new conversationId every time it mounts
+ * (the ref resets with the component), so reopening still begins a visually fresh chat
+ * even though the server could resume the prior one if asked to.
+ *
+ * REBUILT 2026-10-15: this used to be a `transparentModal` Sheet stacked on top of the
+ * still-mounted tab underneath it (the 10.4 "sheet redesign"). That architecture caused
+ * a customer-reproduced bug where the screen mounted and unmounted several times within
+ * a few seconds of opening it, each a fresh conversation, so nothing ever visibly
+ * persisted — confirmed via diagnostic logging across three repro sessions and NOT fixed
+ * by four rounds of narrower patches (a double-send guard, a nav debounce, a focus gate
+ * on one row, then on every tab's whole surface). Rather than add a fifth patch on top of
+ * a custom modal implementation that nothing else in the app uses this way, Sparky is now
+ * a plain pushed screen — exactly how it worked before the sheet redesign, and exactly
+ * how every other non-sheet screen in this app behaves: React Navigation's native stack
+ * mounts one screen at a time and gates touches to the background screen itself, so the
+ * whole class of "background screen still interactive/still mounted" bug no longer has
+ * anywhere to live. `/notifications`, `/agents/[bot]`, `/trade/[id]` and
+ * `/notification-preferences` still use the Sheet — this change is scoped to Sparky only.
  */
 export default function SparkyScreen() {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const router = useRouter()
-  // TEMP DIAGNOSTIC (2026-10-14): a customer reports sendSparkyMessage succeeding
-  // (confirmed server-side, real replies) while this screen's transcript never
-  // updates — reproduced three separate times, ruling out the double-fire race
-  // fixed alongside this. No code-level cause found by inspection; this reports
-  // to the existing [CLIENT_CRASH] log pipe (reportClientError, kind mislabeled
-  // as network_error — there's no better bucket, and this is temporary) so the
-  // NEXT occurrence has real data instead of another guess. Remove once resolved.
-  const instanceIdRef = useRef(`${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
-  useEffect(() => {
-    reportClientError({
-      kind: 'network_error',
-      message: `[sparky-diag] mount instance=${instanceIdRef.current}`,
-    })
-    return () => {
-      reportClientError({
-        kind: 'network_error',
-        message: `[sparky-diag] unmount instance=${instanceIdRef.current}`,
-      })
-    }
-  }, [])
   const [turns, setTurns] = useState<SparkyTurn[]>([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const scroller = useRef<ScrollView>(null)
-  // #264: the server now keeps the conversation's history (sparky_conversations/
-  // sparky_messages) — the client only ever sends ONE new message plus the id it
-  // got back last time, never the whole transcript. A ref, not state: it must
-  // not trigger a re-render, and `send` reads the latest value synchronously.
+  // #264: the server keeps the conversation's history (sparky_conversations/
+  // sparky_messages) — the client only ever sends ONE new message plus the id it got
+  // back last time, never the whole transcript. A ref, not state: it must not trigger a
+  // re-render, and `send` reads the latest value synchronously.
   const conversationIdRef = useRef<string | null>(null)
-  // `send` is a `useCallback` keyed on [draft, sending], so two touches that land
-  // before React re-renders between them both close over the SAME (stale) `sending
-  // === false` — the `if (!text || sending) return` guard below never sees the
-  // first touch's setSending(true). A customer's screen recording showed exactly
-  // this: a suggestion-chip tap produced two /api/sparky/chat calls 130ms apart.
-  // A ref updates synchronously, before any re-render, so it closes the gap.
+  // A ref, not the `sending` state: two touches landing before React re-renders between
+  // them would otherwise both close over the same stale `sending === false`, and the
+  // guard below would never see the first touch's in-flight request. Confirmed live via
+  // a customer screen recording that produced two /api/sparky/chat calls 130ms apart from
+  // one chip tap — a ref updates synchronously, before any re-render, so it closes that
+  // gap. (Unrelated to the mount/unmount rebuild above — this guard stays either way.)
   const sendingRef = useRef(false)
-
-  // TEMP DIAGNOSTIC — see the block at the top of this component.
-  useEffect(() => {
-    reportClientError({
-      kind: 'network_error',
-      message: `[sparky-diag] turns changed instance=${instanceIdRef.current} length=${turns.length}`,
-    })
-    // Only the length and instance id matter for this diagnostic — re-running on
-    // every turns identity change (the normal case) is the point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns.length])
 
   const send = useCallback(
     async (overrideText?: string) => {
       const text = (overrideText ?? draft).trim()
-      reportClientError({
-        kind: 'network_error',
-        message: `[sparky-diag] send() called instance=${instanceIdRef.current} text="${text.slice(0, 40)}" sendingRef=${sendingRef.current}`,
-      })
       if (!text || sendingRef.current) return
       sendingRef.current = true
 
       trackEvent('sparky_question', { mode: overrideText ? 'suggested' : 'typed' })
       // Captured by reference so the two updates below can find THIS call's own
-      // placeholder by identity, not by array position (see the comments at each).
+      // placeholder by identity, not by array position.
       const placeholder: SparkyTurn = { role: 'assistant', content: '' }
       setTurns((prev) => [...prev, { role: 'user', content: text }, placeholder])
       setDraft('')
@@ -119,11 +98,9 @@ export default function SparkyScreen() {
       try {
         const res = await sendSparkyMessage(text, conversationIdRef.current)
         conversationIdRef.current = res.conversationId
-        // Fill the trailing (placeholder) assistant turn with the full reply —
-        // one JSON response, not streamed deltas. Matched by identity (the exact
-        // placeholder object this call pushed), not by array position — `sendingRef`
-        // now rules out a second concurrent call, but this stays correct even if
-        // that guard is ever bypassed.
+        // Fill the trailing (placeholder) assistant turn with the full reply — one JSON
+        // response, not streamed deltas. Matched by identity (the exact placeholder
+        // object this call pushed), not array position.
         setTurns((prev) => {
           const idx = prev.findIndex((t) => t === placeholder)
           if (idx === -1) return prev
@@ -135,133 +112,119 @@ export default function SparkyScreen() {
         const msg =
           e instanceof SparkyUnavailableError ? e.message : (e as Error).message || 'Something went wrong.'
         setError(msg)
-        // Drop this call's own empty assistant placeholder, by identity, rather
-        // than assuming it's still the last entry in the array.
+        // Drop this call's own empty assistant placeholder, by identity, rather than
+        // assuming it's still the last entry in the array.
         setTurns((prev) => prev.filter((t) => t !== placeholder))
       } finally {
         sendingRef.current = false
         setSending(false)
       }
     },
-    [draft, sending],
+    [draft],
   )
 
   return (
-    <>
-      <Stack.Screen
-        options={{ presentation: 'transparentModal', animation: 'fade', contentStyle: { backgroundColor: 'transparent' } }}
-      />
-      <Sheet accent={color.spark} onClose={() => router.back()}>
-        {(close) => (
-          <>
-            <SheetHeader
-              title="Ask Sparky"
-              left={<Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />}
-              right={
-                <View style={s.aiTag}>
-                  <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>AI</Text>
-                </View>
-              }
-              onClose={close}
-            />
-            {/*
-              🚨 'padding' NEEDS AN ACCURATE DISTANCE FROM THE TOP OF THE SCREEN, AND THIS
-              VIEW DOESN'T HAVE ONE. 'padding' behaviour pads its own bottom by (keyboard
-              height − keyboardVerticalOffset), where that offset is meant to be this view's
-              own distance from the true screen top. This Sheet is a custom, non-full-screen
-              bottom sheet (Sheet.tsx: absolute, bottom:0, maxHeight 88% of window) — above
-              this KeyboardAvoidingView sits the grab handle AND SheetHeader, easily 100-200px
-              not accounted for by the hardcoded `keyboardVerticalOffset={8}` above. The result:
-              'padding' under-compensated by roughly that much, leaving the composer sitting
-              BEHIND the keyboard instead of above it — confirmed by a customer screenshot
-              showing the keyboard covering the entire message area.
-              'height' has no such dependency: it shrinks THIS view's own rendered height by
-              the keyboard's height directly, correct regardless of where the view sits on
-              screen. No offset prop needed.
-            */}
-            <KeyboardAvoidingView
-              style={{ flex: 1 }}
-              behavior={Platform.OS === 'ios' ? 'height' : undefined}
-            >
-              <ScrollView
-                ref={scroller}
-                contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }}
-                onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
-              >
-                <View style={s.disclosure}>
-                  <Ionicons name="information-circle-outline" size={16} color={color.textDim} />
-                  <Text style={[type.label, { color: color.textDim, flex: 1 }]}>
-                    Sparky is an AI assistant. It can help with your account, your agent and how
-                    IronForge works — it does not give trading advice and cannot place or change trades.
-                  </Text>
-                </View>
+    <SafeAreaView edges={['top', 'bottom']} style={{ flex: 1, backgroundColor: color.bg }}>
+      <View style={s.header}>
+        <Pressable
+          onPress={() => router.back()}
+          hitSlop={12}
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          style={s.backBtn}
+        >
+          <Ionicons name="chevron-back" size={26} color={color.text} />
+        </Pressable>
+        <Image source={SPARKY_AVATAR} style={s.avatar} resizeMode="contain" />
+        <Text style={[type.body, { color: color.text, fontFamily: font.bodyBold, fontSize: 18, flex: 1 }]} numberOfLines={1}>
+          Ask Sparky
+        </Text>
+        <View style={s.aiTag}>
+          <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>AI</Text>
+        </View>
+      </View>
 
-                {turns.length === 0 ? (
-                  <View style={s.empty}>
-                    <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
-                      What can I help with?
-                    </Text>
-                    <Text style={[type.body, { color: color.textDim, marginTop: space.sm, textAlign: 'center' }]}>
-                      Ask about your membership, your brokerage connection, or what your agent is doing
-                      right now.
-                    </Text>
-                    {/* Zero-effort canned prompts (10.4 design `.sugg`) — exact copy from
-                        the prototype's suggestion chips. */}
-                    <View style={s.sugg}>
-                      {SUGGESTIONS.map((q) => (
-                        <Pressable
-                          key={q}
-                          onPress={() => void send(q)}
-                          disabled={sending}
-                          accessibilityRole="button"
-                          style={s.suggChip}
-                        >
-                          <Text style={[type.label, { color: color.text, fontFamily: font.bodyMedium }]}>{q}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  </View>
-                ) : (
-                  turns.map((t, i) => <Bubble key={i} turn={t} pending={sending && i === turns.length - 1} />)
-                )}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={0}
+      >
+        <ScrollView
+          ref={scroller}
+          contentContainerStyle={{ padding: space.lg, paddingBottom: space.xl }}
+          onContentSizeChange={() => scroller.current?.scrollToEnd({ animated: true })}
+        >
+          <View style={s.disclosure}>
+            <Ionicons name="information-circle-outline" size={16} color={color.textDim} />
+            <Text style={[type.label, { color: color.textDim, flex: 1 }]}>
+              Sparky is an AI assistant. It can help with your account, your agent and how
+              IronForge works — it does not give trading advice and cannot place or change trades.
+            </Text>
+          </View>
 
-                {error ? (
-                  <View style={s.errorBox}>
-                    <Text style={[type.body, { color: color.neg }]}>{error}</Text>
-                    <Pressable onPress={() => void Linking.openURL(supportMailto('Sparky could not help'))}>
-                      <Text style={[type.label, { color: color.accentText, marginTop: space.sm }]}>
-                        Email {SUPPORT_EMAIL} instead
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-              </ScrollView>
-
-              <View style={s.composer}>
-                <TextInput
-                  value={draft}
-                  onChangeText={setDraft}
-                  placeholder="Ask Sparky…"
-                  placeholderTextColor={color.muted}
-                  style={s.input}
-                  multiline
-                  editable={!sending}
-                />
-                <Pressable
-                  onPress={() => void send()}
-                  disabled={sending || !draft.trim()}
-                  accessibilityRole="button"
-                  accessibilityLabel="Send"
-                  style={[s.send, (sending || !draft.trim()) && { opacity: 0.5 }]}
-                >
-                  <Ionicons name="send" size={18} color={color.text} />
-                </Pressable>
+          {turns.length === 0 ? (
+            <View style={s.empty}>
+              <Text style={[type.body, { color: color.text, fontFamily: font.bodyMedium }]}>
+                What can I help with?
+              </Text>
+              <Text style={[type.body, { color: color.textDim, marginTop: space.sm, textAlign: 'center' }]}>
+                Ask about your membership, your brokerage connection, or what your agent is doing
+                right now.
+              </Text>
+              {/* Zero-effort canned prompts (10.4 design `.sugg`) — exact copy from
+                  the prototype's suggestion chips. */}
+              <View style={s.sugg}>
+                {SUGGESTIONS.map((q) => (
+                  <Pressable
+                    key={q}
+                    onPress={() => void send(q)}
+                    disabled={sending}
+                    accessibilityRole="button"
+                    style={s.suggChip}
+                  >
+                    <Text style={[type.label, { color: color.text, fontFamily: font.bodyMedium }]}>{q}</Text>
+                  </Pressable>
+                ))}
               </View>
-            </KeyboardAvoidingView>
-          </>
-        )}
-      </Sheet>
-    </>
+            </View>
+          ) : (
+            turns.map((t, i) => <Bubble key={i} turn={t} pending={sending && i === turns.length - 1} />)
+          )}
+
+          {error ? (
+            <View style={s.errorBox}>
+              <Text style={[type.body, { color: color.neg }]}>{error}</Text>
+              <Pressable onPress={() => void Linking.openURL(supportMailto('Sparky could not help'))}>
+                <Text style={[type.label, { color: color.accentText, marginTop: space.sm }]}>
+                  Email {SUPPORT_EMAIL} instead
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </ScrollView>
+
+        <View style={s.composer}>
+          <TextInput
+            value={draft}
+            onChangeText={setDraft}
+            placeholder="Ask Sparky…"
+            placeholderTextColor={color.muted}
+            style={s.input}
+            multiline
+            editable={!sending}
+          />
+          <Pressable
+            onPress={() => void send()}
+            disabled={sending || !draft.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
+            style={[s.send, (sending || !draft.trim()) && { opacity: 0.5 }]}
+          >
+            <Ionicons name="send" size={18} color={color.text} />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
@@ -296,6 +259,7 @@ const makeStyles = (color: ColorTokens) =>
     borderBottomColor: color.border,
     borderBottomWidth: 1,
   },
+  backBtn: { padding: space.xs },
   avatar: { width: 30, height: 30 },
   aiTag: {
     borderWidth: 1,
