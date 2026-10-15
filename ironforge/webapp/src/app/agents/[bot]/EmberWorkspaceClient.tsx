@@ -7,6 +7,7 @@ import { fetcher } from '@/lib/fetcher'
 import CustomerShell, { type PlanCardData } from '@/components/customer/CustomerShell'
 import { EMBER_AGENT } from '@/lib/agents/ember'
 import type { EmberStatusRow, EmberTradeRow } from '@/lib/ember-trades'
+import EmberPerformanceChart from '@/components/ember/EmberPerformanceChart'
 
 interface SummaryResp { membership?: PlanCardData | null }
 interface EntitlementsResp { bots?: string[] }
@@ -186,6 +187,13 @@ export default function EmberWorkspaceClient() {
               </span>
               <EmberPauseControl />
             </div>
+          </div>
+
+          {/* Performance chart — Ember's own cumulative realized P&L, see
+              EmberPerformanceChart's header comment for why this isn't an
+              "Account Value" the way Spark/Flame's chart has one. */}
+          <div className="mt-4">
+            <EmberPerformanceChart />
           </div>
 
           {/* Trade book */}

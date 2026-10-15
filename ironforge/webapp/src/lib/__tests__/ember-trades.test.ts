@@ -4,7 +4,7 @@
  * read shapes the API routes depend on. Mocks ../db the same way
  * calldiag-tracker.test.ts does.
  */
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 const queryCalls: Array<{ sql: string; params?: unknown[] }> = []
 const execCalls: string[] = []
@@ -25,6 +25,7 @@ import {
   getEmberTrades,
   upsertEmberStatus,
   getEmberStatus,
+  getEmberEquityCurve,
 } from '../ember-trades'
 
 afterEach(() => {
@@ -97,5 +98,74 @@ describe('ember_status singleton', () => {
     expect(await getEmberStatus()).toBeNull()
     queryReturn = [{ state: 'ok', last_heartbeat: '2026-10-05T19:58:00Z', open_positions: [] }]
     expect(await getEmberStatus()).toEqual({ state: 'ok', last_heartbeat: '2026-10-05T19:58:00Z', open_positions: [] })
+  })
+})
+
+describe('getEmberEquityCurve — built from ember_trades.pnl, no equity_snapshots table exists', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-15T18:00:00Z')) // 1:00 PM CT, same calendar day as the two "today" rows below
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('returns an honest empty curve when there are no closed trades at all', async () => {
+    queryReturn = []
+    expect(await getEmberEquityCurve('all')).toEqual({ points: [], period_pnl: null })
+    expect(await getEmberEquityCurve('day')).toEqual({ points: [], period_pnl: null })
+  })
+
+  it('"all" is the running cumulative sum, period_pnl = the final total', async () => {
+    queryReturn = [
+      { id: 1, closed_at: '2026-10-01T15:00:00Z', pnl: '10.00' },
+      { id: 2, closed_at: '2026-10-05T15:00:00Z', pnl: '-4.00' },
+    ]
+    const curve = await getEmberEquityCurve('all')
+    expect(curve.points).toEqual([
+      { timestamp: '2026-10-01T15:00:00Z', cumulative_pnl: 10 },
+      { timestamp: '2026-10-05T15:00:00Z', cumulative_pnl: 6 },
+    ])
+    expect(curve.period_pnl).toBe(6)
+  })
+
+  it('"week" drops trades older than the cutoff and rebases period_pnl onto the pre-window baseline', async () => {
+    queryReturn = [
+      { id: 1, closed_at: '2026-09-01T15:00:00Z', pnl: '100.00' }, // outside the 7-day window -> becomes the baseline
+      { id: 2, closed_at: '2026-10-14T15:00:00Z', pnl: '5.00' },
+    ]
+    const curve = await getEmberEquityCurve('week')
+    expect(curve.points[0].cumulative_pnl).toBe(100) // cutoff anchor = baseline, not zero
+    expect(curve.points[curve.points.length - 1].cumulative_pnl).toBe(105)
+    expect(curve.period_pnl).toBe(5) // only this week's own trade counts, not the pre-existing $100
+  })
+
+  it('"week" returns an empty curve (not a flat fabricated line) when nothing closed in the window', async () => {
+    queryReturn = [{ id: 1, closed_at: '2026-01-01T15:00:00Z', pnl: '10.00' }]
+    const curve = await getEmberEquityCurve('week')
+    expect(curve).toEqual({ points: [], period_pnl: null })
+  })
+
+  it('"day" anchors on yesterday\'s close and steps through today\'s own trades when some exist', async () => {
+    queryReturn = [
+      { id: 1, closed_at: '2026-10-14T15:00:00Z', pnl: '50.00' }, // yesterday
+      { id: 2, closed_at: '2026-10-15T14:00:00Z', pnl: '3.00' }, // today, 9 AM CT
+      { id: 3, closed_at: '2026-10-15T16:00:00Z', pnl: '-1.00' }, // today, 11 AM CT
+    ]
+    const curve = await getEmberEquityCurve('day')
+    // anchor + today's 2 trades = 3 points, anchor sits at yesterday's close of 50
+    expect(curve.points).toHaveLength(3)
+    expect(curve.points[0].cumulative_pnl).toBe(50)
+    expect(curve.points[curve.points.length - 1].cumulative_pnl).toBe(52)
+    expect(curve.period_pnl).toBe(2) // +3 - 1, today's own change only
+  })
+
+  it('"day" still returns a 2-point line (never a single dot) when nothing closed today yet', async () => {
+    queryReturn = [{ id: 1, closed_at: '2026-10-14T15:00:00Z', pnl: '50.00' }]
+    const curve = await getEmberEquityCurve('day')
+    expect(curve.points).toHaveLength(2)
+    expect(curve.points[0].cumulative_pnl).toBe(50)
+    expect(curve.points[1].cumulative_pnl).toBe(50)
+    expect(curve.period_pnl).toBe(0)
   })
 })

@@ -166,3 +166,105 @@ export async function getEmberStatus(): Promise<EmberStatusRow | null> {
   )
   return rows[0] ?? null
 }
+
+export type EmberEquityPeriod = 'day' | 'week' | 'month' | 'year' | 'all'
+
+export interface EmberEquityPoint {
+  timestamp: string
+  cumulative_pnl: number
+}
+
+export interface EmberEquityCurve {
+  points: EmberEquityPoint[]
+  period_pnl: number | null
+}
+
+/** Same wall-clock-via-toLocaleString trick pt-tiers.ts' getCTNow() uses —
+ *  only ever compared for calendar-day equality below, never treated as a
+ *  precise UTC instant, so the lack of a timezone library is fine here. */
+function ctDateKey(iso: string): string {
+  const ct = new Date(new Date(iso).toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+  return `${ct.getFullYear()}-${ct.getMonth()}-${ct.getDate()}`
+}
+
+/** Rolling cutoff window (week/month/year) or the full history (all) — same
+ *  shape as api/live/equity-curve/route.ts's period filter, rebased onto
+ *  cumulative realized P&L instead of an account balance (Ember has none —
+ *  see this file's header comment and the API route's). Never returns a
+ *  single dot: an empty window just returns no points, and the UI shows the
+ *  honest "no closed trades yet" state instead of a fabricated flat line. */
+function windowedCurve(full: EmberEquityPoint[], cutoffMs: number | null): EmberEquityCurve {
+  if (cutoffMs == null) {
+    return { points: full, period_pnl: full[full.length - 1].cumulative_pnl }
+  }
+  const cutoff = Date.now() - cutoffMs
+  const before = full.filter((p) => new Date(p.timestamp).getTime() < cutoff)
+  const inWindow = full.filter((p) => new Date(p.timestamp).getTime() >= cutoff)
+  if (inWindow.length === 0) {
+    return { points: [], period_pnl: null }
+  }
+  const baseline = before.length > 0 ? before[before.length - 1].cumulative_pnl : 0
+  const cutoffAnchor = { timestamp: new Date(cutoff).toISOString(), cumulative_pnl: baseline }
+  const periodPnl = Math.round((inWindow[inWindow.length - 1].cumulative_pnl - baseline) * 100) / 100
+  return { points: [cutoffAnchor, ...inWindow], period_pnl: periodPnl }
+}
+
+/**
+ * Ember's equity curve — built ENTIRELY from `ember_trades`' own realized
+ * `pnl`, because that is the only $ figure this pipeline tracks for Ember.
+ * There is no `ember_equity_snapshots` table, no `starting_capital`, and no
+ * live-balance read anywhere in this file or the sync route: REFLEX computes
+ * its own live Robinhood `total_value` internally (run_reflex.py,
+ * `capital_floor_ok()`) but reflex_sync.py never persists or syncs it here
+ * (see that script's own documented schema gaps). Wiring that through is a
+ * real improvement but touches the already-armed REFLEX sleeve and its sync
+ * script — out of scope for this read-only webapp chart; flagged, not fixed.
+ *
+ * So `cumulative_pnl` below is cumulative REALIZED P&L, not account value —
+ * open positions contribute nothing (no field exists to mark them to market
+ * either). "Day" always exists as a toggle option (binding, 2026-10-15) even
+ * though `closed_at` is date-precision only (reflex_sync.py's own documented
+ * gap #2): it anchors on the cumulative total immediately before today's
+ * first closed trade (or "1 minute ago" when there were none yet today),
+ * then steps through today's own trades in their stored order — the finest
+ * resolution the real data actually supports, never a fabricated intraday
+ * bucket.
+ */
+export async function getEmberEquityCurve(period: EmberEquityPeriod): Promise<EmberEquityCurve> {
+  await ensureTables()
+  const rows = await query<{ id: number; closed_at: string | null; pnl: string | null }>(
+    `SELECT id, closed_at::text, pnl
+       FROM ${TRADES_TABLE}
+      WHERE status = 'closed' AND pnl IS NOT NULL AND closed_at IS NOT NULL
+      ORDER BY closed_at, id`,
+  )
+  if (rows.length === 0) return { points: [], period_pnl: null }
+
+  let running = 0
+  const full: EmberEquityPoint[] = rows.map((r) => {
+    running = Math.round((running + Number(r.pnl)) * 100) / 100
+    return { timestamp: r.closed_at as string, cumulative_pnl: running }
+  })
+
+  if (period === 'day') {
+    const todayKey = ctDateKey(new Date().toISOString())
+    const todaysPoints = full.filter((p) => ctDateKey(p.timestamp) === todayKey)
+    const priorPoints = full.filter((p) => ctDateKey(p.timestamp) !== todayKey)
+    const dayOpenPnl = priorPoints.length > 0 ? priorPoints[priorPoints.length - 1].cumulative_pnl : 0
+    const now = Date.now()
+    const anchorTimestamp = new Date(
+      todaysPoints.length > 0 ? new Date(todaysPoints[0].timestamp).getTime() - 60_000 : now - 60_000,
+    ).toISOString()
+    const points =
+      todaysPoints.length > 0
+        ? [{ timestamp: anchorTimestamp, cumulative_pnl: dayOpenPnl }, ...todaysPoints]
+        : [{ timestamp: anchorTimestamp, cumulative_pnl: dayOpenPnl }, { timestamp: new Date(now).toISOString(), cumulative_pnl: dayOpenPnl }]
+    const periodPnl = Math.round((points[points.length - 1].cumulative_pnl - dayOpenPnl) * 100) / 100
+    return { points, period_pnl: periodPnl }
+  }
+
+  if (period === 'week') return windowedCurve(full, 7 * 86_400_000)
+  if (period === 'month') return windowedCurve(full, 30 * 86_400_000)
+  if (period === 'year') return windowedCurve(full, 365 * 86_400_000)
+  return windowedCurve(full, null) // 'all'
+}
