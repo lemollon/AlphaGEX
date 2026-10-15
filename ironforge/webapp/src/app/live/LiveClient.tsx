@@ -265,7 +265,14 @@ export default function LiveClient({ account }: { account: LiveBot }) {
                   ahead of every engagement/transparency card. Same position on mobile and
                   desktop now, so it no longer needs the old lg: swap with Market Conditions. */}
               <div className="order-2">
-                <TodayPerformanceChart account={summary?.account ?? null} intraday={summary?.intraday ?? null} marketOpen={summary?.market.open ?? false} accent={accent} />
+                <TodayPerformanceChart
+                  bot={account}
+                  account={summary?.account ?? null}
+                  intraday={summary?.intraday ?? null}
+                  intradayPreviousDay={summary?.intraday_previous_day ?? null}
+                  marketOpen={summary?.market.open ?? false}
+                  accent={accent}
+                />
               </div>
               {/* Reframes a no-trade day as the strategy's protection rules working,
                   not the bot doing nothing. Renders nothing when the count could not

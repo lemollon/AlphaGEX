@@ -366,6 +366,52 @@ export async function getLiveSummary(
       : null,
   }))
 
+  // --- Yesterday's closing series (the "never go blank" chart fallback) --
+  // Only queried when today's own series can't draw a line (pre-market, a
+  // snapshot gap, right after close) — the common case needs nothing extra.
+  // Honest-data rule: null when there is no prior session with data either
+  // (a genuinely new account), which is the one case the chart may go empty.
+  let intradayPreviousDay: LiveSummary['intraday_previous_day'] = null
+  if (intraday.length < 2) {
+    try {
+      const prevRows = await dbQuery(
+        `SELECT bucket AS snapshot_time,
+                SUM(balance) AS balance,
+                SUM(unrealized_pnl) AS unrealized_pnl
+         FROM (
+           SELECT date_trunc('minute', snapshot_time) AS bucket,
+                  balance, unrealized_pnl,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY date_trunc('minute', snapshot_time),
+                                 person, COALESCE(account_type, 'sandbox')
+                    ORDER BY snapshot_time DESC
+                  ) AS rn
+           FROM ${botTable(BOT, 'equity_snapshots')}
+           WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date = (
+             SELECT MAX((snapshot_time AT TIME ZONE 'America/Chicago')::date)
+             FROM ${botTable(BOT, 'equity_snapshots')}
+             WHERE (snapshot_time AT TIME ZONE 'America/Chicago')::date < ${CT_TODAY}
+               ${dteFilter} ${prodFilter}
+           )
+             ${dteFilter} ${prodFilter}
+         ) s
+         WHERE rn = 1
+         GROUP BY bucket
+         ORDER BY bucket ASC`,
+      )
+      if (prevRows.length > 0) {
+        const prevOpenBalance = num(prevRows[0].balance)
+        intradayPreviousDay = prevRows.map((r) => ({
+          timestamp: String(r.snapshot_time),
+          equity: Math.round((num(r.balance) + num(r.unrealized_pnl)) * 100) / 100,
+          pnl: Math.round((num(r.balance) + num(r.unrealized_pnl) - prevOpenBalance) * 100) / 100,
+        }))
+      }
+    } catch {
+      intradayPreviousDay = null
+    }
+  }
+
   // --- Risky setups skipped this month --------------------------------
   // Honest-data rule: null (never a fabricated number) when either query
   // above failed. A count of exactly 0 is real and must still render.
@@ -473,6 +519,7 @@ export async function getLiveSummary(
       disclosure: paper ? paperDisclosure(BOT, { customerOrdersLive: isExecutorArmed() }) : null,
     },
     intraday,
+    intraday_previous_day: intradayPreviousDay,
     membership: {
       plan: 'IronForge Membership',
       badge: 'Early Access',

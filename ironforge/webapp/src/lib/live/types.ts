@@ -106,6 +106,14 @@ export interface LiveSummary {
   // pnl = day P&L anchored at day-open BALANCE (includes an overnight hold's carry, so the
   // curve ends where "Today's Result" reads); equity = absolute value for the tooltip.
   intraday: Array<{ timestamp: string; equity: number; pnl?: number | null }>
+  /**
+   * Yesterday's closing intraday series — minute-bucketed, same shape as `intraday`
+   * above. Populated ONLY when `intraday` has fewer than 2 points (pre-market, a
+   * snapshot gap, right after close): the chart's "never go blank" fallback holds
+   * the last real trading day's full curve on screen instead of a text placeholder.
+   * null when there is no prior session with data either (genuinely zero history).
+   */
+  intraday_previous_day: Array<{ timestamp: string; equity: number; pnl?: number | null }> | null
   membership: {
     plan: string
     badge: string
