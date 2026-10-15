@@ -232,6 +232,7 @@ function Bubble({ turn, pending }: { turn: SparkyTurn; pending: boolean }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
   const mine = turn.role === 'user'
+  const textColor = mine ? color.text : color.textDim
   return (
     <View style={[s.bubble, mine ? s.mine : s.theirs]}>
       {!mine ? (
@@ -240,12 +241,116 @@ function Bubble({ turn, pending }: { turn: SparkyTurn; pending: boolean }) {
           <Text style={[type.label, { color: color.sparkText, fontFamily: font.bodyMedium }]}>Sparky AI</Text>
         </View>
       ) : null}
-      <Text style={[type.body, { color: mine ? color.text : color.textDim }]}>
-        {turn.content}
-        {pending && !turn.content ? 'Thinking…' : ''}
-      </Text>
+      {pending && !turn.content ? (
+        <Text style={[type.body, { color: textColor }]}>Thinking…</Text>
+      ) : mine ? (
+        <Text style={[type.body, { color: textColor }]}>{turn.content}</Text>
+      ) : (
+        <SparkyMarkdown content={turn.content} textColor={textColor} />
+      )}
     </View>
   )
+}
+
+/**
+ * Sparky's persona (`buildSparkySystemPrompt`, ironforge/webapp/src/lib/support/persona.ts)
+ * explicitly tells the model to answer in markdown and to link screens in-app, e.g.
+ * `[Manage billing](/account/billing)` — a real instruction, not an accident. This screen
+ * was dumping `turn.content` straight into a plain `<Text>`, so every `**bold**` and
+ * `[label](/path)` rendered as literal asterisks/brackets instead of formatting. This is
+ * a minimal, dependency-free renderer for exactly what that persona actually produces —
+ * bold, bullet lines, and links — rather than pulling in a general markdown library for a
+ * handful of short chat replies. Links to a relative app path (`/account/billing`) route
+ * in-app via expo-router; an absolute `https://…` link opens in the system browser.
+ */
+function SparkyMarkdown({ content, textColor }: { content: string; textColor: string }) {
+  const { colors: color } = useTheme()
+  const router = useRouter()
+  const onLink = useCallback(
+    (url: string) => {
+      if (/^https?:\/\//i.test(url)) void Linking.openURL(url)
+      else router.push(url as Parameters<typeof router.push>[0])
+    },
+    [router],
+  )
+  const lines = content.split('\n')
+  const blocks: React.ReactNode[] = []
+  let i = 0
+  let key = 0
+  while (i < lines.length) {
+    const bulletMatch = lines[i].match(/^\s*[-*]\s+(.*)$/)
+    if (bulletMatch) {
+      const items: string[] = []
+      while (i < lines.length) {
+        const m = lines[i].match(/^\s*[-*]\s+(.*)$/)
+        if (!m) break
+        items.push(m[1])
+        i++
+      }
+      blocks.push(
+        <View key={`blk-${key++}`} style={{ marginBottom: space.sm }}>
+          {items.map((item, idx) => (
+            <View key={idx} style={{ flexDirection: 'row' }}>
+              <Text style={[type.body, { color: textColor }]}>{'• '}</Text>
+              <Text style={[type.body, { color: textColor, flex: 1 }]}>
+                {renderInlineMarkdown(item, color, onLink, `b${key}-${idx}`)}
+              </Text>
+            </View>
+          ))}
+        </View>,
+      )
+      continue
+    }
+    if (lines[i].trim() === '') {
+      i++
+      continue
+    }
+    blocks.push(
+      <Text key={`blk-${key++}`} style={[type.body, { color: textColor, marginBottom: space.xs }]}>
+        {renderInlineMarkdown(lines[i], color, onLink, `p${key}`)}
+      </Text>,
+    )
+    i++
+  }
+  return <>{blocks}</>
+}
+
+function renderInlineMarkdown(
+  text: string,
+  color: ColorTokens,
+  onLink: (url: string) => void,
+  keyPrefix: string,
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = []
+  const re = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)]+)\)/g
+  let last = 0
+  let i = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    if (m[1] !== undefined) {
+      nodes.push(
+        <Text key={`${keyPrefix}-${i++}`} style={{ fontFamily: font.bodyBold }}>
+          {m[1]}
+        </Text>,
+      )
+    } else {
+      const label = m[2]
+      const url = m[3]
+      nodes.push(
+        <Text
+          key={`${keyPrefix}-${i++}`}
+          style={{ color: color.accentText, textDecorationLine: 'underline' }}
+          onPress={() => onLink(url)}
+        >
+          {label}
+        </Text>,
+      )
+    }
+    last = re.lastIndex
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
 }
 
 const makeStyles = (color: ColorTokens) =>
