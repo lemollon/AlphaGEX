@@ -44,6 +44,7 @@ import {
   ACCOUNT_REQUIREMENTS,
   TRADING_SCHEDULE,
   RISK_SUMMARY,
+  SESSION_LABEL,
 } from '@/agents/copy'
 import { getPlanCatalog } from '@/enroll/api'
 import type { PlanCatalog } from '@/enroll/types'
@@ -136,13 +137,26 @@ export default function AgentDetailScreen() {
     eligibleAccountCount: eligibleAccounts.length,
   })
 
+  // App images (2026-10-14): when there's an active trade, the header reads
+  // "{Session} · {N} contracts" rather than the longer server headline, with a
+  // "Trade open" status pill beside it; a paused agent gets a "Paused" pill. Both
+  // are real, already-fetched fields (trade.active/contracts, action.kind) — every
+  // other state keeps the existing headline/dot-only fallback rather than guessing
+  // a short label for a case the design didn't show.
+  const activeTrade = liveAgent?.trade?.active ? liveAgent.trade : null
+  const headerSubtitle = activeTrade?.contracts
+    ? `${SESSION_LABEL[bot]} · ${activeTrade.contracts} contract${activeTrade.contracts === 1 ? '' : 's'}`
+    : liveAgent?.state?.headline ?? action.label
+  const headerPillLabel = activeTrade ? 'Trade open' : action.kind === 'paused' ? 'Paused' : null
+
   return (
     <Shell
       bot={bot}
       router={router}
       left={<Mascot bot={bot} size={36} />}
-      subtitle={liveAgent?.state?.headline ?? action.label}
+      subtitle={headerSubtitle}
       dotColor={liveAgent?.state ? dotColorFor(liveAgent.state.dot, color) : color.muted}
+      pillLabel={headerPillLabel}
     >
       <ScrollView contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}>
         {/* App images (2026-10-14): an active/paused agent's screen goes straight
@@ -219,6 +233,7 @@ function Shell({
   left,
   subtitle,
   dotColor,
+  pillLabel,
 }: {
   bot: AgentBot
   router: ReturnType<typeof useRouter>
@@ -226,6 +241,9 @@ function Shell({
   left?: React.ReactNode
   subtitle?: string
   dotColor?: string
+  /** Short status text beside the dot (app images, 2026-10-14: "Trade open" /
+   *  "Paused"). Absent renders the plain dot alone, unchanged from before. */
+  pillLabel?: string | null
 }) {
   const { colors: color } = useTheme()
   const s = useMemo(() => makeStyles(color), [color])
@@ -253,7 +271,14 @@ function Shell({
             </Text>
           ) : null}
         </View>
-        {dotColor ? <View style={[s.dot, { backgroundColor: dotColor }]} /> : null}
+        {pillLabel && dotColor ? (
+          <View style={[s.statusPill, { backgroundColor: `${dotColor}22` }]}>
+            <View style={[s.dot, { backgroundColor: dotColor }]} />
+            <Text style={[type.label, { color: dotColor, fontFamily: font.bodyMedium }]}>{pillLabel}</Text>
+          </View>
+        ) : dotColor ? (
+          <View style={[s.dot, { backgroundColor: dotColor }]} />
+        ) : null}
       </View>
       {children}
     </SafeAreaView>
@@ -368,6 +393,7 @@ function CurrentAgentSection({
         connsSWR={connsSWR}
         pauseSWR={pauseSWR}
       />
+      {bot !== 'ember' || EMBER_PAUSE_UI_ENABLED ? <PauseDisclosure /> : null}
     </>
   )
 }
@@ -675,6 +701,20 @@ function PauseResumeControl({
       </Text>
     </Pressable>
   )
+}
+
+/** Same copy the Account tab's "Pause/Resume all agents" confirm dialog already
+ *  uses (account.tsx's confirmPauseAll) — shown here as a permanent caption under
+ *  the button rather than only inside a confirm dialog, matching the app images
+ *  (2026-10-14). Deliberately NOT the same string as PAUSE_COPY above, which is
+ *  this screen's own confirm-dialog body and was not flagged by the design. */
+const PAUSE_DISCLOSURE =
+  'Pausing stops new trades. An open trade stays protected and closes by the end of its session.'
+
+function PauseDisclosure() {
+  const { colors: color } = useTheme()
+  const s = useMemo(() => makeStyles(color), [color])
+  return <Text style={s.pauseDisclosure}>{PAUSE_DISCLOSURE}</Text>
 }
 
 function SetupRequiredSection({ bot, label }: { bot: AgentBot; label: string }) {
@@ -1122,6 +1162,14 @@ const makeStyles = (color: ColorTokens) =>
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowCenter: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
   divider: { height: 1, backgroundColor: color.border, marginVertical: space.md },
   warnRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   factRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: space.md },
@@ -1132,6 +1180,13 @@ const makeStyles = (color: ColorTokens) =>
     borderRadius: radius.md,
     paddingVertical: space.md,
     alignItems: 'center',
+  },
+  pauseDisclosure: {
+    ...type.label,
+    color: color.muted,
+    textAlign: 'center',
+    marginTop: space.md,
+    paddingHorizontal: space.md,
   },
   pauseResumeBtn: {
     marginTop: space.lg,
