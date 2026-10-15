@@ -45,6 +45,31 @@ describe('GET /api/ember/equity-curve', () => {
     expect(getEmberEquityCurve).toHaveBeenCalledWith('day')
   })
 
+  it('omits strategy (combined across reflex/cinder/talon) when none is passed', async () => {
+    ;(resolveEmberOwner as any).mockResolvedValue('cust-1')
+    ;(getEmberEquityCurve as any).mockResolvedValue({ points: [], period_pnl: null })
+    const res = await GET(req('/api/ember/equity-curve?period=all'))
+    expect(getEmberEquityCurve).toHaveBeenCalledWith('all')
+    const body = await res.json()
+    expect(body.strategy).toBe('all')
+  })
+
+  it('passes a valid strategy through, and reports it back', async () => {
+    ;(resolveEmberOwner as any).mockResolvedValue('cust-1')
+    ;(getEmberEquityCurve as any).mockResolvedValue({ points: [], period_pnl: null })
+    const res = await GET(req('/api/ember/equity-curve?period=all&strategy=cinder'))
+    expect(getEmberEquityCurve).toHaveBeenCalledWith('all', 'cinder')
+    const body = await res.json()
+    expect(body.strategy).toBe('cinder')
+  })
+
+  it('ignores an invalid strategy value (falls back to combined)', async () => {
+    ;(resolveEmberOwner as any).mockResolvedValue('cust-1')
+    ;(getEmberEquityCurve as any).mockResolvedValue({ points: [], period_pnl: null })
+    await GET(req('/api/ember/equity-curve?period=all&strategy=bogus'))
+    expect(getEmberEquityCurve).toHaveBeenCalledWith('all')
+  })
+
   it('500s cleanly on a DB failure, never a thrown error', async () => {
     ;(resolveEmberOwner as any).mockResolvedValue('cust-1')
     ;(getEmberEquityCurve as any).mockRejectedValue(new Error('db down'))

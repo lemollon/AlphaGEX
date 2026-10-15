@@ -41,6 +41,8 @@ describe('ensureTables (via first call)', () => {
     const ddl = execCalls.join('\n')
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ember_trades')
     expect(ddl).toContain('UNIQUE (source_ref)')
+    expect(ddl).toContain("strategy TEXT NOT NULL DEFAULT 'reflex'")
+    expect(ddl).toContain("ALTER TABLE ember_trades ADD COLUMN IF NOT EXISTS strategy")
     expect(ddl).toContain('CREATE TABLE IF NOT EXISTS ember_status')
     expect(ddl).toContain('id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1)')
   })
@@ -52,7 +54,13 @@ describe('upsertEmberTrade — idempotent by source_ref', () => {
     const call = queryCalls.find((c) => c.sql.includes('INSERT INTO ember_trades'))
     expect(call).toBeDefined()
     expect(call!.sql).toContain('ON CONFLICT (source_ref) DO UPDATE SET')
-    expect(call!.params).toEqual([null, null, 'SPY', null, 10, 12.5, null, null, 'open', 'SPY|2026-10-05'])
+    expect(call!.params).toEqual([null, null, 'SPY', null, 10, 12.5, null, null, 'open', 'reflex', 'SPY|2026-10-05'])
+  })
+
+  it('defaults strategy to "reflex" when omitted, but honors an explicit strategy', async () => {
+    await upsertEmberTrade({ sourceRef: 'XYZ|2026-10-15', symbol: 'XYZ', status: 'open', strategy: 'cinder' })
+    const call = queryCalls.find((c) => c.sql.includes('INSERT INTO ember_trades'))!
+    expect(call.params![9]).toBe('cinder')
   })
 
   it('calling twice with the same source_ref re-states the row through the same upsert path (never a second distinct insert statement)', async () => {
@@ -64,8 +72,8 @@ describe('upsertEmberTrade — idempotent by source_ref', () => {
     for (const call of inserts) expect(call.sql).toContain('ON CONFLICT (source_ref) DO UPDATE SET')
     // Same source_ref both times — the DB, not this module, is what collapses
     // them to one row; this asserts the key sent is stable across calls.
-    expect(inserts[0].params![9]).toBe('SPY|2026-10-05')
-    expect(inserts[1].params![9]).toBe('SPY|2026-10-05')
+    expect(inserts[0].params![10]).toBe('SPY|2026-10-05')
+    expect(inserts[1].params![10]).toBe('SPY|2026-10-05')
   })
 
   it('serializes legs/open_positions as JSON text, not a raw object, for the jsonb column', async () => {
@@ -82,6 +90,15 @@ describe('getEmberTrades', () => {
     expect(rows).toEqual([{ id: 1, symbol: 'SPY' }])
     const call = queryCalls.find((c) => c.sql.includes('SELECT') && c.sql.includes('FROM ember_trades'))!
     expect(call.sql).toContain('ORDER BY opened_at DESC NULLS LAST')
+    expect(call.sql).toContain('strategy')
+  })
+
+  it('filters by strategy when one is passed, combined (no WHERE) otherwise', async () => {
+    queryReturn = [{ id: 1, symbol: 'XYZ', strategy: 'cinder' }]
+    await getEmberTrades(200, 'cinder')
+    const call = queryCalls.find((c) => c.sql.includes('SELECT') && c.sql.includes('FROM ember_trades'))!
+    expect(call.sql).toContain('WHERE strategy = $1')
+    expect(call.params).toEqual(['cinder', 200])
   })
 })
 
@@ -114,6 +131,14 @@ describe('getEmberEquityCurve — built from ember_trades.pnl, no equity_snapsho
     queryReturn = []
     expect(await getEmberEquityCurve('all')).toEqual({ points: [], period_pnl: null })
     expect(await getEmberEquityCurve('day')).toEqual({ points: [], period_pnl: null })
+  })
+
+  it('filters to one sleeve when a strategy is passed, combined (no strategy predicate) otherwise', async () => {
+    queryReturn = [{ id: 1, closed_at: '2026-10-05T15:00:00Z', pnl: '5.00' }]
+    await getEmberEquityCurve('all', 'talon')
+    const call = queryCalls.find((c) => c.sql.includes('FROM ember_trades'))!
+    expect(call.sql).toContain('strategy = $1')
+    expect(call.params).toEqual(['talon'])
   })
 
   it('"all" is the running cumulative sum, period_pnl = the final total', async () => {
