@@ -500,6 +500,21 @@ const SLOTS: Array<{ slot: ForgeSlot; hourET: number }> = [
   { slot: 'recap', hourET: 17 },
 ]
 
+/**
+ * Which real channel each scheduled slot posts into (Leron, 2026-10-15) —
+ * every scheduled post used to go into the 'all-chat' aggregate channel,
+ * which has no category of its own, so the app images' per-post AI caption
+ * ("AI-generated market update" / "AI-generated briefing") had nothing to
+ * key off. Premarket/recap are framing-the-day pieces → news-events;
+ * midday/powerhour are in-session market commentary → market-talk.
+ */
+const SLOT_CHANNEL: Record<ForgeSlot, string> = {
+  premarket: 'news-events',
+  midday: 'market-talk',
+  powerhour: 'market-talk',
+  recap: 'news-events',
+}
+
 export async function maybePostScheduledUpdate(): Promise<void> {
   if (!isForgeConfigured()) return
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
@@ -520,7 +535,7 @@ export async function maybePostScheduledUpdate(): Promise<void> {
   )
   if (claimed === 0) return
   try {
-    const channelId = await getChannelId(DEFAULT_CHANNEL)
+    const channelId = await getChannelId(SLOT_CHANNEL[due.slot])
     if (!channelId) return
     const text = await generateScheduledPost(due.slot)
     const messageId = await insertMessage({
