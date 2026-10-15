@@ -143,11 +143,51 @@ export default function AccountScreen() {
   const [togglingAgents, setTogglingAgents] = useState<Set<string>>(new Set())
   const [bioAvailable, setBioAvailable] = useState(false)
   const [bioOn, setBioOn] = useState(false)
+  // Inline "Trade opened or closed" / "Daily summary" switches (10.4 design Account
+  // tab "Alerts & display" — three rows: trade alerts, daily summary, dark mode).
+  // Same /api/notifications/preferences the full preferences screen uses; this just
+  // exposes the two most-used toggles right here instead of requiring a trip to
+  // Notification Settings for them. "Trade opened or closed" is shown as ONE switch
+  // (the design has no separate opened/closed rows) and sets both trade_opened and
+  // trade_closed together.
+  const { data: notifPrefs, mutate: mutateNotifPrefs } = useSWR<{
+    ok: boolean
+    preferences: Record<string, boolean>
+  }>('/api/notifications/preferences', (p: string) =>
+    api<{ ok: boolean; preferences: Record<string, boolean> }>(p),
+  )
+  const [notifPending, setNotifPending] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     biometricsAvailable().then(setBioAvailable)
     isBiometricEnabled().then(setBioOn)
   }, [])
+
+  async function toggleNotifPrefs(pendingKey: string, patch: Record<string, boolean>) {
+    if (!notifPrefs?.preferences) return
+    const previous = notifPrefs.preferences
+    void mutateNotifPrefs(
+      { ...notifPrefs, preferences: { ...previous, ...patch } },
+      { revalidate: false },
+    )
+    setNotifPending((p) => new Set(p).add(pendingKey))
+    try {
+      const res = await api<{ ok: boolean; preferences: Record<string, boolean> }>(
+        '/api/notifications/preferences',
+        { method: 'PUT', body: patch },
+      )
+      void mutateNotifPrefs(res, { revalidate: false })
+    } catch {
+      // Roll back — the server never saw the change, so the switch must not claim it did.
+      void mutateNotifPrefs({ ...notifPrefs, preferences: previous }, { revalidate: false })
+    } finally {
+      setNotifPending((p) => {
+        const next = new Set(p)
+        next.delete(pendingKey)
+        return next
+      })
+    }
+  }
 
   async function openBilling() {
     try {
@@ -579,13 +619,39 @@ export default function AccountScreen() {
           <SectionLabel>Alerts and Display</SectionLabel>
         </View>
         <Card>
-          <Row
-            icon="notifications-outline"
-            label="Notifications"
-            detail="Alerts and push preferences"
-            onPress={() => router.push('/notifications')}
-            first
-          />
+          {/* 10.4 design Account tab "Alerts & display": three inline switches —
+              trade alerts, daily summary, dark mode — not a link-out row. Full
+              per-category control (brokerage health, billing, community, etc.)
+              still lives at Notification Settings, reachable from the header bell. */}
+          <View style={[s.rowBetween, s.row]}>
+            <View style={{ flex: 1, paddingRight: space.md }}>
+              <View style={s.rowCenter}>
+                <Ionicons name="notifications-outline" size={18} color={color.textDim} />
+                <Text style={[type.body, { color: color.text }]}>Trade opened or closed</Text>
+              </View>
+            </View>
+            <Switch
+              value={!!notifPrefs?.preferences.trade_opened && !!notifPrefs?.preferences.trade_closed}
+              disabled={!notifPrefs || notifPending.has('trade')}
+              onValueChange={(v) => void toggleNotifPrefs('trade', { trade_opened: v, trade_closed: v })}
+              trackColor={{ true: color.accent, false: color.border }}
+            />
+          </View>
+          <View style={[s.rowBetween, s.row, s.rowDivider]}>
+            <View style={{ flex: 1, paddingRight: space.md }}>
+              <View style={s.rowCenter}>
+                <Ionicons name="mail-outline" size={18} color={color.textDim} />
+                <Text style={[type.body, { color: color.text }]}>Daily summary</Text>
+              </View>
+              <Text style={[type.label, { color: color.muted, marginTop: 2 }]}>After the close</Text>
+            </View>
+            <Switch
+              value={!!notifPrefs?.preferences.daily_summary}
+              disabled={!notifPrefs || notifPending.has('daily_summary')}
+              onValueChange={(v) => void toggleNotifPrefs('daily_summary', { daily_summary: v })}
+              trackColor={{ true: color.accent, false: color.border }}
+            />
+          </View>
           {/* 10.4 design (ironforge-app.html `#dmSw`): an inline Switch, not the
               Alert.alert System/Light/Dark picker this used to be. The design's own
               row is a plain binary "Dark mode" toggle with no inline System option,
@@ -621,7 +687,7 @@ export default function AccountScreen() {
           <Row
             image={SPARKY_AVATAR}
             label="Ask Sparky"
-            detail="Get instant help from the IronForge AI agent"
+            detail="Instant answers about your account"
             onPress={() => {
               if (!isFocused) return
               const now = Date.now()
