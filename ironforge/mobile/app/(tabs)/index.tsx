@@ -38,7 +38,7 @@ import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPerio
 import { greetingForHour } from '@/live/greeting'
 import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
-import { AGENT_LABEL, AGENT_BLURB, NEXT_SESSION_SHORT } from '@/agents/copy'
+import { AGENT_LABEL, SESSION_LABEL, NEXT_SESSION_SHORT } from '@/agents/copy'
 import { getPlanCatalog } from '@/enroll/api'
 import type { PlanCatalog } from '@/enroll/types'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
@@ -588,6 +588,7 @@ export default function ForgeScreen() {
           <AddAgentRow
             key={bot}
             bot={bot}
+            subtitle={addAgentSubtitle(bot, catalog)}
             priceLabel={addAgentPriceLabel(bot, catalog)}
             onPress={() => router.push(agentDetailHref(bot))}
           />
@@ -665,6 +666,16 @@ function addAgentPriceLabel(bot: AgentBot, catalog: PlanCatalog | undefined): st
   return entry ? `$${entry.price_monthly}/mo` : null
 }
 
+/** "{Session} · {N} trading days free" (app images, 2026-10-14) — SESSION_LABEL is
+ *  real copy (the same windows TRADING_SCHEDULE documents), trial_days is the real
+ *  public plan catalogue field. Ember is free, not trial-based, so it gets only the
+ *  session label — claiming a trial for a free agent would be dishonest. Falls back
+ *  to the session label alone while the catalogue is still loading. */
+function addAgentSubtitle(bot: AgentBot, catalog: PlanCatalog | undefined): string {
+  if (bot === 'ember') return SESSION_LABEL.ember
+  return catalog ? `${SESSION_LABEL[bot]} · ${catalog.trial_days} trading days free` : SESSION_LABEL[bot]
+}
+
 function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
   const map: Record<PeriodTone, string> = {
     pos: color.pos,
@@ -684,10 +695,12 @@ function periodToneColor(tone: PeriodTone, color: ColorTokens): string {
  *  sensitive number this screen has no real source for. */
 function AddAgentRow({
   bot,
+  subtitle,
   priceLabel,
   onPress,
 }: {
   bot: AgentBot
+  subtitle: string
   priceLabel: string | null
   onPress: () => void
 }) {
@@ -704,7 +717,7 @@ function AddAgentRow({
           {`Add ${AGENT_LABEL[bot]}`}
         </Text>
         <Text style={[type.label, { color: color.muted, marginTop: 2 }]} numberOfLines={1}>
-          {AGENT_BLURB[bot]}
+          {subtitle}
         </Text>
       </View>
       {priceLabel ? (

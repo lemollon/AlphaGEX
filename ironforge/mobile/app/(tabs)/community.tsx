@@ -290,7 +290,14 @@ export default function CommunityScreen() {
       >
         <View style={s.rowBetween}>
           <Text style={s.title}>Community</Text>
-          <Text style={[type.label, { color: color.pos }]}>{data?.online_count ?? 0} online</Text>
+          {/* App images (2026-10-14): a filled pill with a dot, same pattern as the
+              Forge tab's market-status pill, not plain text. */}
+          <View style={[s.onlinePill, { backgroundColor: `${color.pos}22` }]}>
+            <View style={[s.onlineDot, { backgroundColor: color.pos }]} />
+            <Text style={[type.label, { color: color.pos, fontFamily: font.bodyMedium }]}>
+              {data?.online_count ?? 0} online
+            </Text>
+          </View>
         </View>
 
         {/* 10.4 design `.welcome`: a static card with a dismiss "X" that hides it for
@@ -305,7 +312,7 @@ export default function CommunityScreen() {
                 Welcome to Forge Community
               </Text>
               <Text style={[type.body, { color: color.textDim, marginTop: space.xs }]}>
-                Learn, share ideas, and grow together. Respect every member and protect the forge.
+                Learn, share ideas and grow together. Respect every member and protect the forge.
               </Text>
             </View>
             <Pressable
@@ -336,9 +343,9 @@ export default function CommunityScreen() {
             <Pressable
               key={c.slug}
               onPress={() => setChannel(c.slug)}
-              style={[s.chip, channel === c.slug && { backgroundColor: color.accent, borderColor: color.accent }]}
+              style={[s.chip, channel === c.slug && { backgroundColor: color.text, borderColor: color.text }]}
             >
-              <Text style={[type.label, { color: channel === c.slug ? color.text : color.textDim }]}>
+              <Text style={[type.label, { color: channel === c.slug ? color.bg : color.textDim, fontFamily: font.bodyMedium }]}>
                 {c.name}
               </Text>
             </Pressable>
@@ -374,7 +381,7 @@ export default function CommunityScreen() {
                       </Text>
                       {isAiSender(m.sender_type) ? (
                         <View style={s.aiTag}>
-                          <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
+                          <Text style={[type.label, { color: color.accent }]}>AI</Text>
                         </View>
                       ) : null}
                       <Text style={[type.label, { color: color.muted }]}>{time(m.created_at)}</Text>
@@ -437,7 +444,7 @@ export default function CommunityScreen() {
                           </Text>
                           {isAiSender(m.latest_reply.sender_type) ? (
                             <View style={s.aiTag}>
-                              <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
+                              <Text style={[type.label, { color: color.accent }]}>AI</Text>
                             </View>
                           ) : null}
                           <Text style={[type.label, { color: color.muted }]}>{time(m.latest_reply.created_at)}</Text>
@@ -829,7 +836,7 @@ function ThreadSheet({
                     </Text>
                     {isAiSender(parent.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
+                        <Text style={[type.label, { color: color.accent }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(parent.created_at)}</Text>
@@ -859,7 +866,7 @@ function ThreadSheet({
                     </Text>
                     {isAiSender(r.sender_type) ? (
                       <View style={s.aiTag}>
-                        <Text style={[type.label, { color: color.sparkText }]}>AI</Text>
+                        <Text style={[type.label, { color: color.accent }]}>AI</Text>
                       </View>
                     ) : null}
                     <Text style={[type.label, { color: color.muted }]}>{time(r.created_at)}</Text>
@@ -1101,6 +1108,15 @@ const makeStyles = (color: ColorTokens) =>
   StyleSheet.create({
   title: { ...type.title, color: color.text, fontFamily: font.display },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  onlinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.xs,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
+  onlineDot: { width: 8, height: 8, borderRadius: 4 },
   postRow: { flexDirection: 'row', alignItems: 'flex-start', gap: space.md },
   avatarImg: { width: 40, height: 40, borderRadius: 20 },
   avatarBubble: {
@@ -1184,9 +1200,9 @@ const makeStyles = (color: ColorTokens) =>
     paddingHorizontal: space.md,
     paddingVertical: space.sm,
   },
+  // App images (2026-10-14): a solid orange-tint pill, not an outlined blue tag.
   aiTag: {
-    borderWidth: 1,
-    borderColor: color.spark,
+    backgroundColor: `${color.accent}22`,
     borderRadius: radius.sm,
     paddingHorizontal: space.sm,
   },

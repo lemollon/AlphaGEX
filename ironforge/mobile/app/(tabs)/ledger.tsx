@@ -67,10 +67,10 @@ export default function LedgerScreen() {
   useScrollToTop(scrollRef)
   const [query, setQuery] = useState('')
   const [agent, setAgent] = useState<string>('all')
-  // 10.4 design `ledger()`: the Month chip (`st.ledgerRange==='21'`) is selected by
-  // default, not Week — the chips and their order already matched; only the
-  // default selection was off.
-  const [range, setRange] = useState<string>('21')
+  // App images (2026-10-14): the Week chip (`'5'`) is selected by default — confirmed
+  // against the full-length Ledger mockup, which shows "Week" filled and the other
+  // three chips outlined. A prior fix (since corrected) had defaulted this to Month.
+  const [range, setRange] = useState<string>('5')
   // Styled sheet for a tapped Ember trade — there is no /api/live/trades/[id]
   // equivalent for Ember (PR #3177 only shipped the list + status), so this opens
   // a sheet built entirely from the row the list already fetched, rather than a
@@ -458,12 +458,13 @@ function formatDate(d: string): string {
   })
 }
 
-/** The day header's "Weekday, Month D" label (10.4 app.html day-h). */
+/** The day header's "Weekday, Month D" label — app images (2026-10-14) show the
+ *  full weekday ("Friday, Oct 2"), not the three-letter abbreviation. */
 function formatDayLabel(d: string): string {
   const [y, m, day] = d.split('-').map(Number)
   if (!y || !m || !day) return d
   return new Date(y, m - 1, day).toLocaleDateString('en-US', {
-    weekday: 'short',
+    weekday: 'long',
     month: 'short',
     day: 'numeric',
   })

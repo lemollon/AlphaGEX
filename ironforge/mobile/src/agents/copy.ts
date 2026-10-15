@@ -75,6 +75,20 @@ export const TRADING_SCHEDULE: Record<AgentBot, string> = {
  * 8:30 AM, Flame at midday')") — a terse version of TRADING_SCHEDULE above,
  * same source windows, built for one short sentence rather than a paragraph.
  */
+/**
+ * Short session-name label (app images, 2026-10-14: "Morning session · 3
+ * contracts" on the agent sheet header, "Afternoon session · 5 trading days
+ * free" on Forge's "Add Flame" row) — the same real trading windows
+ * TRADING_SCHEDULE documents, just named rather than spelled out as a time
+ * range. Ember has no fixed window (Leron, 2026-10-06 — see TRADING_SCHEDULE
+ * above), so it gets a neutral label instead of a invented "session".
+ */
+export const SESSION_LABEL: Record<AgentBot, string> = {
+  spark: 'Morning session',
+  flame: 'Afternoon session',
+  ember: 'All day',
+}
+
 export const NEXT_SESSION_SHORT: Record<AgentBot, string> = {
   spark: 'at 8:30 AM',
   flame: 'at midday',
