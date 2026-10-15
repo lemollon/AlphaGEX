@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
 } from 'recharts';
 import ReflexSpotlightCard from '../components/bots/ReflexSpotlightCard';
+import TalonSpotlightCard from '../components/bots/TalonSpotlightCard';
 import BotCard, {
   GREEN, RED, AMBER, MUTED, STALE_MS, LABEL_STYLE,
   money, signedMoney, pnlColor, relativeTime, parseTs,
@@ -450,30 +451,28 @@ export default function FleetPage() {
         </select>
       </div>
 
-      {/* ── featured — REFLEX is new, has no row/stats data, and isn't
-          subject to the filter/sort controls above, so it renders once,
-          outside the grid, rather than inside visible.map(...). ── */}
+      {/* ── grid — REFLEX and TALON are spotlighted first: standalone stock
+          bots with no row/stats data from useFleet(), not subject to the
+          filter/sort controls above, so they always render pinned ahead of
+          whatever the live fleet below produces. They render INSIDE this
+          same grid now (not a separate one-card-wide grid above it) so they
+          sit flush with every other card instead of floating alone. ── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4" style={{ marginBottom: 16 }}>
         <ReflexSpotlightCard />
+        <TalonSpotlightCard />
+        {loading && !rows.length
+          ? Array.from({ length: 8 }).map((_, i) => <CardSkeleton key={i} />)
+          : visible.map(row => (
+            <BotCard key={row.bot} row={row} botStats={row._stats} isOpen={isOpen} />
+          ))}
       </div>
 
-      {/* ── grid ── */}
-      {loading && !rows.length ? (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => <CardSkeleton key={i} />)}
-        </div>
-      ) : visible.length === 0 ? (
+      {!loading && visible.length === 0 && (
         <div
           className="sw-glass rounded-xl text-center"
           style={{ padding: '56px 16px', fontSize: 13, color: MUTED }}
         >
           {rows.length === 0 ? 'No bots reported by the API.' : 'No bots match this filter.'}
-        </div>
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {visible.map(row => (
-            <BotCard key={row.bot} row={row} botStats={row._stats} isOpen={isOpen} />
-          ))}
         </div>
       )}
     </div>

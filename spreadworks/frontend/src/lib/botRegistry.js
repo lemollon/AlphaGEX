@@ -43,6 +43,10 @@ export const BOT_REGISTRY = {
   // target). Distinct from the already-LIVE backend/cinder_signal.py module
   // of the same name — see registry.py's "NAMING COLLISION" comment.
   cinder: { display: 'CINDER', strategy: 'bull_call_spread', ticker: 'SPY', version: 'v1.0' },
+  // TALON — PAPER-ONLY $500 small-cap squeeze stock bot (research/talon_paper_trader.py
+  // in the squeeze repo, see backend/routes_talon.py). Like REFLEX, it's a stock bot
+  // outside the options backend registry — included here only for display/theme metadata.
+  talon: { display: 'TALON', strategy: 'squeeze_breakout', ticker: 'multi', version: 'v1.0' },
 };
 
 export const STRATEGY_LABEL = {
@@ -72,6 +76,7 @@ export const STRATEGY_LABEL = {
   bull_put_spread:       'Put Credit Spread (0DTE)',
   bull_call_spread:      'Debit Call Spread (1DTE)',
   reactive_momentum:     'Reactive Momentum (stocks)',
+  squeeze_breakout:      'Small-Cap Squeeze Breakout (paper)',
 };
 
 // Live A/B pairs: each bot's equity chart overlays its peer's curve. SPLASH
@@ -326,5 +331,13 @@ export const BOT_THEME = {
     primaryRing: 'rgba(253,186,116,0.30)',
     glow:        'rgba(253,186,116,0.18)',
     accentBg:    'linear-gradient(135deg, rgba(253,186,116,0.22) 0%, rgba(253,186,116,0.03) 100%)',
+  },
+  talon: {
+    glyph:       'talon',                      // TALON = the strike itself — a claw/crosshair
+    primary:     '#38bdf8',                    // sky-400, matching TalonPage.jsx's own THEME.primary
+    primarySoft: 'rgba(56,189,248,0.10)',
+    primaryRing: 'rgba(56,189,248,0.30)',
+    glow:        'rgba(56,189,248,0.18)',
+    accentBg:    'linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.03) 100%)',
   },
 };

@@ -104,6 +104,21 @@ export default function BotGlyph({ kind, size = 18, strokeWidth = 1.6, className
     );
   }
 
+  if (kind === 'talon') {
+    // TALON = a claw/crosshair strike — distinct from the water/weather
+    // glyphs the rest of the fleet shares, since this bot is a stock
+    // squeeze-breakout entry, not a flow/GEX structure.
+    return (
+      <svg {...common}>
+        <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+        <path d="M12 2v5.5" />
+        <path d="M12 16.5V22" />
+        <path d="M2 12h5.5" />
+        <path d="M16.5 12H22" />
+      </svg>
+    );
+  }
+
   if (kind === 'sprout') {
     // MEADOW = a seedling sprouting two leaves from the ground. Reads as
     // growth/meadow — distinct from the water/wind glyphs of the siblings.
