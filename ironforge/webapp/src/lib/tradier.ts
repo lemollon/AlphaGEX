@@ -901,6 +901,18 @@ function flameCreds(): { apiKey: string | undefined; accountId: string | undefin
   }
 }
 
+/** SPARK's live-account creds, separate env names from FLAME so SPARK's arm switch
+ *  can never pick up FLAME's credentials by accident. Fail CLOSED: missing creds
+ *  ⇒ isSparkLiveArmed() is false ⇒ no order can be placed. Note SPARK's production
+ *  account is still resolved the existing way (ironforge_accounts, via BOT_ACCOUNTS)
+ *  — these creds are consulted ONLY by this gate, not by account resolution. */
+function sparkCreds(): { apiKey: string | undefined; accountId: string | undefined } {
+  return {
+    apiKey: process.env.TRADIER_SPARK_API_KEY,
+    accountId: process.env.TRADIER_SPARK_ACCOUNT_ID,
+  }
+}
+
 /**
  * FLAME real-money arm switch — DEFAULT OFF, and deliberately not a code default.
  *
@@ -938,21 +950,30 @@ function flameCreds(): { apiKey: string | undefined; accountId: string | undefin
  * May this bot PLACE a real order? Distinct from isProductionBot, which has come
  * to mean "has a production account at all" and is used by read paths too.
  *
- * 🚨 SPARK IS PAPER-ONLY (operator decision, 2026-08-16). It is allowlisted on
- * production account 6YB71371 in ironforge_accounts, and FLAME is about to gain
- * a live order path on that SAME account. Two bots sizing off one pot with
- * different rules is how you get an unintended double position, so SPARK is
- * blocked here in code rather than relying on the DB allowlist staying right.
+ * SPARK was blocked here outright from 2026-08-16 (operator decision): it is
+ * allowlisted on production account 6YB71371 in ironforge_accounts, the SAME
+ * account FLAME was about to gain a live order path on, and two bots sizing off
+ * one pot with different rules is how you get an unintended double position.
  *
- * SPARK keeps full READ access — its live balance, orders, positions and history
- * all still resolve. This blocks placement only.
+ * As of this PR, SPARK is wired to its own gate — isSparkLiveArmed() — mirroring
+ * FLAME's three-condition pattern (env knob SPARK_LIVE_ARMED, SPARK's own Tradier
+ * creds, an unpaused ironforge_production_pause row). This ships OFF: the knob
+ * defaults unset and SPARK's pause row is seeded born-paused (db.ts), so deploying
+ * this code places no order on its own. Per-customer-account auto-arming (active
+ * SPARK subscription + equity ≥ SPARK_MIN_EQUITY, see isSparkCustomerEligible) is
+ * layered on top in the customer-executor path.
  *
- * To re-enable SPARK live: remove it here AND confirm the account allowlist, and
- * decide explicitly how the two bots share buying power.
+ * The multi-bot capital-split question — an account running BOTH FLAME and SPARK
+ * on the identical pot — is explicitly DEFERRED to a future release and is NOT
+ * solved by this gate. This gate assumes SPARK-only accounts; it does not check
+ * whether FLAME is also live on the same account.
+ *
+ * SPARK keeps full READ access regardless of arming — its live balance, orders,
+ * positions and history all still resolve via canReadProductionBalance.
  */
 export function canPlaceLiveOrders(name: string): boolean {
   const n = name.toLowerCase()
-  if (n === 'spark') return false
+  if (n === 'spark') return isSparkLiveArmed()
   if (n === 'flame') return isFlameLiveArmed()
   return isProductionBot(n)
 }
@@ -992,6 +1013,64 @@ export function isFlameLiveArmed(): boolean {
   if (process.env.IRONFORGE_FLAME_LIVE !== 'true') return false
   const { apiKey, accountId } = flameCreds()
   return Boolean(apiKey && accountId)
+}
+
+/**
+ * SPARK real-money arm switch — DEFAULT OFF, and deliberately not a code default.
+ * Mirrors isFlameLiveArmed() exactly: two of the three conditions documented on
+ * canPlaceLiveOrders above live here (env knob + creds); the third (an unpaused
+ * ironforge_production_pause row for SPARK) is enforced generically downstream by
+ * resolveProductionAccounts' getProductionPauseState(botName) check, the same
+ * mechanism FLAME relies on — SPARK's pause row is seeded born-paused in db.ts
+ * the same way KINDLE's is, so a missing/default row never reads as "go."
+ *
+ *   1. SPARK_LIVE_ARMED === 'true'   (runtime env knob — the deliberate flip)
+ *   2. TRADIER_SPARK_API_KEY + TRADIER_SPARK_ACCOUNT_ID both set
+ *
+ * Deploying this code changes nothing on its own. Removing either condition
+ * must not silently re-arm the bot. Does NOT account for FLAME sharing this
+ * same physical account — the multi-bot capital-split is explicitly deferred
+ * (see canPlaceLiveOrders above).
+ */
+export function isSparkLiveArmed(): boolean {
+  if (process.env.SPARK_LIVE_ARMED !== 'true') return false
+  const { apiKey, accountId } = sparkCreds()
+  return Boolean(apiKey && accountId)
+}
+
+/** Default per-account equity unlock threshold for SPARK auto-arming — $5,000
+ *  (product decision, 2026-10-15: subscribed + equity >= this unlocks a customer
+ *  account for SPARK live mirroring). */
+export const SPARK_MIN_EQUITY_DEFAULT = 5000
+
+/**
+ * SPARK_MIN_EQUITY — the per-account unlock threshold, in dollars. Default $5,000.
+ * Env-overridable so a future decision can move it without a code change;
+ * unparsable or non-positive falls back to the default rather than silently
+ * unlocking at $0 — same convention as calldiag.ts's getCallDiagMinEquity().
+ */
+export function getSparkMinEquity(): number {
+  const raw = Number(process.env.SPARK_MIN_EQUITY)
+  if (!Number.isFinite(raw) || raw <= 0) return SPARK_MIN_EQUITY_DEFAULT
+  return raw
+}
+
+/**
+ * Per-customer-account SPARK eligibility: this account's own SPARK subscription
+ * must be active AND its own current equity must clear SPARK_MIN_EQUITY. Mirrors
+ * calldiag.ts's isCallDiagUnlocked() shape — fails CLOSED on every input:
+ * `subscribed` must be exactly `true`, and `equity` unreadable/non-finite never
+ * unlocks. Does NOT consider any other bot sharing this account — the multi-bot
+ * capital-split (an account running FLAME+SPARK together) is explicitly deferred,
+ * per canPlaceLiveOrders' doc comment above.
+ */
+export function isSparkCustomerEligible(
+  equity: number | null,
+  subscribed: boolean,
+  minEquity: number = getSparkMinEquity(),
+): boolean {
+  if (subscribed !== true) return false
+  return equity != null && Number.isFinite(equity) && equity >= minEquity
 }
 
 /**
