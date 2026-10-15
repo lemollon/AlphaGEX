@@ -38,7 +38,7 @@ import { periodSeries, HERO_PERIOD_LABEL, HERO_PERIOD_TILE_LABEL, type HeroPerio
 import { greetingForHour } from '@/live/greeting'
 import { emberClosedTradesToHistory } from '@/ledger/ember'
 import { agentDetailHref, type AgentBot } from '@/agents/routes'
-import { AGENT_LABEL, SESSION_LABEL, NEXT_SESSION_SHORT } from '@/agents/copy'
+import { AGENT_LABEL, SESSION_LABEL, STARTS_LABEL, NEXT_SESSION_SHORT } from '@/agents/copy'
 import { getPlanCatalog } from '@/enroll/api'
 import type { PlanCatalog } from '@/enroll/types'
 import { pickBanner, bannerActionHref, billingBannerMode } from '@/alerts/banner'
@@ -806,8 +806,17 @@ function AgentRow({ agent, onPress }: { agent: LiveAgent; onPress: () => void })
   const state = agent.state
   // Real server copy when available (CustomerState.headline, e.g. "Waiting for next
   // session") — never a locally re-derived status string guessing at what the server
-  // already said authoritatively.
-  const status = agent.error === 'state' || !state ? 'Status unavailable' : state.headline
+  // already said authoritatively. One exception (app images, 2026-10-14): the
+  // specific "Standing By" case (WORKING_WAITING + gray dot — the session's market
+  // window hasn't opened yet) gets the short "Starts {session}" label instead of
+  // the longer headline; the same key with a blue dot (actively scanning) is
+  // unaffected and keeps its real headline.
+  const status =
+    agent.error === 'state' || !state
+      ? 'Status unavailable'
+      : state.key === 'WORKING_WAITING' && state.dot === 'gray'
+        ? STARTS_LABEL[agent.bot as AgentBot]
+        : state.headline
   const todayPnl = agent.trade?.today_result?.pnl ?? null
 
   return (
