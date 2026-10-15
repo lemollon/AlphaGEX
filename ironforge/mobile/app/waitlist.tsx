@@ -7,6 +7,8 @@ import {
   ScrollView,
   Modal,
   StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native'
 import type { TextInputProps } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -107,6 +109,7 @@ export default function WaitlistScreen() {
         <View style={{ width: 26 }} />
       </View>
 
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'height' : undefined}>
       <ScrollView
         contentContainerStyle={{ padding: space.lg, paddingBottom: space.xxl }}
         keyboardShouldPersistTaps="handled"
@@ -241,6 +244,7 @@ export default function WaitlistScreen() {
           We respect your privacy. Your information will never be shared.
         </Text>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <StatePickerModal
         visible={statePickerOpen}
