@@ -39,7 +39,7 @@ import { customerQuery, customerExecute, isCustomersDbConfigured } from '@/lib/c
 import { getSnapTrade, isSnapTradeConfigured } from '@/lib/snaptrade'
 import { loadSnapTradeCreds } from '@/lib/brokerage/snaptrade-user'
 import { decryptSecret } from '@/lib/crypto/secret-box'
-import { getProductionPauseState, canPlaceLiveOrders, isSparkCustomerEligible } from '@/lib/tradier'
+import { getProductionPauseState, canPlaceLiveOrders, isSparkCustomerEligible, isFlameCustomerEligible } from '@/lib/tradier'
 import { normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import { flintMaxLoss } from '@/lib/flint'
 import {
@@ -474,6 +474,22 @@ async function mirrorOneOpen(
     const subscribed = c.subscription_status === 'active' || c.subscription_status === 'trialing'
     if (!isSparkCustomerEligible(bpCents / 100, subscribed)) {
       await markSkipped(rowId, 'spark_not_eligible')
+      return
+    }
+  }
+
+  // FLAME per-account eligibility (product decision, 2026-10-15): this account's
+  // own FLAME subscription must be active AND its own equity must clear
+  // FLAME_MIN_EQUITY (default $2,000) — see isFlameCustomerEligible in tradier.ts.
+  // Reuses the SAME live bpCents read above as "equity," never a second broker
+  // call, exactly like SPARK's own block above. This is an ADDITIONAL check on
+  // top of isExecutorArmedForAgent('flame')/FLAME_CUSTOMER_EXECUTOR_ENABLED —
+  // it does not replace that check, and never touches isFlameLiveArmed() or
+  // FLAME's existing master live-order path.
+  if (agent === 'flame') {
+    const subscribed = c.subscription_status === 'active' || c.subscription_status === 'trialing'
+    if (!isFlameCustomerEligible(bpCents / 100, subscribed)) {
+      await markSkipped(rowId, 'flame_not_eligible')
       return
     }
   }

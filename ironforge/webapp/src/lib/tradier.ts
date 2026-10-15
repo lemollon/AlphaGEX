@@ -1015,6 +1015,41 @@ export function isFlameLiveArmed(): boolean {
   return Boolean(apiKey && accountId)
 }
 
+/** Default per-account equity unlock threshold for FLAME auto-arming — $2,000
+ *  (product decision, 2026-10-15: subscribed + equity >= this unlocks a customer
+ *  account for FLAME live mirroring). Does NOT touch isFlameLiveArmed() above —
+ *  FLAME's own global live-arm switch and production account are unchanged. */
+export const FLAME_MIN_EQUITY_DEFAULT = 2000
+
+/**
+ * FLAME_MIN_EQUITY — the per-account unlock threshold, in dollars. Default $2,000.
+ * Env-overridable so a future decision can move it without a code change;
+ * unparsable or non-positive falls back to the default rather than silently
+ * unlocking at $0 — same convention as getSparkMinEquity() below.
+ */
+export function getFlameMinEquity(): number {
+  const raw = Number(process.env.FLAME_MIN_EQUITY)
+  if (!Number.isFinite(raw) || raw <= 0) return FLAME_MIN_EQUITY_DEFAULT
+  return raw
+}
+
+/**
+ * Per-customer-account FLAME eligibility: this account's own FLAME subscription
+ * must be active AND its own current equity must clear FLAME_MIN_EQUITY. Mirrors
+ * isSparkCustomerEligible()'s shape exactly — fails CLOSED on every input:
+ * `subscribed` must be exactly `true`, and `equity` unreadable/non-finite never
+ * unlocks. This is a per-customer-account GATE ONLY — it does not arm, disarm, or
+ * otherwise touch isFlameLiveArmed() or FLAME's existing master live-order path.
+ */
+export function isFlameCustomerEligible(
+  equity: number | null,
+  subscribed: boolean,
+  minEquity: number = getFlameMinEquity(),
+): boolean {
+  if (subscribed !== true) return false
+  return equity != null && Number.isFinite(equity) && equity >= minEquity
+}
+
 /**
  * SPARK real-money arm switch — DEFAULT OFF, and deliberately not a code default.
  * Mirrors isFlameLiveArmed() exactly: two of the three conditions documented on

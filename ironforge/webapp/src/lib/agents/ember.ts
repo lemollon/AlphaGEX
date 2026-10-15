@@ -48,3 +48,53 @@ export function isEmberCapitalInRange(buyingPowerCents: number | null | undefine
     buyingPowerCents <= EMBER_AGENT.limits.maxCapitalCents
   )
 }
+
+/**
+ * Default per-account equity unlock threshold for EMBER auto-eligibility —
+ * $500 (product decision, 2026-10-15: subscribed + equity >= this unlocks a
+ * customer account), for consistency with SPARK ($5,000) and FLAME ($2,000)'s
+ * own thresholds in tradier.ts.
+ *
+ * STANDALONE — NOT WIRED to any live path. EMBER has no customer-executor
+ * mirror in this repo: CUSTOMER_AGENTS in executor.ts is
+ * `Set(['spark', 'flame'])` only, and EMBER's actual execution engine (REFLEX,
+ * dev/meltup/ember/run_reflex.py on a Robinhood "Agentic" account) is an
+ * already-armed, separate sleeve outside ironforge/webapp — see this file's
+ * header comment. EMBER is also currently paused by operator decision (failed
+ * its own backtest validation at the $500 floor, 0 of 7 configurations
+ * passed). This function exists only so EMBER's eligibility shape matches
+ * SPARK/FLAME's; calling it has no effect on any order, arm switch, or pause
+ * state. Do not wire this into REFLEX or any other execution path without an
+ * explicit operator decision to un-pause EMBER first.
+ */
+export const EMBER_MIN_EQUITY_DEFAULT = 500
+
+/**
+ * EMBER_MIN_EQUITY — the per-account unlock threshold, in dollars. Default $500.
+ * Env-overridable so a future decision can move it without a code change;
+ * unparsable or non-positive falls back to the default rather than silently
+ * unlocking at $0 — same convention as getSparkMinEquity()/getFlameMinEquity()
+ * in tradier.ts.
+ */
+export function getEmberMinEquity(): number {
+  const raw = Number(process.env.EMBER_MIN_EQUITY)
+  if (!Number.isFinite(raw) || raw <= 0) return EMBER_MIN_EQUITY_DEFAULT
+  return raw
+}
+
+/**
+ * Per-customer-account EMBER eligibility: this account's own EMBER subscription
+ * must be active AND its own current equity must clear EMBER_MIN_EQUITY. Mirrors
+ * isSparkCustomerEligible()/isFlameCustomerEligible()'s shape exactly — fails
+ * CLOSED on every input: `subscribed` must be exactly `true`, and `equity`
+ * unreadable/non-finite never unlocks. See the STANDALONE note above — this is
+ * not wired into EMBER's (REFLEX's) actual execution path.
+ */
+export function isEmberCustomerEligible(
+  equity: number | null,
+  subscribed: boolean,
+  minEquity: number = getEmberMinEquity(),
+): boolean {
+  if (subscribed !== true) return false
+  return equity != null && Number.isFinite(equity) && equity >= minEquity
+}
