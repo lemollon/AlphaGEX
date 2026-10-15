@@ -24,6 +24,8 @@ import {
   getFlintGuardBuffer,
   getFlintOtmOffset,
   getFlintMinCredit,
+  FLINT_FLOOR_AMOUNT_DEFAULT,
+  getFlintFloorAmount,
   isFlintDayEligible,
   meetsFlintCreditFloor,
   isFlintGuardTriggered,
@@ -42,7 +44,7 @@ import {
 
 const ENV_KEYS = [
   'FLINT_MODE', 'FLINT_MAX_CONTRACTS', 'FLINT_GUARD_BUFFER', 'FLINT_OTM_OFFSET', 'FLINT_MIN_CREDIT',
-  'FLINT_FAVORABLE_UPSIZE',
+  'FLINT_FAVORABLE_UPSIZE', 'FLINT_FLOOR_AMOUNT',
 ] as const
 
 afterEach(() => {
@@ -128,6 +130,24 @@ describe('FLINT_MIN_CREDIT env resolution', () => {
     expect(getFlintMinCredit()).toBe(0.10)
     process.env.FLINT_MIN_CREDIT = 'nope'
     expect(getFlintMinCredit()).toBe(0.10)
+  })
+})
+
+describe('FLINT_FLOOR_AMOUNT env resolution (FLINT\'s own dedicated R1 floor, default $250)', () => {
+  it('defaults to 250 when unset', () => {
+    delete process.env.FLINT_FLOOR_AMOUNT
+    expect(FLINT_FLOOR_AMOUNT_DEFAULT).toBe(250)
+    expect(getFlintFloorAmount()).toBe(250)
+  })
+  it('honors a valid override', () => {
+    process.env.FLINT_FLOOR_AMOUNT = '500'
+    expect(getFlintFloorAmount()).toBe(500)
+  })
+  it('falls back to the default on negative or garbage', () => {
+    process.env.FLINT_FLOOR_AMOUNT = '-1'
+    expect(getFlintFloorAmount()).toBe(250)
+    process.env.FLINT_FLOOR_AMOUNT = 'nope'
+    expect(getFlintFloorAmount()).toBe(250)
   })
 })
 
@@ -243,42 +263,52 @@ describe('FLINT max loss (rule R1 input) — worst case, includes commission', (
   })
 })
 
-describe('FLINT profit gate (rule R1) — cushion = equity - floor, must clear maxLoss', () => {
+describe('FLINT profit gate (rule R1) — cushion = flintFloor + flintRealizedPnl, must clear maxLoss', () => {
+  // 2026-10-15 independence fix (PREREG_FLAME_SLEEVE_INDEPENDENCE.md): the
+  // gate's two inputs are now FLINT's OWN dedicated floor and FLINT's OWN
+  // cumulative realized P&L on this account — never the account's shared
+  // EBB equity/floor. A new account at zero FLINT P&L can still trade off
+  // its floor alone; a same-day EBB loss never appears in either input.
   it('cushion of exactly 0 with any positive maxLoss always skips', () => {
-    const result = evaluateFlintProfitGate(10000, 10000, 190)
+    const result = evaluateFlintProfitGate(0, 0, 190)
     expect(result.cushion).toBe(0)
     expect(result.eligible).toBe(false)
     expect(result.reason).toContain('skip:flint_profit_cushion')
   })
+  it('zero prior FLINT P&L still trades off the floor alone (the bug this fix removes)', () => {
+    const result = evaluateFlintProfitGate(250, 0, 190)
+    expect(result.cushion).toBe(250)
+    expect(result.eligible).toBe(true)
+  })
   it('cushion 189 vs maxloss 190 -> skip (cushion strictly below maxloss)', () => {
-    const result = evaluateFlintProfitGate(10189, 10000, 190)
+    const result = evaluateFlintProfitGate(250, -61, 190)
     expect(result.cushion).toBe(189)
     expect(result.eligible).toBe(false)
   })
   it('cushion 190 vs maxloss 190 -> trade (inclusive floor, >= not >)', () => {
-    const result = evaluateFlintProfitGate(10190, 10000, 190)
+    const result = evaluateFlintProfitGate(250, -60, 190)
     expect(result.cushion).toBe(190)
     expect(result.eligible).toBe(true)
     expect(result.reason).toBeNull()
   })
-  it('null equity fails closed, never guesses', () => {
-    const result = evaluateFlintProfitGate(null, 10000, 190)
+  it('null floor fails closed, never guesses', () => {
+    const result = evaluateFlintProfitGate(null, 0, 190)
     expect(result.eligible).toBe(false)
     expect(result.cushion).toBeNull()
   })
-  it('null floor fails closed, never guesses', () => {
-    const result = evaluateFlintProfitGate(10500, null, 190)
+  it('null realized P&L fails closed, never guesses', () => {
+    const result = evaluateFlintProfitGate(250, null, 190)
     expect(result.eligible).toBe(false)
     expect(result.cushion).toBeNull()
   })
   it('per-account independence: one account trades, another skips, same day, same maxLoss', () => {
     const maxLoss = 190
-    const accountA = evaluateFlintProfitGate(10500, 10000, maxLoss) // cushion 500 -> trades
-    const accountB = evaluateFlintProfitGate(10050, 10000, maxLoss) // cushion 50 -> skips
+    const accountA = evaluateFlintProfitGate(250, 250, maxLoss) // cushion 500 -> trades
+    const accountB = evaluateFlintProfitGate(250, -200, maxLoss) // cushion 50 -> skips
     expect(accountA.eligible).toBe(true)
     expect(accountB.eligible).toBe(false)
     // Evaluating B never mutated or depended on A's result — pure functions, no shared state.
-    expect(evaluateFlintProfitGate(10500, 10000, maxLoss)).toEqual(accountA)
+    expect(evaluateFlintProfitGate(250, 250, maxLoss)).toEqual(accountA)
   })
 })
 
@@ -494,35 +524,36 @@ describe('decideFlintContractsForCushion — rule R1 with a favorable-day step-d
 
   it('desired === base (upsize off/inactive) is exactly ONE gate evaluation, byte-for-byte evaluateFlintProfitGate', () => {
     const loss = flintMaxLoss(short, long, credit, 1)
-    const direct = evaluateFlintProfitGate(1700, 1500, loss)
-    const viaDecision = decideFlintContractsForCushion(1, 1, 1700, 1500, short, long, credit)
+    const direct = evaluateFlintProfitGate(250, 0, loss)
+    const viaDecision = decideFlintContractsForCushion(1, 1, 250, 0, short, long, credit)
     expect(viaDecision.contracts).toBe(direct.eligible ? 1 : 0)
     expect(viaDecision.gate).toEqual(direct)
   })
 
   it('cushion covers 2 -> total contracts is 2', () => {
-    // maxLoss@2 = 342.80; cushion must clear it.
-    const d = decideFlintContractsForCushion(2, 1, 1500 + 342.80, 1500, short, long, credit)
+    // floor(250) + pnl(100) = 350, clears maxLoss@2 ($342.80).
+    const d = decideFlintContractsForCushion(2, 1, 250, 100, short, long, credit)
     expect(d.contracts).toBe(2)
     expect(d.gate.eligible).toBe(true)
   })
 
   it('cushion covers only 1, not 2 -> steps down to 1 ("if cushion covers 1 but not 2, trade 1")', () => {
-    // Equity clears the 1-contract loss ($171.40) but not the 2-contract loss ($342.80).
-    const d = decideFlintContractsForCushion(2, 1, 1500 + 200, 1500, short, long, credit)
+    // floor(250) + pnl(0) = 250 clears the 1-contract loss ($171.40) but not the 2-contract loss ($342.80).
+    const d = decideFlintContractsForCushion(2, 1, 250, 0, short, long, credit)
     expect(d.contracts).toBe(1)
     expect(d.gate.eligible).toBe(true)
   })
 
   it('cushion covers neither -> contracts is 0, caller must skip entirely', () => {
-    const d = decideFlintContractsForCushion(2, 1, 1500 + 50, 1500, short, long, credit)
+    // floor(250) + pnl(-200) = 50, below even the 1-contract loss.
+    const d = decideFlintContractsForCushion(2, 1, 250, -200, short, long, credit)
     expect(d.contracts).toBe(0)
     expect(d.gate.eligible).toBe(false)
   })
 
-  it('unreadable equity/floor fails CLOSED at every candidate size', () => {
-    expect(decideFlintContractsForCushion(2, 1, null, 1500, short, long, credit).contracts).toBe(0)
-    expect(decideFlintContractsForCushion(2, 1, 1700, null, short, long, credit).contracts).toBe(0)
+  it('unreadable floor/realized P&L fails CLOSED at every candidate size', () => {
+    expect(decideFlintContractsForCushion(2, 1, null, 100, short, long, credit).contracts).toBe(0)
+    expect(decideFlintContractsForCushion(2, 1, 250, null, short, long, credit).contracts).toBe(0)
   })
 })
 

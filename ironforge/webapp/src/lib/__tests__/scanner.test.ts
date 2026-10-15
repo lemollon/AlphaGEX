@@ -42,6 +42,7 @@ vi.mock('../tradier', () => ({
   getOptionQuote: vi.fn().mockResolvedValue(null),
   buildOccSymbol: vi.fn((ticker: string, exp: string, strike: number, side: string) => `${ticker}${exp}${side}${strike}`),
   placeCallSpreadOrderAllAccounts: vi.fn().mockResolvedValue({}),
+  getCallSpreadEntryCredit: vi.fn().mockResolvedValue(null),
   SandboxOrderInfo: {},
   SandboxCloseInfo: {},
 }))
@@ -66,8 +67,10 @@ vi.mock('../push/dispatch', () => ({
   dispatchToCustomers: vi.fn().mockResolvedValue({ sent: 0, skipped: 0, reasons: [] }),
 }))
 
-import { _testing } from '../scanner'
+import { _testing, getFlintPaperLedger } from '../scanner'
+import { decideFlintContractsForCushion } from '../flint'
 import { query } from '../db'
+import { getDailyHistory } from '../tradier'
 import { dispatchToCustomers } from '../push/dispatch'
 
 const {
@@ -95,6 +98,7 @@ const {
   notifyBigMove,
   getFlintCumulativeRealizedPnl,
   getFlintPaperCumulativeRealizedPnl,
+  tryOpenFlint,
   FLINT_TABLE,
 } = _testing
 
@@ -1264,6 +1268,68 @@ describe('getFlintPaperCumulativeRealizedPnl', () => {
   })
 })
 
+describe('getFlintCumulativeRealizedPnl — accountType param (2026-10-15 independence fix)', () => {
+  beforeEach(() => { (query as any).mockReset() })
+
+  it('defaults to production (unchanged SQL/params for the floor-reconciliation caller)', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '10' }])
+    await getFlintCumulativeRealizedPnl('flame', 'Flame')
+    const sql = (query as any).mock.calls[0][0] as string
+    expect(sql).toContain("account_type = 'production'")
+    expect((query as any).mock.calls[0][1]).toEqual(['flame', 'Flame'])
+  })
+
+  it('reads the sandbox mirror\'s own FLINT P&L when accountType=sandbox', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '42' }])
+    const result = await getFlintCumulativeRealizedPnl('flame', 'User', 'sandbox')
+    expect(result).toBe(42)
+    const sql = (query as any).mock.calls[0][0] as string
+    expect(sql).toContain("account_type = 'sandbox'")
+    expect((query as any).mock.calls[0][1]).toEqual(['flame', 'User'])
+  })
+})
+
+describe('getFlintPaperLedger — FLINT\'s own paper-book R1 inputs (2026-10-15 independence fix, PREREG_FLAME_SLEEVE_INDEPENDENCE.md)', () => {
+  beforeEach(() => {
+    (query as any).mockReset()
+    delete process.env.FLINT_FLOOR_AMOUNT
+  })
+
+  it('floor is FLINT_FLOOR_AMOUNT (250) — never FLAME\'s paper_account.starting_capital, and that table is never queried', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '0' }]) // getFlintPaperCumulativeRealizedPnl's own SUM
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const ledger = await getFlintPaperLedger(flame)
+    expect(ledger.floor).toBe(250)
+    expect(ledger.pnl).toBe(0)
+    // Exactly ONE query call — FLINT's own account_type='paper' SUM — never a
+    // second call reading {bot}_paper_account (the EBB put side's own ledger).
+    expect((query as any).mock.calls.length).toBe(1)
+    const sql = (query as any).mock.calls[0][0] as string
+    expect(sql).not.toContain('paper_account')
+  })
+
+  it('FLINT can take its first trade at zero prior FLINT P&L off the floor alone (the bug this fix removes)', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '0' }])
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const ledger = await getFlintPaperLedger(flame)
+    const decision = decideFlintContractsForCushion(1, 1, ledger.floor, ledger.pnl, 770, 772, 0.30)
+    expect(decision.contracts).toBe(1)
+    expect(decision.gate.eligible).toBe(true)
+  })
+
+  it('a same-day EBB paper loss on the SAME account never changes FLINT\'s own floor/pnl', async () => {
+    (query as any).mockResolvedValueOnce([{ total: '-50' }]) // FLINT's OWN paper pnl — not EBB's
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const ledger = await getFlintPaperLedger(flame)
+    expect(ledger.floor).toBe(250)
+    expect(ledger.pnl).toBe(-50)
+    // Never once reads the shared paper_account row EBB's own put side settles into.
+    for (const call of (query as any).mock.calls) {
+      expect(String(call[0])).not.toContain('paper_account')
+    }
+  })
+})
+
 /* ================================================================== */
 /*  FLINT forward-logging — daily dealer-gamma context                  */
 /* ================================================================== */
@@ -1686,5 +1752,61 @@ describe('notifyBigMove — a throwing alert dispatcher never escapes', () => {
     await expect(notifyBigMove('spark', POS, 10)).resolves.toBeUndefined()
     expect(queryMock).not.toHaveBeenCalled()
     expect(dispatchMock).not.toHaveBeenCalled()
+  })
+})
+
+// Placed last in the file deliberately: this is the first test to drive
+// tryOpenFlint's real ensureFlintTable()/ensureFlintContextTable() calls to
+// success, which flips their module-level "ready" caches permanently for
+// the rest of this test process — running it before the dbExecute-failure
+// tests above (which rely on those same CREATE TABLE statements actually
+// firing) would silently make those caches short-circuit and leak an
+// unconsumed mockRejectedValueOnce into a later, unrelated test.
+describe('tryOpenFlint — prior-day-SPY-up entry filter (RESULT_FLINT_DEEP_ANALYSIS.md Arm J3, 2026-10-15)', () => {
+  beforeEach(() => {
+    (query as any).mockReset();
+    (query as any).mockResolvedValue([])
+    process.env.FLINT_MODE = 'paper'
+  })
+  afterEach(() => {
+    delete process.env.FLINT_MODE;
+    (getDailyHistory as any).mockReset();
+    (getDailyHistory as any).mockResolvedValue([])
+  })
+
+  // getDailyHistory is also called for 'VIX' (150 sessions) earlier in
+  // tryOpenFlint's own VIX-decay research read — mockImplementation keyed on
+  // the symbol so that unrelated call never consumes the SPY bars below.
+  it('skips with skip:prior_spy_not_up when yesterday\'s SPY session closed DOWN, ahead of every other check', async () => {
+    (getDailyHistory as any).mockImplementation(async (symbol: string) => {
+      if (symbol !== 'SPY') return []
+      return [
+        { date: '2026-03-12', close: 590 },
+        { date: '2026-03-13', close: 580 }, // most recent completed session closed DOWN vs the one before it
+      ]
+    })
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const result = await tryOpenFlint(flame, makeCT(13, 7, 1))
+    expect(result).toContain('skip:prior_spy_not_up')
+  })
+
+  it('proceeds past the filter (no prior_spy_not_up skip) when yesterday\'s SPY session closed UP', async () => {
+    (getDailyHistory as any).mockImplementation(async (symbol: string) => {
+      if (symbol !== 'SPY') return []
+      return [
+        { date: '2026-03-12', close: 580 },
+        { date: '2026-03-13', close: 590 }, // most recent completed session closed UP vs the one before it
+      ]
+    })
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const result = await tryOpenFlint(flame, makeCT(13, 7, 1))
+    expect(result).not.toContain('prior_spy_not_up')
+  })
+
+  it('a null (unavailable) prior-day history fails CLOSED — never trades on a guess', async () => {
+    (getDailyHistory as any).mockImplementation(async () => []) // < 2 completed SPY sessions -> priorSpySessionWasUp returns null
+    const flame = BOTS.find((b: any) => b.name === 'flame')!
+    const result = await tryOpenFlint(flame, makeCT(13, 7, 1))
+    expect(result).toContain('skip:prior_spy_history_unavailable')
   })
 })

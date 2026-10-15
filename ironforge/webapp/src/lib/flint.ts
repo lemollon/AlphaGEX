@@ -8,8 +8,13 @@
  * switch (FLINT_MODE), own production path (placeCallSpreadOrderAllAccounts
  * in tradier.ts). It can never read or write FLAME's put-side ledger,
  * sizing, or P&L, though it DOES read FLAME's put-side collateral (see
- * flintRequiredBp below) and FLAME's own per-account funded/high-water
- * ledger (getProductionLadderCapital in tradier.ts) for its own profit gate.
+ * flintRequiredBp below) for its own buying-power check. Its own profit
+ * gate (rule R1, evaluateFlintProfitGate below) is independent of FLAME/EBB
+ * entirely (PREREG_FLAME_SLEEVE_INDEPENDENCE.md, 2026-10-15): it reads ONLY
+ * its own dedicated standing floor (FLINT_FLOOR_AMOUNT) and its own
+ * cumulative realized P&L, never the account's shared EBB equity or
+ * funded/ladder floor — a same-day EBB loss on the SAME account can no
+ * longer shrink this gate.
  *
  * This file holds ONLY pure, DB/network-free logic so it can be unit tested
  * without mocking Postgres or Tradier — same split as lib/ebb-sizing.ts.
@@ -40,6 +45,26 @@ export const FLINT_COMMISSION_PER_CONTRACT = 1.40
 
 /** Minimum option buying power a live order must clear, per contract, before FLAME's own same-day put margin is added on top. */
 export const FLINT_BP_FLOOR_PER_CONTRACT = 200
+
+/**
+ * FLINT's own dedicated standing floor allocation, dollars — NOT the
+ * account's shared EBB deposit/ladder floor (PREREG_FLAME_SLEEVE_
+ * INDEPENDENCE.md, 2026-10-15). Default $250, sized to cover FLINT's own
+ * ~$193 single-contract worst case with room. Leron: correct this number
+ * if a different split is wanted — shipping with this default.
+ */
+export const FLINT_FLOOR_AMOUNT_DEFAULT = 250
+
+/**
+ * FLINT_FLOOR_AMOUNT — default 250. Unparsable or negative falls back to
+ * the default rather than silently granting a zero/negative standing
+ * floor on a real-money gate.
+ */
+export function getFlintFloorAmount(): number {
+  const raw = Number(process.env.FLINT_FLOOR_AMOUNT)
+  if (!Number.isFinite(raw) || raw < 0) return FLINT_FLOOR_AMOUNT_DEFAULT
+  return raw
+}
 
 /**
  * off  — unset, or any value other than 'paper'/'live'. No order of any kind, ever.
@@ -160,36 +185,44 @@ export function flintMaxLoss(shortStrike: number, longStrike: number, credit: nu
 
 export interface FlintProfitGateResult {
   eligible: boolean
-  /** equity - floor, rounded to cents. null when equity or floor could not be read. */
+  /** flintFloor + flintRealizedPnl, rounded to cents. null when either input could not be read. */
   cushion: number | null
   /** null when eligible; otherwise the exact skip-reason string to log. */
   reason: string | null
 }
 
 /**
- * Rule R1 — the per-account profit gate. Leron, 2026-09-26: "a loss eats
- * into the total account profits" only, per account — never the funded
- * floor. `floor` is that account's net deposits: the funded/starting-capital
- * seed the EBB count ladder already tracks per production account (see
- * getProductionLadderCapital in tradier.ts) or, for the paper book, FLAME's
- * own paper ledger's starting_capital. `equity` is that account's CURRENT
- * balance — the same Tradier balance (or paper current_balance) the scanner
- * already reads elsewhere. `cushion` is the profit accumulated above the
- * funded floor; FLINT may only ever risk what sits inside that cushion.
+ * Rule R1 — FLINT's OWN profit gate, independent of the account's shared
+ * EBB equity (PREREG_FLAME_SLEEVE_INDEPENDENCE.md, 2026-10-15). Before this
+ * fix, `floor` was the account's funded/EBB deposit floor and `equity` was
+ * the account's TOTAL current balance — shared with FLAME's put side, so a
+ * same-day EBB loss shrank `equity` and could block FLINT even on a day
+ * FLINT itself had done nothing wrong.
+ *
+ * `flintFloor` is FLINT's own dedicated standing allocation (FLINT_FLOOR_
+ * AMOUNT, default $250 — see getFlintFloorAmount above), never the
+ * account's funded/ladder floor. `flintRealizedPnl` is FLINT's own
+ * cumulative realized P&L on this account ONLY (getFlintCumulativeRealized
+ * Pnl / getFlintPaperCumulativeRealizedPnl, scanner.ts) — never EBB's
+ * put-side P&L. `cushion = flintFloor + flintRealizedPnl`: FLINT may always
+ * risk its own floor, even at zero or negative running P&L (so a brand-new
+ * account can take FLINT's FIRST trade without waiting on EBB's profit),
+ * plus whatever it has earned on top of it.
  *
  * Evaluated INDEPENDENTLY per account — one account's cushion has no effect
- * on any other account's decision. `equity` or `floor` unreadable (null)
- * fails CLOSED: never guesses a number for a real-money gate.
+ * on any other account's decision. `flintFloor` or `flintRealizedPnl`
+ * unreadable (null) fails CLOSED: never guesses a number for a real-money
+ * gate.
  */
 export function evaluateFlintProfitGate(
-  equity: number | null,
-  floor: number | null,
+  flintFloor: number | null,
+  flintRealizedPnl: number | null,
   maxLoss: number,
 ): FlintProfitGateResult {
-  if (equity == null || floor == null) {
+  if (flintFloor == null || flintRealizedPnl == null) {
     return { eligible: false, cushion: null, reason: 'skip:flint_profit_cushion(unreadable)' }
   }
-  const cushion = Math.round((equity - floor) * 100) / 100
+  const cushion = Math.round((flintFloor + flintRealizedPnl) * 100) / 100
   if (cushion < maxLoss) {
     return {
       eligible: false,
@@ -220,8 +253,8 @@ export interface FlintContractsDecision {
 export function decideFlintContractsForCushion(
   desired: number,
   base: number,
-  equity: number | null,
-  floor: number | null,
+  flintFloor: number | null,
+  flintRealizedPnl: number | null,
   shortStrike: number,
   longStrike: number,
   credit: number,
@@ -230,7 +263,7 @@ export function decideFlintContractsForCushion(
   let gate: FlintProfitGateResult = { eligible: false, cushion: null, reason: 'skip:flint_profit_cushion(unreadable)' }
   for (const c of candidates) {
     const loss = flintMaxLoss(shortStrike, longStrike, credit, c)
-    gate = evaluateFlintProfitGate(equity, floor, loss)
+    gate = evaluateFlintProfitGate(flintFloor, flintRealizedPnl, loss)
     if (gate.eligible) return { contracts: c, gate }
   }
   return { contracts: 0, gate }

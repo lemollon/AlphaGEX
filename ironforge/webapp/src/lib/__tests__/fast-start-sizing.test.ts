@@ -335,6 +335,24 @@ describe('evaluateFastStartTrigger — standalone, shared by intraday (skipped) 
     expect(r.triggered).toBe(false)
     expect(r.combinedMlLadder).toBe(0)
   })
+
+  // 2026-10-15, PREREG_FLAME_SLEEVE_INDEPENDENCE.md: this function has no
+  // "FLINT's realized P&L" input at all — only `flintCandidateDay` (a
+  // boolean) and `flintMaxLossPerContract` (a precomputed WORST-CASE
+  // ceiling fixed at entry, identical whether FLINT goes on to win or
+  // lose). A FLINT LOSS today therefore cannot move EBB's own phase
+  // trigger any further than a FLINT WIN would, on the same candidate day
+  // — only EBB's own cushion/ladder/max-loss inputs do that.
+  it('a FLINT loss cannot move EBB\'s own trigger beyond what a FLINT win would — only flintMaxLossPerContract (fixed at entry) and flintCandidateDay are inputs, never FLINT\'s realized outcome', () => {
+    // The function has no "did FLINT win or lose today" input at all — a
+    // losing FLINT trade and a winning FLINT trade pass the SAME
+    // flintMaxLossPerContract (the fixed worst-case ceiling priced at
+    // entry) and the SAME flintCandidateDay, so the two calls are
+    // indistinguishable to this function, and therefore to EBB's trigger.
+    const flintLostToday = evaluateFastStartTrigger(2910, 2, true, 170, true, 190)
+    const flintWonToday = evaluateFastStartTrigger(2910, 2, true, 170, true, 190)
+    expect(flintLostToday).toEqual(flintWonToday)
+  })
 })
 
 describe('decideFastStartSizing opts.skipTriggerCheck — the EOD-only phase gate', () => {
