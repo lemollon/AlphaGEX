@@ -278,6 +278,7 @@ import {
   getFlintGuardBuffer,
   getFlintOtmOffset,
   getFlintMinCredit,
+  getFlintFloorAmount,
   computeFlintStrikes,
   meetsFlintCreditFloor,
   isFlintDayEligible,
@@ -1241,27 +1242,36 @@ export async function loadProductionConfigFor(botName: string): Promise<BotConfi
 
 /**
  * FLINT's own cumulative realized P&L on ONE real account (bot+person+
- * account_type='production') — the SAME real brokerage account FLAME's EBB
- * put side also trades. FLINT settles into its own `flint_positions` table
- * and never touches `{bot}_paper_account.cumulative_pnl`, so without this,
+ * account_type) — the SAME real brokerage account FLAME's/SPARK's EBB put
+ * side also trades. FLINT settles into its own `flint_positions` table and
+ * never touches `{bot}_paper_account.cumulative_pnl`, so without this,
  * syncPaperAccountCapital's floor reconstruction (`real equity - pnl`) would
  * silently absorb FLINT's own gains/losses into the protected deposit floor
  * instead of counting them against rule R1's cushion — the exact thing R1
  * exists to prevent. Fails closed to 0 (byte-for-byte today's behavior,
  * correct for every account FLINT has never filled a production trade on).
+ *
+ * `accountType` defaults to 'production' (unchanged call shape for the
+ * floor-reconciliation caller below) — tradier.ts's own R1 gate (2026-10-15,
+ * PREREG_FLAME_SLEEVE_INDEPENDENCE.md) also calls this directly, with
+ * 'sandbox' for sandbox mirror accounts, as FLINT's own cushion input.
  */
-async function getFlintCumulativeRealizedPnl(botName: string, person: string): Promise<number> {
+export async function getFlintCumulativeRealizedPnl(
+  botName: string,
+  person: string,
+  accountType: 'production' | 'sandbox' = 'production',
+): Promise<number> {
   try {
     await ensureFlintTable()
     const rows = await query<{ total: string | number | null }>(
       `SELECT COALESCE(SUM(realized_pnl), 0) AS total FROM ${FLINT_TABLE}
-        WHERE bot = $1 AND person = $2 AND account_type = 'production'
+        WHERE bot = $1 AND person = $2 AND account_type = '${accountType}'
           AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL`,
       [botName, person],
     )
     return num(rows[0]?.total)
   } catch (e) {
-    console.warn(`[scanner] getFlintCumulativeRealizedPnl(${botName}, ${person}) failed (fail-closed to 0):`, e)
+    console.warn(`[scanner] getFlintCumulativeRealizedPnl(${botName}, ${person}, ${accountType}) failed (fail-closed to 0):`, e)
     return 0
   }
 }
@@ -4939,39 +4949,32 @@ async function logFlintDailyContext(params: {
 }
 
 /**
- * FLINT's own paper ledger read — FLAME's paper (sandbox) account, the same
- * row the EBB put-side ladder reads for `bot.dte`. floor = starting_capital
- * (the funded seed); equity = current_balance (starting + realized P&L) PLUS
- * FLINT's own paper-book realized P&L. Not FLINT's own table — FLINT never
- * gets its own ledger, per spec, it trades "(FLAME account)" and is gated on
- * FLAME's account state — that design is correct. The bug (2026-10-10, same
- * class as getFlintCumulativeRealizedPnl's production fix): current_balance
- * only ever gets updated by the EBB put side's own settlement, so FLINT's
- * own paper fills have NEVER moved this account's tracked equity at all —
- * the "shared account, shared cushion" design was never actually fed
- * FLINT's side of it. Added in (not netted out — nothing else has ever
- * accounted for it, so there's no double-count to undo).
- * null on any read failure or missing row — the caller must skip, never guess.
+ * FLINT's own paper-book R1 inputs (2026-10-15, PREREG_FLAME_SLEEVE_
+ * INDEPENDENCE.md). Before this fix this read FLAME's shared paper (sandbox)
+ * account's own starting_capital/current_balance — FLAME's EBB put-side
+ * floor and equity — so a same-day EBB paper loss on that SAME row shrank
+ * FLINT's cushion here too, even though FLINT settles into its own
+ * flint_positions table and never touches that account's cumulative_pnl.
+ *
+ * `floor` is now FLINT's own dedicated standing allocation (FLINT_FLOOR_
+ * AMOUNT, flint.ts — never FLAME's/EBB's paper-account floor). `pnl` is
+ * FLINT's own cumulative paper-book realized P&L (getFlintPaperCumulative
+ * RealizedPnl) — FLAME's own EBB put-side paper P&L never enters this at
+ * all any more. Both inputs fail closed to a documented default (never
+ * null) on their own, but the return type stays nullable to match
+ * evaluateFlintProfitGate's general fail-closed shape.
  */
-export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; equity: number | null }> {
+export async function getFlintPaperLedger(bot: BotDef): Promise<{ floor: number | null; pnl: number | null }> {
   try {
-    const rows = await query(
-      `SELECT starting_capital, current_balance FROM ${botTable(bot.name, 'paper_account')}
-       WHERE is_active = TRUE AND dte_mode = $1 AND COALESCE(account_type, 'sandbox') = 'sandbox'
-       ORDER BY id DESC LIMIT 1`,
-      [bot.dte],
-    )
-    if (rows.length === 0) return { floor: null, equity: null }
-    const floor = num(rows[0].starting_capital)
-    const flintPnl = await getFlintPaperCumulativeRealizedPnl(bot.name)
-    const equity = num(rows[0].current_balance) + flintPnl
+    const floor = getFlintFloorAmount()
+    const pnl = await getFlintPaperCumulativeRealizedPnl(bot.name)
     return {
-      floor: Number.isFinite(floor) && floor > 0 ? floor : null,
-      equity: Number.isFinite(equity) ? equity : null,
+      floor: Number.isFinite(floor) ? floor : null,
+      pnl: Number.isFinite(pnl) ? pnl : null,
     }
   } catch (e: unknown) {
     console.warn(`[scanner] FLINT: paper ledger read failed: ${e instanceof Error ? e.message : String(e)}`)
-    return { floor: null, equity: null }
+    return { floor: null, pnl: null }
   }
 }
 
@@ -5006,11 +5009,17 @@ async function getFlintTrailingCallGamma(gammaSource: string, beforeDate: string
  * window (isInEntryWindow reused byte-for-byte, not re-derived). Unlike the
  * old FLAME-CALL sleeve, FLINT trades EVERY day — FLAME's own VIX decay gate
  * ratio is recorded (for flint_daily_context research only) but no longer
- * gates entry (isFlintDayEligible is a documented no-op; see flint.ts).
+ * gates entry (isFlintDayEligible is a documented no-op; see flint.ts). It
+ * DOES now require yesterday's SPY session to have closed up (see
+ * priorSpySessionWasUp below — RESULT_FLINT_DEEP_ANALYSIS.md Arm J3,
+ * 2026-10-15), ahead of every other check.
  *
  * The paper book and each production account are gated INDEPENDENTLY by
  * rule R1 (evaluateFlintProfitGate) — one account's outcome never affects
- * another's. The paper book's decision is evaluated here directly; each
+ * another's, and (2026-10-15, PREREG_FLAME_SLEEVE_INDEPENDENCE.md) never
+ * reads FLAME's/EBB's shared account equity any more — only FLINT's own
+ * dedicated floor (FLINT_FLOOR_AMOUNT) and its own cumulative realized
+ * P&L. The paper book's decision is evaluated here directly; each
  * production account's R1 gate + buying-power check run inside
  * placeCallSpreadOrderAllAccounts (tradier.ts), so an account already
  * traded today, or gated out on cushion or BP, simply never appears in that
@@ -5037,6 +5046,26 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
   const botCeiling = VIX_DECAY_CEILING[bot.name as keyof typeof VIX_DECAY_CEILING] ?? VIX_DECAY_CEILING.flame
   const flameVix = await vixDecayCheck(asofDate, botCeiling)
   void isFlintDayEligible(flameVix.ratio)
+
+  // FLINT_PRIOR_SPY_UP_FILTER (RESULT_FLINT_DEEP_ANALYSIS.md Arm J3,
+  // 2026-10-15): FLINT's call spread only clears ret/DD > 1 (1.30 vs 0.90
+  // ungated, $522/yr, holds up in 2025+ at 1.51 and 2026 partial at 4.07)
+  // when gated on yesterday's SPY session closing up. Reuses
+  // priorSpySessionWasUp byte-for-byte — the EXACT prior-day-up computation
+  // FLAME's own put-side D2/regime_brain headline admission already uses
+  // below, in tryOpenFlamePutSpread — rather than re-deriving it. A null
+  // (unavailable/short history) fails CLOSED, same direction as every other
+  // real-money gate in this file; it never defaults to "trade anyway."
+  const priorSpyUp = await priorSpySessionWasUp(asofDate)
+  if (priorSpyUp !== true) {
+    const priorUpReason = priorSpyUp === false ? 'skip:prior_spy_not_up' : 'skip:prior_spy_history_unavailable'
+    console.log(`[scanner] FLINT: no_trade | ${priorUpReason}`)
+    await logFlintDailyContext({
+      ct, decision: priorUpReason, vixRatio: flameVix.ratio,
+      spot: null, shortStrike: null, longStrike: null, entryCredit: null,
+    }).catch(() => { /* forward-logging must never touch the trading path */ })
+    return `FLINT: no_trade | ${priorUpReason}`
+  }
 
   const q = await getQuote('SPY')
   const spot = q?.last ?? 0
@@ -5131,7 +5160,7 @@ async function tryOpenFlint(bot: BotDef, ct: Date): Promise<string> {
     } else {
       const paperLedger = await getFlintPaperLedger(bot)
       const decision = decideFlintContractsForCushion(
-        desiredContracts, baseContracts, paperLedger.equity, paperLedger.floor, callShort, callLong, credit.callCredit,
+        desiredContracts, baseContracts, paperLedger.floor, paperLedger.pnl, callShort, callLong, credit.callCredit,
       )
       const gate = decision.gate
       if (decision.contracts < 1) {
@@ -11560,6 +11589,7 @@ export const _testing = {
   notifyBigMove,
   getFlintCumulativeRealizedPnl,
   getFlintPaperCumulativeRealizedPnl,
+  tryOpenFlint,
   FLINT_TABLE,
   get _running() { return _running },
   set _running(v: boolean) { _running = v },

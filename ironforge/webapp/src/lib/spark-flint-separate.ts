@@ -18,9 +18,16 @@
  * own fast-start trigger or sizing (fast-start-sizing.ts, called with
  * `{envVar:'SPARK_FAST_START'}`, is 100% unaware FLINT exists): FLINT here
  * only ever spends money the account has ALREADY made (profit above
- * deposit — evaluateFlintProfitGate, reused byte-for-byte from flint.ts, the
- * SAME rule R1 gate FLAME's own FLINT sleeve uses), and the ONE thing this
- * module adds on top is the account-level safety net below.
+ * deposit — the SAME "equity minus floor, must clear maxLoss" shape
+ * FLAME's own FLINT sleeve's rule R1 used before the 2026-10-15
+ * independence fix, PREREG_FLAME_SLEEVE_INDEPENDENCE.md. That fix moved
+ * FLAME's own evaluateFlintProfitGate (flint.ts) to FLINT's OWN dedicated
+ * floor + its own cumulative P&L, independent of the account's equity — a
+ * change this module deliberately does NOT inherit: evaluateCushion below
+ * is this module's OWN frozen, held-out-tested copy of the gate's PRIOR
+ * equity-vs-deposit math (RESULT_spark_flint_separate.md), kept byte-for-
+ * byte so SPARK_FLINT's already-validated numbers never move), and the
+ * ONE thing this module adds on top is the account-level safety net below.
  *
  * THE SAFETY NET (the one piece NOT already in flint.ts): if the day's
  * COMBINED cost (SPARK's own already-sized contracts' max loss + FLINT's 1
@@ -37,7 +44,32 @@
  * count and floor for TODAY (computed once, earlier in the same scan tick,
  * by the SPARK ladder branch) so this module can never see a stale budget.
  */
-import { evaluateFlintProfitGate, type FlintProfitGateResult } from './flint'
+export interface SparkFlintCushionResult {
+  eligible: boolean
+  /** equity - deposit, rounded to cents. null when equity or deposit could not be read. */
+  cushion: number | null
+  reason: string | null
+}
+
+/**
+ * This module's OWN frozen copy of flint.ts's evaluateFlintProfitGate as it
+ * existed before the 2026-10-15 independence fix (PREREG_FLAME_SLEEVE_
+ * INDEPENDENCE.md) — `cushion = equity - deposit`, must clear `maxLoss`.
+ * Kept here, byte-for-byte, rather than calling the (now FLINT's-own-floor-
+ * based) flint.ts function directly, so SPARK_FLINT's held-out-tested
+ * numbers (RESULT_spark_flint_separate.md) never move.
+ */
+function evaluateCushion(equity: number, deposit: number, maxLoss: number): SparkFlintCushionResult {
+  const cushion = Math.round((equity - deposit) * 100) / 100
+  if (cushion < maxLoss) {
+    return {
+      eligible: false,
+      cushion,
+      reason: `skip:flint_profit_cushion(cushion=$${cushion.toFixed(2)}<maxloss=$${maxLoss.toFixed(2)})`,
+    }
+  }
+  return { eligible: true, cushion, reason: null }
+}
 
 /** off|on, unset = off. */
 export function isSparkFlintMode(): boolean {
@@ -102,7 +134,7 @@ export function decideSparkFlintContracts(inputs: SparkFlintBudgetInputs): Spark
 
   // Rule R1 — profits-only, gated against DEPOSIT (never SPARK's ratcheted
   // floor) — variant (a)'s own construction: `profit = equity - deposit`.
-  const gate: FlintProfitGateResult = evaluateFlintProfitGate(equity, deposit, flintMl)
+  const gate: SparkFlintCushionResult = evaluateCushion(equity, deposit, flintMl)
   if (!gate.eligible) {
     return {
       flintContracts: 0,

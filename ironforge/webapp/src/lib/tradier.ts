@@ -5746,7 +5746,7 @@ export async function placeCallSpreadOrderAllAccounts(
     ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
     : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
 
-  const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT, flintMaxLoss } = await import('./flint')
+  const { decideFlintContractsForCushion, FLINT_BP_FLOOR_PER_CONTRACT, flintMaxLoss, getFlintFloorAmount } = await import('./flint')
   const flameSkip = await import('./flame-skip')
   const ebbSizing = await import('./ebb-sizing')
 
@@ -5868,13 +5868,13 @@ export async function placeCallSpreadOrderAllAccounts(
         }
         acctContracts = decision.contracts
       } else {
-        // 2. Rule R1 — the per-account profit gate. Leron, 2026-09-26: a loss
-        // eats only into THIS account's own profit above its funded floor.
-        // Tried at the target count first, stepped down to baseContracts if
-        // only the extra lot breaks it — "if cushion covers 1 but not 2,
-        // trade 1." When contracts === baseContracts (upsize off or not
-        // eligible today) this is exactly one evaluation, byte-for-byte the
-        // old single-size gate.
+        // `floor`/`equity` here are the ACCOUNT's own (EBB) funded floor and
+        // total current balance — still read exactly as before, because
+        // FLAME_FAST_START and the SPARK_FLINT safety net further below
+        // both plan/net against THIS account's real EBB numbers and are
+        // explicitly untouched by the 2026-10-15 independence fix
+        // (PREREG_FLAME_SLEEVE_INDEPENDENCE.md). Rule R1 itself no longer
+        // reads either of them — see flintFloor/flintPnl below.
         const { floor, equity } = isProd
           ? await (async () => {
               const ladderCap = await getProductionLadderCapital(botName, acct.name)
@@ -5883,7 +5883,41 @@ export async function placeCallSpreadOrderAllAccounts(
             })()
           : await getFlintSandboxLedger(acct.name, accountId)
 
-        const r1 = decideFlintContractsForCushion(contracts, baseContracts, equity, floor, callShort, callLong, entryCredit)
+        // 2. Rule R1 — FLINT's OWN profit gate (2026-10-15 independence fix,
+        // corrected same day after RESULT_FLAME_THREE_SLEEVE_MIX.md and a
+        // regression in flint-multi-account.test.ts surfaced the first cut
+        // was wrong): cushion = min(this account's OWN flint_account_floor
+        // row, FLINT_FLOOR_AMOUNT) + FLINT's own cumulative realized P&L on
+        // THIS account. Two properties, both required, neither alone is
+        // enough:
+        //   - PER-ACCOUNT, never shared (flint_account_floor, Leron
+        //     2026-09-26: "ironforge will have a lot of accounts" — the
+        //     table this file already had BEFORE today; the first cut of
+        //     this fix wrongly replaced it with one global constant for
+        //     every customer, which is the regression this comment fixes).
+        //     Sandbox already seeds/reads it via getFlintSandboxLedger
+        //     above; production never had its own row before FLINT went
+        //     independent of EBB, so it's seeded here too, the same way.
+        //   - Capped at the BACKTESTED ceiling (getFlintFloorAmount(),
+        //     $500 — RESULT_FLAME_THREE_SLEEVE_MIX.md, 2026-10-15): an
+        //     account's seeded row can be large (it used to seed from that
+        //     account's full starting equity), and nothing above $500 was
+        //     ever backtested at FLINT's 1-lot cap — never grant more
+        //     standing risk than what was actually proven safe.
+        // A same-day EBB loss on this SAME account can no longer shrink
+        // either number. Tried at the target count first, stepped down to
+        // baseContracts if only the extra lot breaks it — "if cushion
+        // covers 1 but not 2, trade 1." When contracts === baseContracts
+        // (upsize off or not eligible today) this is exactly one
+        // evaluation, byte-for-byte the old single-size gate shape.
+        const perAccountFloor = isProd
+          ? await getOrSeedFlintAccountFloor(acct.name, 'production', accountId, equity)
+          : floor
+        const flintFloor = perAccountFloor == null ? null : Math.min(perAccountFloor, getFlintFloorAmount())
+        const { getFlintCumulativeRealizedPnl } = await import('./scanner')
+        const flintPnl = await getFlintCumulativeRealizedPnl(botName, acct.name, isProd ? 'production' : 'sandbox')
+
+        const r1 = decideFlintContractsForCushion(contracts, baseContracts, flintFloor, flintPnl, callShort, callLong, entryCredit)
         if (r1.contracts < 1) {
           console.warn(`${label}: ${r1.gate.reason ?? 'skip:flint_profit_cushion(unreadable)'}`)
           continue

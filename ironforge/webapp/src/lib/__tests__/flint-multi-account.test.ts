@@ -203,11 +203,16 @@ describe('placeCallSpreadOrderAllAccounts — every eligible account, independen
 
   it('one account passes rule R1, another fails, on the SAME call — fully independent', async () => {
     Object.assign(process.env, ARMED)
-    // BROKER default: User cushion $500 (clears $171.40 maxloss), Matt cushion $50 (fails).
+    // FLINT's own cushion is min(this account's flint_account_floor row,
+    // $500) + its own P&L (0 here, no flint_positions history) — equity is
+    // no longer read at all (2026-10-15 independence fix). User's seeded
+    // floor is above the $500 cap (clears $171.40 maxloss); Matt's is below
+    // it (fails).
+    floorStore = { 'User:sandbox': 1500, 'Matt:sandbox': 100 }
     const result = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-TEST-2')
     expect(Object.keys(result)).toContain('User:sandbox')
     expect(Object.keys(result)).not.toContain('Matt:sandbox')
-    // Flame production (cushion $500) still fills — unaffected by Matt's failure.
+    // Flame production (own seeded floor, capped at $500) still fills — unaffected by Matt's failure.
     expect(Object.keys(result)).toContain('Flame:production')
   })
 
@@ -238,13 +243,13 @@ describe('placeCallSpreadOrderAllAccounts — every eligible account, independen
 
   it('a favorable-day upsize (desired=2) steps down to 1 for the account whose cushion only covers 1', async () => {
     Object.assign(process.env, ARMED)
-    // User: equity 2000, cushion 500 -> clears 2ct maxloss ($342.80) -> stays at 2.
-    // Matt: give it a cushion that covers 1ct ($171.40) but not 2ct.
-    BROKER['sb-matt-key'].equity = 1500 + 200
+    // Cushion = min(seeded flint_account_floor, $500) + own P&L (0 here).
+    // User: floor 1500 -> capped to 500 -> clears 2ct maxloss ($342.80) -> stays at 2.
+    // Matt: floor 250 -> cushion 250 -> covers 1ct ($171.40) but not 2ct ($342.80).
+    floorStore = { 'User:sandbox': 1500, 'Matt:sandbox': 250 }
     const result = await placeCallSpreadOrderAllAccounts(
       'SPY', '2026-09-26', 770, 772, 2, 0.30, 'FLINT-TEST-6', { baseContracts: 1 },
     )
-    BROKER['sb-matt-key'].equity = 1550
     expect(result['User:sandbox'].contracts).toBe(2)
     expect(result['Matt:sandbox'].contracts).toBe(1)
   })
@@ -253,10 +258,13 @@ describe('placeCallSpreadOrderAllAccounts — every eligible account, independen
 describe('flint_account_floor — the per-account profit-gate floor', () => {
   it('is independent PER ACCOUNT — same equity, different floors, only the low-floor account clears R1', async () => {
     Object.assign(process.env, ARMED)
-    // Same equity for both — isolates the floor as the only variable.
+    // Equity no longer matters to R1 at all (2026-10-15 independence fix) —
+    // same equity for both here just proves that. Cushion = min(seeded
+    // floor, $500) + own P&L (0): User's floor is above the cap (cushion
+    // $500, clears); Matt's is below it (cushion $100, fails).
     BROKER['sb-user-key'].equity = 2000
     BROKER['sb-matt-key'].equity = 2000
-    floorStore = { 'User:sandbox': 1000, 'Matt:sandbox': 3000 } // User cushion $1,000; Matt cushion -$1,000
+    floorStore = { 'User:sandbox': 1000, 'Matt:sandbox': 100 }
 
     const result = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-1')
 
@@ -282,29 +290,32 @@ describe('flint_account_floor — the per-account profit-gate floor', () => {
   it('never moves once seeded — a later call with MUCH higher equity does not re-seed the floor', async () => {
     Object.assign(process.env, ARMED)
     floorStore = {} // fresh account, no floor yet
-    BROKER['sb-user-key'].equity = 1000 // "day 1" — floor seeds here
+    BROKER['sb-user-key'].equity = 100 // "day 1" — floor seeds here, at $100 (well under the $500 cap)
 
     const day1 = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-3A')
-    expect(floorStore['User:sandbox']).toBe(1000)
-    // Cushion is $0 on day 1 (equity === floor) — R1 fails, no fill.
+    expect(floorStore['User:sandbox']).toBe(100)
+    // Cushion = min(100, $500) + own P&L (0) = $100, below the $171.40
+    // maxloss — R1 fails, no fill.
     expect(Object.keys(day1)).not.toContain('User:sandbox')
 
-    BROKER['sb-user-key'].equity = 5000 // "day 2" — a big profit
+    BROKER['sb-user-key'].equity = 5000 // "day 2" — equity jumps a lot
     const day2 = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-3B')
-    // The floor MUST still be $1,000, not silently re-seeded to $5,000 —
-    // that is what makes the $4,000 cushion below real.
-    expect(floorStore['User:sandbox']).toBe(1000)
-    expect(Object.keys(day2)).toContain('User:sandbox')
+    // The floor MUST still be $100, not silently re-seeded to $5,000 — proof:
+    // R1 STILL fails on day 2 despite the huge equity jump, since equity no
+    // longer feeds this gate at all (2026-10-15 independence fix) and the
+    // seeded floor never moved.
+    expect(floorStore['User:sandbox']).toBe(100)
+    expect(Object.keys(day2)).not.toContain('User:sandbox')
 
     BROKER['sb-user-key'].equity = 2000 // restore
   })
 
-  it('production keeps its existing starting_capital floor — untouched by flint_account_floor', async () => {
+  it('production now gets its OWN flint_account_floor row too (2026-10-15 fix — it never had one before)', async () => {
     Object.assign(process.env, ARMED)
-    floorStore = {} // even with sandbox floors wiped, production is unaffected
+    floorStore = {} // no pre-existing row for anyone, including production
     const result = await placeCallSpreadOrderAllAccounts('SPY', '2026-09-26', 770, 772, 1, 0.30, 'FLINT-FLOOR-4')
-    expect(Object.keys(result)).toContain('Flame:production') // still reads flame_paper_account, cushion $500
-    expect(floorStore).not.toHaveProperty('Flame:production')
+    expect(Object.keys(result)).toContain('Flame:production') // seeds its own floor at $2,000 equity, capped to $500, clears
+    expect(floorStore['Flame:production']).toBe(2000) // seeded from its own first-read equity, same as sandbox
   })
 })
 
