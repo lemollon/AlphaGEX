@@ -49,14 +49,19 @@ export const FLINT_BP_FLOOR_PER_CONTRACT = 200
 /**
  * FLINT's own dedicated standing floor allocation, dollars — NOT the
  * account's shared EBB deposit/ladder floor (PREREG_FLAME_SLEEVE_
- * INDEPENDENCE.md, 2026-10-15). Default $250, sized to cover FLINT's own
- * ~$193 single-contract worst case with room. Leron: correct this number
- * if a different split is wanted — shipping with this default.
+ * INDEPENDENCE.md, 2026-10-15). Default $500, per the backtest-validated
+ * config in RESULT_FLAME_THREE_SLEEVE_MIX.md (2026-10-15): $500 floor +
+ * FLINT's existing 1-lot cap (FLINT_MAX_CONTRACTS_DEFAULT above) backtests
+ * at combined $1,178/yr, maxDD $499, ret/DD 2.36 vs EBB-alone baseline
+ * $660/yr, maxDD $296, ret/DD 2.23 — a 78% $/yr gain inside the registered
+ * 1.5-2x maxDD ceiling. $250 (the original placeholder default) left FLINT
+ * stuck at zero/near-zero contribution; $600+ re-triggers the account's
+ * early-loss-freeze cliff. This number came from that backtest, not a guess.
  */
-export const FLINT_FLOOR_AMOUNT_DEFAULT = 250
+export const FLINT_FLOOR_AMOUNT_DEFAULT = 500
 
 /**
- * FLINT_FLOOR_AMOUNT — default 250. Unparsable or negative falls back to
+ * FLINT_FLOOR_AMOUNT — default 500. Unparsable or negative falls back to
  * the default rather than silently granting a zero/negative standing
  * floor on a real-money gate.
  */

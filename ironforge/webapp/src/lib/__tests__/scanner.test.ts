@@ -1295,11 +1295,11 @@ describe('getFlintPaperLedger — FLINT\'s own paper-book R1 inputs (2026-10-15 
     delete process.env.FLINT_FLOOR_AMOUNT
   })
 
-  it('floor is FLINT_FLOOR_AMOUNT (250) — never FLAME\'s paper_account.starting_capital, and that table is never queried', async () => {
+  it('floor is FLINT_FLOOR_AMOUNT (500) — never FLAME\'s paper_account.starting_capital, and that table is never queried', async () => {
     (query as any).mockResolvedValueOnce([{ total: '0' }]) // getFlintPaperCumulativeRealizedPnl's own SUM
     const flame = BOTS.find((b: any) => b.name === 'flame')!
     const ledger = await getFlintPaperLedger(flame)
-    expect(ledger.floor).toBe(250)
+    expect(ledger.floor).toBe(500)
     expect(ledger.pnl).toBe(0)
     // Exactly ONE query call — FLINT's own account_type='paper' SUM — never a
     // second call reading {bot}_paper_account (the EBB put side's own ledger).
@@ -1321,7 +1321,7 @@ describe('getFlintPaperLedger — FLINT\'s own paper-book R1 inputs (2026-10-15 
     (query as any).mockResolvedValueOnce([{ total: '-50' }]) // FLINT's OWN paper pnl — not EBB's
     const flame = BOTS.find((b: any) => b.name === 'flame')!
     const ledger = await getFlintPaperLedger(flame)
-    expect(ledger.floor).toBe(250)
+    expect(ledger.floor).toBe(500)
     expect(ledger.pnl).toBe(-50)
     // Never once reads the shared paper_account row EBB's own put side settles into.
     for (const call of (query as any).mock.calls) {

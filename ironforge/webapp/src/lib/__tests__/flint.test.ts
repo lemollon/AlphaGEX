@@ -133,21 +133,21 @@ describe('FLINT_MIN_CREDIT env resolution', () => {
   })
 })
 
-describe('FLINT_FLOOR_AMOUNT env resolution (FLINT\'s own dedicated R1 floor, default $250)', () => {
-  it('defaults to 250 when unset', () => {
+describe('FLINT_FLOOR_AMOUNT env resolution (FLINT\'s own dedicated R1 floor, default $500)', () => {
+  it('defaults to 500 when unset', () => {
     delete process.env.FLINT_FLOOR_AMOUNT
-    expect(FLINT_FLOOR_AMOUNT_DEFAULT).toBe(250)
-    expect(getFlintFloorAmount()).toBe(250)
+    expect(FLINT_FLOOR_AMOUNT_DEFAULT).toBe(500)
+    expect(getFlintFloorAmount()).toBe(500)
   })
   it('honors a valid override', () => {
-    process.env.FLINT_FLOOR_AMOUNT = '500'
-    expect(getFlintFloorAmount()).toBe(500)
+    process.env.FLINT_FLOOR_AMOUNT = '700'
+    expect(getFlintFloorAmount()).toBe(700)
   })
   it('falls back to the default on negative or garbage', () => {
     process.env.FLINT_FLOOR_AMOUNT = '-1'
-    expect(getFlintFloorAmount()).toBe(250)
+    expect(getFlintFloorAmount()).toBe(500)
     process.env.FLINT_FLOOR_AMOUNT = 'nope'
-    expect(getFlintFloorAmount()).toBe(250)
+    expect(getFlintFloorAmount()).toBe(500)
   })
 })
 

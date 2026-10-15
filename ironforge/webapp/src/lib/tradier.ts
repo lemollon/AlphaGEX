@@ -5883,16 +5883,37 @@ export async function placeCallSpreadOrderAllAccounts(
             })()
           : await getFlintSandboxLedger(acct.name, accountId)
 
-        // 2. Rule R1 — FLINT's OWN profit gate (2026-10-15 independence
-        // fix): FLINT_FLOOR_AMOUNT + FLINT's own cumulative realized P&L on
-        // THIS account, never the account's shared EBB equity/floor above —
-        // a same-day EBB loss on this SAME account can no longer shrink
-        // FLINT's cushion. Tried at the target count first, stepped down to
+        // 2. Rule R1 — FLINT's OWN profit gate (2026-10-15 independence fix,
+        // corrected same day after RESULT_FLAME_THREE_SLEEVE_MIX.md and a
+        // regression in flint-multi-account.test.ts surfaced the first cut
+        // was wrong): cushion = min(this account's OWN flint_account_floor
+        // row, FLINT_FLOOR_AMOUNT) + FLINT's own cumulative realized P&L on
+        // THIS account. Two properties, both required, neither alone is
+        // enough:
+        //   - PER-ACCOUNT, never shared (flint_account_floor, Leron
+        //     2026-09-26: "ironforge will have a lot of accounts" — the
+        //     table this file already had BEFORE today; the first cut of
+        //     this fix wrongly replaced it with one global constant for
+        //     every customer, which is the regression this comment fixes).
+        //     Sandbox already seeds/reads it via getFlintSandboxLedger
+        //     above; production never had its own row before FLINT went
+        //     independent of EBB, so it's seeded here too, the same way.
+        //   - Capped at the BACKTESTED ceiling (getFlintFloorAmount(),
+        //     $500 — RESULT_FLAME_THREE_SLEEVE_MIX.md, 2026-10-15): an
+        //     account's seeded row can be large (it used to seed from that
+        //     account's full starting equity), and nothing above $500 was
+        //     ever backtested at FLINT's 1-lot cap — never grant more
+        //     standing risk than what was actually proven safe.
+        // A same-day EBB loss on this SAME account can no longer shrink
+        // either number. Tried at the target count first, stepped down to
         // baseContracts if only the extra lot breaks it — "if cushion
         // covers 1 but not 2, trade 1." When contracts === baseContracts
         // (upsize off or not eligible today) this is exactly one
         // evaluation, byte-for-byte the old single-size gate shape.
-        const flintFloor = getFlintFloorAmount()
+        const perAccountFloor = isProd
+          ? await getOrSeedFlintAccountFloor(acct.name, 'production', accountId, equity)
+          : floor
+        const flintFloor = perAccountFloor == null ? null : Math.min(perAccountFloor, getFlintFloorAmount())
         const { getFlintCumulativeRealizedPnl } = await import('./scanner')
         const flintPnl = await getFlintCumulativeRealizedPnl(botName, acct.name, isProd ? 'production' : 'sandbox')
 
