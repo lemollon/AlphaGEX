@@ -312,6 +312,27 @@ DESIGNED_UNAVAILABLE = {
     ("day_strategy", "tv_structure_check"),
     ("near_forward_strategy", "tv_structure_check"),
     ("forward_strategy", "tv_structure_check"),
+    # Same permanent-impossibility class, data-quality mechanism: full_options_report.py
+    # marks every calendar field unavailable whenever any event in the window is
+    # unverified ("Calendar coverage is partial; local estimates are displayed explicitly
+    # and are not verified releases"). The event-calendar provider has no verified-only
+    # feed, so this condition is permanent, not time-of-day or report-kind dependent.
+    # Leron, 2026-10-15: "yes loosen" -- these were raised as separate from the morning
+    # pre-open fix and explicitly approved for the same treatment.
+    ("event_calendar", "catalysts"),
+    ("event_calendar", "times"),
+    ("event_calendar", "sources"),
+    ("event_calendar", "risk_classes"),
+    ("day_strategy", "catalysts"),
+    ("near_forward_strategy", "catalysts"),
+    ("forward_strategy", "catalysts"),
+    # Same permanent-impossibility class, statistical mechanism: event_study requires at
+    # least 30 qualifying historical events to be non-"Underpowered"; the realized sample
+    # for this universe/window is fixed by history, not by time of day or report kind, so
+    # this cannot resolve itself without a methodology change outside this contract.
+    ("event_study", "frozen_method"),
+    ("event_study", "sample_size"),
+    ("event_study", "validated_statistics"),
 }
 
 # Fields that are unavailable/historical only because this is the day's FIRST checkpoint,
