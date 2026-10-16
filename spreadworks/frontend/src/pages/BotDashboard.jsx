@@ -30,7 +30,7 @@ const EQUITY_PERIODS = [
 
 /* ── Helpers ─────────────────────────────────────────────────────── */
 
-function money(v, { signed = false, decimals = 2 } = {}) {
+export function money(v, { signed = false, decimals = 2 } = {}) {
   if (v == null || Number.isNaN(v)) return '—';
   const sign = v > 0 ? '+' : v < 0 ? '−' : '';
   const abs = Math.abs(v);
@@ -42,13 +42,13 @@ function money(v, { signed = false, decimals = 2 } = {}) {
   return v < 0 ? `−$${str}` : `$${str}`;
 }
 
-function pct(v, decimals = 1) {
+export function pct(v, decimals = 1) {
   if (v == null || Number.isNaN(v)) return '—';
   const sign = v >= 0 ? '+' : '−';
   return `${sign}${Math.abs(v * 100).toFixed(decimals)}%`;
 }
 
-function formatHM(ts) {
+export function formatHM(ts) {
   if (!ts) return '';
   try {
     return new Date(ts).toLocaleTimeString('en-US', {
@@ -63,7 +63,7 @@ function formatHM(ts) {
   }
 }
 
-function relativeTime(ts) {
+export function relativeTime(ts) {
   if (!ts) return '—';
   const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
   if (diff < 0) return 'just now';
@@ -75,7 +75,7 @@ function relativeTime(ts) {
 
 /* ── KPI tile ────────────────────────────────────────────────────── */
 
-function KpiTile({ label, value, sub, mono = true, accent }) {
+export function KpiTile({ label, value, sub, mono = true, accent }) {
   return (
     <div
       className="px-5 py-4 rounded-lg sw-glass"
@@ -98,6 +98,66 @@ function KpiTile({ label, value, sub, mono = true, accent }) {
 }
 
 /* ── Bot nameplate header ───────────────────────────────────────── */
+//
+// `BotNameplate` is the glyph+name+meta block alone (no enable/disable/
+// force-trade controls) — exported so a bot with no live toggle API
+// (TALON, REFLEX — see TalonPage.jsx/ReflexPage.jsx) can render the exact
+// same header chrome as every registry bot's /bots/{id} page, with its own
+// `right` slot (a badge, a tagline) in place of those controls, instead of
+// a hand-built lookalike that can drift from this one.
+export function BotNameplate({ bot, meta, theme, note, right }) {
+  return (
+    <div className="flex items-center gap-5 min-w-0">
+      {/* Glyph tile */}
+      <div
+        className="w-16 h-16 rounded-2xl grid place-items-center flex-shrink-0"
+        style={{
+          background: theme.accentBg,
+          boxShadow: `inset 0 0 0 1px ${theme.primaryRing}, 0 0 32px -8px ${theme.glow}`,
+          color: theme.primary,
+        }}
+      >
+        <BotGlyph kind={theme.glyph} size={32} strokeWidth={1.6} />
+      </div>
+
+      {/* Nameplate */}
+      <div className="min-w-0">
+        <div className="flex items-center gap-3 flex-wrap">
+          <h1
+            className="font-black tracking-[0.04em] leading-none text-[28px] md:text-[44px]"
+            style={{
+              color: theme.primary,
+              textShadow: `0 0 24px ${theme.glow}`,
+            }}
+          >
+            {meta.display}
+          </h1>
+          {right}
+        </div>
+        <div className="flex items-center gap-2 mt-2 text-[13.5px] text-text-secondary flex-wrap">
+          <span className="font-medium">{STRATEGY_LABEL[meta.strategy] || meta.strategy}</span>
+          <span className="w-1 h-1 rounded-full bg-text-muted" />
+          <span className="sw-mono font-semibold text-white">{meta.ticker}</span>
+          <span className="w-1 h-1 rounded-full bg-text-muted" />
+          <span className="sw-mono text-text-tertiary">
+            {String(meta.display).toLowerCase()} · {meta.version || 'v1.0'}
+          </span>
+        </div>
+        {bot === 'ebb' && (
+          <div className="mt-1.5 text-[11.5px] text-text-tertiary">
+            Validated 0DTE put spread (registry #23b) — no stop by design; health bands demote on decay.
+          </div>
+        )}
+        {bot === 'ebb_pm' && (
+          <div className="mt-1.5 text-[11.5px] text-text-tertiary">
+            Afternoon tranche of EBB (registry #41/#42) — same structure, entry 13:05 CT; no stop by design; health bands demote on decay.
+          </div>
+        )}
+        {note && <div className="mt-1.5 text-[11.5px] text-text-tertiary">{note}</div>}
+      </div>
+    </div>
+  );
+}
 
 function BotHeader({ bot, meta, theme, status, enabled, toggling, forcing, onToggle, onForceTrade }) {
   return (
@@ -106,51 +166,7 @@ function BotHeader({ bot, meta, theme, status, enabled, toggling, forcing, onTog
       style={{ borderBottom: '1px solid rgba(125,211,252,0.18)' }}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="flex items-center gap-5 min-w-0">
-          {/* Glyph tile */}
-          <div
-            className="w-16 h-16 rounded-2xl grid place-items-center flex-shrink-0"
-            style={{
-              background: theme.accentBg,
-              boxShadow: `inset 0 0 0 1px ${theme.primaryRing}, 0 0 32px -8px ${theme.glow}`,
-              color: theme.primary,
-            }}
-          >
-            <BotGlyph kind={theme.glyph} size={32} strokeWidth={1.6} />
-          </div>
-
-          {/* Nameplate */}
-          <div className="min-w-0">
-            <h1
-              className="font-black tracking-[0.04em] leading-none text-[28px] md:text-[44px]"
-              style={{
-                color: theme.primary,
-                textShadow: `0 0 24px ${theme.glow}`,
-              }}
-            >
-              {meta.display}
-            </h1>
-            <div className="flex items-center gap-2 mt-2 text-[13.5px] text-text-secondary">
-              <span className="font-medium">{STRATEGY_LABEL[meta.strategy] || meta.strategy}</span>
-              <span className="w-1 h-1 rounded-full bg-text-muted" />
-              <span className="sw-mono font-semibold text-white">{meta.ticker}</span>
-              <span className="w-1 h-1 rounded-full bg-text-muted" />
-              <span className="sw-mono text-text-tertiary">
-                {String(meta.display).toLowerCase()} · {meta.version || 'v1.0'}
-              </span>
-            </div>
-            {bot === 'ebb' && (
-              <div className="mt-1.5 text-[11.5px] text-text-tertiary">
-                Validated 0DTE put spread (registry #23b) — no stop by design; health bands demote on decay.
-              </div>
-            )}
-            {bot === 'ebb_pm' && (
-              <div className="mt-1.5 text-[11.5px] text-text-tertiary">
-                Afternoon tranche of EBB (registry #41/#42) — same structure, entry 13:05 CT; no stop by design; health bands demote on decay.
-              </div>
-            )}
-          </div>
-        </div>
+        <BotNameplate bot={bot} meta={meta} theme={theme} />
 
         {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0">
