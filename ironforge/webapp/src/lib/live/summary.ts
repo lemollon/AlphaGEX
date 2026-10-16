@@ -1,4 +1,4 @@
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY, isSettleAtExpiryBot } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, sharedTable, num, int, escapeSql, heartbeatName, dteMode, CT_TODAY, isSettleAtExpiryBot } from '@/lib/db'
 import {
   getProductionPauseState,
   getOwnerPauseState,
@@ -124,7 +124,7 @@ export async function getLiveSummary(
     ),
     dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) as actual_realized_pnl
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          ${dteFilter} ${prodFilter}`,
@@ -132,7 +132,7 @@ export async function getLiveSummary(
     dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) as today_realized_pnl,
               COUNT(*) as today_trades_closed
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
@@ -207,7 +207,7 @@ export async function getLiveSummary(
     // confused with a query error.
     dbQuery<{ realized_pnl: string | number }>(
       `SELECT realized_pnl
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          ${dteFilter} ${prodFilter}
@@ -650,7 +650,7 @@ export async function getLiveTrade(
               COALESCE(SUM(contracts * total_credit * 100), 0) as max_profit_dollars,
               COALESCE(SUM(contracts), 0) as contracts,
               COUNT(*) as cnt
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}

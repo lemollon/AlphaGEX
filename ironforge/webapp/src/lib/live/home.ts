@@ -1,4 +1,4 @@
-import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
 
 /**
  * Customer Home dashboard payload — wealth snapshot aggregates and a
@@ -61,7 +61,7 @@ export async function getLifetimeStats(
     ),
     dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) AS total
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE ${closedFilter}`,
     ),
   ])
@@ -96,20 +96,20 @@ export async function getHomeData(
       `SELECT
          COALESCE(SUM(realized_pnl) FILTER (WHERE close_time >= '${weekStart}'), 0) AS weekly,
          COALESCE(SUM(realized_pnl) FILTER (WHERE close_time >= '${monthStart}'), 0) AS monthly
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE ${closedFilter}`,
     ),
     getLifetimeStats(BOT, person, isOperator),
     dbQuery(
       `SELECT close_time, ticker, expiration, contracts, total_credit
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE ${closedFilter}
        ORDER BY close_time DESC
        LIMIT 6`,
     ),
     dbQuery(
       `SELECT COUNT(*) AS cnt
-       FROM ${botTable(BOT, 'positions')}
+       FROM ${livePositionsTable(BOT)}
        WHERE ${closedFilter}
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY} - 1`,
     ),

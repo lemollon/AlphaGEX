@@ -1,4 +1,4 @@
-import { dbQuery, botTable, num, int, escapeSql, dteMode } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, dteMode } from '@/lib/db'
 import { scopeFilter, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL } from './bots'
 import { classifyExitReason, type ExitReasonCode } from './exit-reasons'
@@ -94,7 +94,7 @@ export async function loadBotTrades(
       `SELECT position_id, ticker, contracts, total_credit, realized_pnl, close_reason,
               open_time, close_time,
               to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') AS ct_date
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE ${closed}
        ORDER BY close_time DESC
        LIMIT 300`,
@@ -497,7 +497,7 @@ async function loadMergedRows(
     return `SELECT '${bot}' AS bot_key, position_id, ticker, contracts, total_credit, realized_pnl, close_reason,
               open_time, close_time,
               to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') AS ct_date
-            FROM ${botTable(bot, 'positions')}
+            FROM ${livePositionsTable(bot)}
             WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${scope} ${daysFilter} ${qFilter}`
   })
 
@@ -705,7 +705,7 @@ export async function getCustomerTradeDetail(
               call_short_strike, call_long_strike, contracts, total_credit,
               collateral_required, realized_pnl, close_reason, open_time, close_time,
               to_char((close_time AT TIME ZONE 'America/Chicago')::date, 'YYYY-MM-DD') AS ct_date
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE position_id = $1 AND status IN ('closed', 'expired') AND realized_pnl IS NOT NULL ${dteFilter} ${scope}
        LIMIT 1`,
       [id],
