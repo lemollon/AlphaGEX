@@ -829,6 +829,31 @@ def _failure_payload(now: datetime, reason: str, *, attempt: int) -> dict[str, A
 
 async def run_morning_options_report(app: Any, *, now: datetime | None = None,
                                      force: bool = False) -> dict[str, Any]:
+    """Leron, 2026-10-16: "im getting duplicate reports" -- confirmed real (3 full
+    kind="morning" reports archived within 10 seconds of each other). If more than one
+    worker process executes the same cron tick concurrently, each one can read "not yet
+    complete" before any of them writes back, and each sends its own full report. Claims
+    the exact tick (claim_delivery_tick, minute-granularity -- NOT the hourly
+    claim_delivery() used by intraday/market_open, which would block the legitimate
+    07:35->07:45->07:55 sequential retry-on-fallback this job is designed to do) so only
+    one worker proceeds per tick; a losing worker returns immediately instead of
+    duplicating the run."""
+    started = (now or datetime.now(UTC)).astimezone(UTC)
+    from .full_options_report import claim_delivery_tick, finish_delivery
+    slot = await asyncio.to_thread(claim_delivery_tick, "morning", started)
+    if not slot:
+        return {"skipped": True, "reason": "another worker already claimed this tick"}
+    try:
+        result = await _run_morning_options_report_once(app, now=now, force=force)
+        await asyncio.to_thread(finish_delivery, slot, result.get("report_id"), True)
+        return result
+    except Exception as exc:
+        await asyncio.to_thread(finish_delivery, slot, None, False, type(exc).__name__)
+        raise
+
+
+async def _run_morning_options_report_once(app: Any, *, now: datetime | None = None,
+                                     force: bool = False) -> dict[str, Any]:
     """Generate, validate, atomically store, and notify one cloud morning plan."""
     started = (now or datetime.now(UTC)).astimezone(UTC)
     trading_date = started.astimezone(CT).date()

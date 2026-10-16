@@ -1190,7 +1190,7 @@ h2{display:flex;align-items:center;gap:8px}
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
                 '</div>')
     body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
-         f'{render_opening_html(payload)}{"".join(parts)}{bottom}</div>')
+         f'{render_opening_html(payload,inline)}{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):
@@ -1205,9 +1205,33 @@ def claim_delivery(kind,now):
     return slot if claimed else None
 
 def finish_delivery(slot,report_id,posted,error=None):
+    ensure_tables()
     with engine.begin() as c:
         c.execute(text('UPDATE sw_report_deliveries SET status=:status,lease_until=NULL,report_id=:report,posted_at=:posted,error=:error WHERE slot=:slot'),
             {'status':'POSTED' if posted else 'FAILED','report':report_id,'posted':datetime.now(UTC).replace(tzinfo=None) if posted else None,'error':error,'slot':slot})
+
+def claim_delivery_tick(kind,now):
+    """Leron, 2026-10-16: "im getting duplicate reports" -- confirmed real: 3 full
+    kind="morning" reports archived within 10 seconds of each other (07:36:13/16/23 CT).
+    claim_delivery() above already solves this for intraday/market_open with an hourly
+    slot, but the morning job deliberately re-runs within the SAME hour (07:35 -> 07:45
+    -> 07:55 retries model enrichment if the first attempt used a deterministic fallback,
+    morning_options_report.py's own documented behavior) -- an hourly lease would block
+    that legitimate retry. If more than one worker process executes the SAME cron tick
+    concurrently (multiple gunicorn/uvicorn workers each running their own APScheduler,
+    or overlapping deploy-triggered catch-up jobs landing in the same minute), each one
+    reads "not yet complete" before any of them has written back, and all of them
+    generate and send a full report. This claims the exact tick (minute-granularity,
+    not hourly), so only one worker proceeds per tick while 07:35/45/55 remain free to
+    run sequentially as designed."""
+    ensure_tables()
+    slot=kind+':tick:'+now.astimezone(CT).strftime('%Y-%m-%dT%H:%M')
+    stamp=now.replace(tzinfo=None)
+    with engine.begin() as c:
+        c.execute(text("INSERT INTO sw_report_deliveries (slot,status) VALUES (:slot,'PENDING') ON CONFLICT(slot) DO NOTHING"),{'slot':slot})
+        claimed=c.execute(text("UPDATE sw_report_deliveries SET status='SENDING',lease_until=:lease,attempts=attempts+1,error=NULL WHERE slot=:slot AND status!='POSTED' AND (lease_until IS NULL OR lease_until<:now)"),
+            {'slot':slot,'lease':stamp+timedelta(minutes=4),'now':stamp}).rowcount
+    return slot if claimed else None
 
 async def scheduled_intraday(app,kind='intraday'):
     now=datetime.now(UTC)

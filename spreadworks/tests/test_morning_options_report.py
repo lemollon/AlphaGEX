@@ -424,3 +424,71 @@ async def test_model_enriched_plan_still_blocks_retry_ticks(monkeypatch):
     stored, _ = _patch_run(monkeypatch, existing, never)
     result = await report.run_morning_options_report(SimpleNamespace(), now=now)
     assert result["skipped"] is True and stored == {}
+
+
+async def test_a_losing_tick_claim_skips_generation_entirely(monkeypatch):
+    """Leron, 2026-10-16: "im getting duplicate reports" -- confirmed real, 3 full
+    kind="morning" reports archived within 10 seconds of each other. Root cause: if more
+    than one worker process executes the SAME cron tick concurrently, each one reads
+    "not yet complete" before any of them writes back, and each generates and sends its
+    own full report. claim_delivery_tick() (minute-granularity, not the hourly
+    claim_delivery() used by intraday/market_open, which would block the legitimate
+    07:35->07:45->07:55 sequential retry this job is designed to do) should let only one
+    caller per exact tick actually run the generation. True concurrent-thread races
+    can't be exercised reliably against this test suite's sqlite-in-memory engine --
+    SingletonThreadPool gives each OS thread its own disconnected `:memory:` database,
+    so two genuinely concurrent asyncio.to_thread() callers never see each other's claim
+    row at all (a sqlite test-harness limitation; production is Postgres, where the
+    UPDATE ... WHERE's row lock inside one transaction does serialize real concurrent
+    callers). This instead claims the tick directly first (same thread, deterministic),
+    then verifies the wrapper correctly treats that as "another worker already has it"
+    and skips the generation -- the exact behavior a losing concurrent caller must have."""
+    now = datetime(2026, 9, 22, 12, 10, 5, tzinfo=timezone.utc)
+
+    async def never(*_args):
+        raise AssertionError("a losing claim must never reach generation")
+
+    stored, _ = _patch_run(monkeypatch, None, never)
+
+    # The real code path dispatches claim_delivery_tick/finish_delivery via
+    # asyncio.to_thread so DB calls never block the event loop. This suite's sqlite
+    # :memory: engine uses SingletonThreadPool (one disconnected database PER THREAD),
+    # so this test's own pre-claim (on the main test thread) and the wrapper's claim
+    # (on a to_thread worker) would never see the same row unless both run on the same
+    # thread -- a sqlite test-harness limitation, not a production concern (production
+    # is Postgres, a real shared database regardless of thread). Make to_thread run
+    # synchronously on the calling thread for this test only.
+    import asyncio
+    async def same_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+    monkeypatch.setattr(asyncio, "to_thread", same_thread)
+
+    from backend.full_options_report import claim_delivery_tick
+    pre_claimed = claim_delivery_tick("morning", now)
+    assert pre_claimed is not None  # sanity: this test's own claim succeeded
+
+    result = await report.run_morning_options_report(SimpleNamespace(), now=now)
+
+    assert result == {"skipped": True, "reason": "another worker already claimed this tick"}
+    assert stored == {}
+
+
+async def test_different_tick_calls_each_proceed_independently(monkeypatch):
+    """A second call one minute later (a legitimate 07:35 -> 07:45 retry, or simply a
+    different tick) must NOT be blocked by the first tick's lease -- only the exact same
+    tick is deduplicated."""
+    now1 = datetime(2026, 9, 22, 12, 10, 5, tzinfo=timezone.utc)
+    now2 = datetime(2026, 9, 22, 12, 11, 5, tzinfo=timezone.utc)
+    run_count = {"n": 0}
+
+    async def ok(*_args):
+        run_count["n"] += 1
+        return report._deterministic_research({"available": False}, {}, "")
+
+    stored, _ = _patch_run(monkeypatch, None, ok)
+
+    result1 = await report.run_morning_options_report(SimpleNamespace(), now=now1)
+    result2 = await report.run_morning_options_report(SimpleNamespace(), now=now2)
+
+    assert not result1.get("skipped") and not result2.get("skipped")
+    assert run_count["n"] == 2

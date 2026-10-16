@@ -931,3 +931,26 @@ def test_refresh_live_contract_packages_tolerates_fetch_failures(monkeypatch):
     blocks2=_empty_blocks()
     asyncio.run(report.refresh_live_contract_packages(None,blocks2,plan,runtime,core,NOW))
     assert blocks2['contract_packages']['legs']['status']=='unavailable'
+
+def test_claim_delivery_tick_blocks_a_second_claim_for_the_same_exact_minute():
+    """Leron, 2026-10-16: "im getting duplicate reports" -- 3 full kind="morning" reports
+    archived within 10 seconds of each other. claim_delivery() above is hourly-granularity
+    (right for intraday/market_open, which truly must never resend within the hour), but the
+    morning job deliberately re-runs within the same hour (07:35->07:45->07:55 retries model
+    enrichment on a deterministic-fallback plan) -- an hourly lease would wrongly block that.
+    claim_delivery_tick() claims the exact minute instead: a second call for the SAME tick
+    must see the first claim and return None; a call for a DIFFERENT minute must proceed
+    independently; and after finish_delivery() releases the slot as posted, a repeat claim
+    for that same already-posted tick must still be blocked (no resend of a completed tick)."""
+    first = report.claim_delivery_tick('morning', NOW)
+    assert first is not None
+    second = report.claim_delivery_tick('morning', NOW)
+    assert second is None, "a second caller for the exact same tick must not also claim it"
+
+    later = NOW + timedelta(minutes=1)
+    third = report.claim_delivery_tick('morning', later)
+    assert third is not None, "a different minute is a different tick and must not be blocked"
+
+    report.finish_delivery(first, 'report-id-1', True)
+    fourth = report.claim_delivery_tick('morning', NOW)
+    assert fourth is None, "a completed tick must not be re-claimed"
