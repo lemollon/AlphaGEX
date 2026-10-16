@@ -519,3 +519,37 @@ original markdown and is listed under `errors`; the run continues. Optional `?re
 `REPORT_RERENDER_TOKEN` environment variable; `GET` stays open and writes nothing. The row's own
 `report_policy` is left exactly as published; a separate `report_markdown_rendered_policy`
 (`version` + `sha256`) records the policy that produced the current markdown.
+
+## Surface near-leg corroboration (pre-registered 2026-10-16, before implementation)
+The Surface section's rich/cheap and curve-shape calls use `surface.atm_iv` (the nearest contract
+with at least 1 day to expiry) as the near leg. A stored 2026-10-07 to 10-15 sample of 18 archived
+reports showed that leg printing SPY 76.1%, 46.1% and 42.6% against a same-payload VIX of about 15,
+and one of them (76.1%) read 10.3% on the next capture ten minutes later. A call made on such a
+number is a false call, so the near leg must be corroborated before a call is made.
+
+**Rule.** For SPY, with `r = SPY near-leg ATM IV / (VIX9D / 100)` using the same payload's
+`surface.vix_family` VIX9D: the near leg is *corroborated* when `0.5 <= r <= 2.0`. Outside that
+band the Surface section makes no curve-shape call and no IV-versus-realized premium call for that
+symbol, and states both numbers and the ratio instead. Nothing is hidden: the ATM IV itself still
+prints. VIX9D is the comparator because its horizon (9 days) is the closest index-vol horizon to
+the 1 to 5 day near leg.
+
+**Why 2.0, from the distribution already measured (not chosen afterwards).** Of the 18 reports, the
+15 SPY readings that were plausible sat at r = 0.87 to 1.49 (max 17.8% vs VIX9D 11.96). The three
+bad SPY readings sat at r = 3.29, 3.78 and 6.47. 2.0 is a round number inside that empty gap
+(geometric midpoint 2.21), 1.34x above the highest sound reading and 1.64x below the lowest bad one.
+The lower bound 0.5 is the reciprocal; no measured reading is below 0.87, so it is untested and
+exists only for symmetry.
+
+**Limits, stated plainly.**
+- QQQ has no index-vol comparator of its own in the payload (no VXN is collected). QQQ is NOT
+  covered by this rule. Its curve and premium calls are still made but are labelled
+  "uncorroborated". A single-payload persistence check is not possible (the stored payload holds one
+  capture), so none is built.
+- SPY with no VIX9D in the payload is likewise labelled uncorroborated, not corroborated.
+- The comparator is the payload's own VIX9D clock; on a last-known (historical) near leg the two
+  clocks can differ by hours. The band is wide enough for that, and the section already dates
+  last-known readings.
+- Other sections that read the same near-leg value (expected move, premium selling suitability)
+  are not changed by this rule. That is a producer-level issue.
+
