@@ -1075,76 +1075,110 @@ def report_view(report_id:str):
               f'<a href="{PUBLIC_BASE}/{report_id}/charts.pdf">Chart PDF</a>'
               f'<a href="{PUBLIC_BASE}/{report_id}/portable.zip">Offline ZIP</a>'
               f'<a href="{payload["markdown_url"]}">Markdown</a>')
+    # Leron, 2026-10-16: "the report looks super ugly ... complete overhaul and redesign ...
+    # use the /design skill to make it look nice." Visual overhaul only -- no field, section,
+    # or markup-contract change: every class name _field_row/_fmt_value/_ordered_blocks emit
+    # (field, fieldtop, fieldname, fieldval, pill+status, meta, reason, kvblock, kv, bool-yes/
+    # no, chart, card, the literal "<details open>") is kept byte-for-byte so report-policy
+    # tests keep matching; only the stylesheet, the header/hero, and the nav/downloads/bottom-
+    # line wrapper markup actually changed. Palette: deep near-black navy ground instead of
+    # flat black, a teal brand accent, and a bull/bear/warn triad (green/rose/amber) used
+    # consistently for LIVE/side/pill coloring instead of the old flat grey-everywhere look.
+    # Space Grotesk carries headings/section titles (a trading-terminal display face); Inter
+    # carries body and field copy; both load from Google Fonts -- this page is a normal
+    # browser tab (iframed into the Market Update page or opened directly), not a sandboxed
+    # Artifact, so an external font request is unremarkable here the way it would not be on
+    # any other dashboard.
+    side_cls={'risk-on':'bull','defensive':'bear'}.get(mission_side,'warn')
+    side_text=html.escape(regime_label or mission_side.upper().replace('-',' '))
     style='''
-:root{--bg:#0b0e13;--surface:#141a23;--surface2:#1b2330;--border:#2a3341;--fg:#e8ecf1;--muted:#8b97a8;
---accent:#35d0ba;--call:#34d399;--put:#f87171;--warn:#fbbf24}
+:root{--bg:#0a0d12;--surface:#12161d;--surface2:#181d26;--border:#242b36;--border-soft:#1b212c;--fg:#edf1f5;--muted:#8a94a6;--muted-dim:#5c6678;
+--accent:#3dd6c4;--accent-dim:rgba(61,214,196,.14);
+--call:#4ade80;--call-dim:rgba(74,222,128,.14);--put:#fb7185;--put-dim:rgba(251,113,133,.14);--warn:#fbbf24;--warn-dim:rgba(251,191,36,.14)}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+body{background:var(--bg);color:var(--fg);font:15px/1.55 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
 margin:0;padding:0}
+h1,h2,.brand,.card summary{font-family:"Space Grotesk",Inter,-apple-system,system-ui,sans-serif}
 /* Leron, 2026-10-16: "the report should be wide enough so i dont have to scroll
    horizontally for anything." 900px was sized for prose, not the 6-column Edge Board or
    the per-field evidence tables -- those needed their own .tablewrap scroll escape hatch
    (2026-10-14) specifically because the page itself was too narrow to hold them. Widening
    the page is the real fix; .tablewrap stays below as a safety net for a genuinely
    oversized table on a narrow viewport, but no longer carries the load on desktop. */
-.wrap{max-width:1400px;margin:0 auto;padding:16px}
-header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--border);
-padding:14px 16px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
-header.top h1{font-size:1.05rem;margin:0}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
-.chip{font-size:.7rem;border:1px solid var(--border);border-radius:999px;padding:3px 10px;color:var(--muted);white-space:nowrap}
-.chip.warn{color:var(--warn);border-color:var(--warn)}
-.downloads{display:flex;gap:10px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--border)}
-.downloads a{color:var(--accent);text-decoration:none;font-size:.82rem;border:1px solid var(--border);border-radius:6px;padding:4px 10px}
-nav.jump{display:flex;flex-wrap:wrap;gap:6px 10px;padding:14px 0;margin-bottom:8px;border-bottom:1px solid var(--border)}
-nav.jump a{color:var(--muted);text-decoration:none;font-size:.78rem;border:1px solid var(--border);border-radius:5px;padding:3px 8px}
-nav.jump a:hover{color:var(--accent);border-color:var(--accent)}
-.toggle-all{display:flex;gap:8px;margin:-4px 0 10px}
-.toggle-all button{font:inherit;font-size:.78rem;color:var(--muted);background:transparent;
-border:1px solid var(--border);border-radius:5px;padding:4px 10px;cursor:pointer}
+.wrap{max-width:1160px;margin:0 auto;padding:20px 16px 60px}
+.hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--border);
+background:linear-gradient(165deg,var(--surface2) 0%,var(--surface) 55%);margin-bottom:14px}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(640px 320px at 85% -10%,var(--hero-glow,rgba(61,214,196,.10)),transparent 70%)}
+.hero.bull{--hero-glow:rgba(74,222,128,.10)}
+.hero.bear{--hero-glow:rgba(251,113,133,.10)}
+.hero.warn{--hero-glow:rgba(251,191,36,.08)}
+.hero-inner{position:relative;padding:22px 24px 24px;display:flex;flex-direction:column;gap:12px}
+.hero-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:8px;font-size:.82rem;font-weight:600;color:var(--muted)}
+.brand b{color:var(--fg)}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{font-size:.7rem;font-weight:600;border:1px solid var(--border);border-radius:999px;padding:4px 11px;color:var(--muted);white-space:nowrap;font-family:Inter,sans-serif}
+.chip.warn{color:var(--warn);border-color:rgba(251,191,36,.4);background:var(--warn-dim)}
+.hero h1{font-size:1.65rem;line-height:1.25;margin:2px 0 0;font-weight:700;max-width:46ch}
+.pill-side{display:inline-flex;align-self:flex-start;font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+border-radius:999px;padding:4px 12px;font-family:Inter,sans-serif}
+.pill-side.bull{color:var(--call);background:var(--call-dim);border:1px solid rgba(74,222,128,.4)}
+.pill-side.bear{color:var(--put);background:var(--put-dim);border:1px solid rgba(251,113,133,.4)}
+.pill-side.warn{color:var(--warn);background:var(--warn-dim);border:1px solid rgba(251,191,36,.4)}
+.downloads{display:flex;gap:8px;flex-wrap:wrap;padding:0 0 14px}
+.downloads a{color:var(--muted);text-decoration:none;font-size:.78rem;font-weight:600;border:1px solid var(--border);border-radius:7px;padding:5px 11px;transition:color .15s,border-color .15s}
+.downloads a:hover{color:var(--accent);border-color:var(--accent)}
+nav.jump{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;padding:10px 0;margin-bottom:4px;background:var(--bg);border-bottom:1px solid var(--border)}
+nav.jump a{color:var(--muted);text-decoration:none;font-size:.76rem;font-weight:600;border:1px solid var(--border);border-radius:999px;padding:4px 11px;white-space:nowrap}
+nav.jump a:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-dim)}
+.toggle-all{display:flex;gap:8px;margin:10px 0 6px}
+.toggle-all button{font:inherit;font-size:.76rem;font-weight:600;color:var(--muted);background:transparent;
+border:1px solid var(--border);border-radius:7px;padding:5px 11px;cursor:pointer}
 .toggle-all button:hover{color:var(--accent);border-color:var(--accent)}
 h1,h2{font-weight:700}
-.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin:14px 0}
-.card h2{font-size:1.02rem;margin:0 0 12px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:0;margin:12px 0;overflow:hidden}
+.card h2{font-size:1.02rem;margin:0 0 12px;padding:16px 18px 0}
 .card details{margin:0}
-.card summary{font-size:1.02rem;font-weight:700;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px}
+.card summary{font-size:1rem;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:10px;
+padding:15px 18px;border-left:3px solid var(--accent)}
 .card summary::-webkit-details-marker{display:none}
-.card summary::before{content:'▸';color:var(--muted);font-size:.8rem;transition:transform .15s}
-.card details[open] summary::before{transform:rotate(90deg)}
-.card details>*:not(summary){margin-top:12px}
-.card summary{margin-bottom:0}
-.chart{margin-bottom:14px}
-.chart img{max-width:100%;border-radius:6px;display:block;background:#0b0e13}
+.card summary::before{content:'';display:none}
+.card summary::after{content:'▸';color:var(--muted-dim);font-size:.75rem;margin-left:auto;transition:transform .15s}
+.card details[open] summary::after{transform:rotate(90deg)}
+.card details>*:not(summary){margin:0 18px 16px;margin-top:0}
+.card details>summary+*{margin-top:0}
+.chart{margin:0 0 14px}
+.chart img{max-width:100%;border-radius:8px;display:block;background:#0c1016;border:1px solid var(--border-soft)}
 .chart p[role=alert]{color:var(--warn);font-size:.85rem}
 .fields{display:flex;flex-direction:column}
-.field{padding:10px 0;border-top:1px solid var(--border)}
+.field{padding:11px 0;border-top:1px solid var(--border-soft)}
 .field:first-child{border-top:none;padding-top:0}
-.field.decision{border-left:2px solid var(--accent);padding-left:10px}
+.field.decision{border-left:2px solid var(--accent);padding:10px 0 10px 12px;background:var(--accent-dim);border-radius:0 8px 8px 0;margin:6px 0}
 .field.decision .fieldname{color:var(--accent)}
 .fieldtop{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}
-.fieldname{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.fieldname{font-size:.74rem;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:600}
 .fieldval{font-size:.92rem;overflow-wrap:anywhere}
-.pill{font-size:.65rem;border-radius:5px;padding:2px 7px;letter-spacing:.03em;white-space:nowrap;flex-shrink:0}
-.pill.unavail{background:rgba(139,151,168,.18);color:var(--muted);border:1px solid var(--border)}
-.pill.hist{background:rgba(251,191,36,.16);color:var(--warn);border:1px solid rgba(251,191,36,.45)}
-.pill.live{background:rgba(52,211,153,.16);color:var(--call);border:1px solid rgba(52,211,153,.45)}
-.meta{color:var(--muted);font-size:.74rem;margin-top:4px;overflow-wrap:anywhere}
-.section-meta{margin:-6px 0 10px}
+.pill{font-size:.64rem;font-weight:700;border-radius:5px;padding:2px 7px;letter-spacing:.03em;white-space:nowrap;flex-shrink:0}
+.pill.unavail{background:rgba(138,148,166,.16);color:var(--muted);border:1px solid var(--border)}
+.pill.hist{background:var(--warn-dim);color:var(--warn);border:1px solid rgba(251,191,36,.4)}
+.pill.live{background:var(--call-dim);color:var(--call);border:1px solid rgba(74,222,128,.4)}
+.meta{color:var(--muted-dim);font-size:.72rem;margin-top:4px;overflow-wrap:anywhere}
+.section-meta{margin:-4px 18px 10px;padding-top:0}
 .reason{color:var(--muted);font-size:.82rem;margin-top:4px}
 .muted{color:var(--muted)}
-.sep{color:var(--muted)}
+.sep{color:var(--muted-dim)}
 .kv .k{text-transform:capitalize}
-.kvblock{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin-top:4px;min-width:0}
+.kvblock{background:var(--surface2);border:1px solid var(--border-soft);border-radius:8px;padding:9px 11px;margin-top:4px;min-width:0}
 .kvblock.listitem{margin-bottom:6px}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:.85rem;flex-wrap:wrap}
 .kv .k{color:var(--muted);flex:0 0 auto;white-space:nowrap}
-.kv .v{flex:1 1 auto;min-width:0;text-align:right;overflow-wrap:anywhere}
+.kv .v{flex:1 1 auto;min-width:0;text-align:right;overflow-wrap:anywhere;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:.82rem}
 pre.raw{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;
 overflow-x:auto;font-size:.78rem;color:var(--fg);white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
-.bool-yes{color:var(--call)}
-.bool-no{color:var(--put)}
-table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
-th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;overflow-wrap:anywhere;vertical-align:top;font-size:.85rem}
+.bool-yes{color:var(--call);font-weight:600}
+.bool-no{color:var(--put);font-weight:600}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+th,td{padding:11px 12px;border-bottom:1px solid var(--border-soft);text-align:left;overflow-wrap:anywhere;vertical-align:top;font-size:.85rem}
 th{width:34%;color:var(--muted);font-weight:600}
 table.wide th{width:auto}
 /* The 6-column Edge Board was squeezing every header word down to a one-character
@@ -1153,18 +1187,38 @@ table.wide th{width:auto}
    Edge Board shipped. Headers never wrap now; the table scrolls horizontally in its own
    wrapper instead of being crushed to fit. */
 table.wide th{white-space:nowrap}
-.tablewrap{overflow-x:auto}
+.tablewrap{overflow-x:auto;border-radius:12px}
 .tablewrap table.wide{width:max-content;min-width:100%}
 tr:last-child td,tr:last-child th{border-bottom:none}
+tr:nth-child(even) td{background:rgba(255,255,255,.012)}
 p{color:var(--muted)}
 a{color:var(--accent)}
-.bottomline p{color:var(--fg);font-size:.92rem;margin:6px 0}
+.bottomline{background:linear-gradient(165deg,var(--surface2),var(--surface));border-color:rgba(74,222,128,.25)!important}
+.bottomline h2{padding-top:16px;padding-left:18px;color:var(--call)}
+.bottomline p{color:var(--fg);font-size:.92rem;margin:6px 18px;padding-bottom:4px}
+.bottomline p:last-child{padding-bottom:16px}
 h2{display:flex;align-items:center;gap:8px}
+/* The story wrapper is the render_opening_html() narrative -- Decision brief through the
+   If/then day plan -- which used to land as a bare, unstyled wall of h2/p/table straight in
+   .wrap with no card, no separation from the field sections below it. Scoping it its own
+   class (added only at this call site, never inside report_policy.py, so report_email.py's
+   plain-inline-style HTML is untouched) lets it inherit the same card/table system as every
+   section below instead of looking like a different, unfinished page. */
+.story{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:4px 20px 20px;margin:14px 0}
+.story h2{font-size:1.08rem;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border-soft)}
+.story h2:first-child{margin-top:16px;padding-top:0;border-top:none}
+.story table{margin:8px 0 4px}
+.story ul{margin:6px 0;padding-left:20px}
+.story li{margin:4px 0;color:var(--muted)}
+.story>p:first-of-type{font-size:.95rem}
 /* A label eating 34% of a phone's width for one word, with the real content crammed into the
    remaining two-thirds, was the core of the "wall of text" complaint (Leron, 2026-10-10
    screenshot) -- stack label above value on narrow viewports instead of side-by-side. */
 @media (max-width:600px){
-  .wrap{padding:12px}
+  .wrap{padding:14px}
+  .hero h1{font-size:1.32rem}
+  .hero-inner{padding:18px 16px 20px}
+  .story{padding:4px 14px 16px}
   table,tbody,tr{display:block;width:100%}
   tr{margin-bottom:2px}
   tr:not(:last-child){border-bottom:1px solid var(--border)}
@@ -1175,22 +1229,29 @@ h2{display:flex;align-items:center;gap:8px}
 '''
     head=(f'<!doctype html><html><head><meta charset="utf-8">'
           f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+          f'<link rel="preconnect" href="https://fonts.googleapis.com">'
+          f'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+          f'<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap">'
           f'<title>{html.escape(payload["kind"].title())} Options Report</title><style>{style}</style></head><body>')
     # Every other timestamp on the page is shown in Central Time (the house convention,
     # "2026-10-08 03:05:05 PM CT" via display()) — this top banner chip was the one place
     # still showing a bare UTC ISO string ("2026-10-09T15:10:43.895470+00:00"), which read
     # as a different, unlabeled hour to a CT reader and looked like a stale/wrong-day report.
-    header=(f'<header class="top"><h1>{html.escape(payload["kind"].title())} Options Report</h1>'
+    header=(f'<header class="hero {side_cls}"><div class="hero-inner">'
+           f'<div class="hero-top"><span class="brand"><b>SpreadWorks</b> &middot; Options Sentiment</span>'
            f'<div class="chips"><span class="chip">{html.escape(ct_str(payload.get("generated_at")))}</span>'
            f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}">{html.escape(payload["report_completeness"])}</span>'
-           f'<span class="chip">immutable snapshot</span></div></header>'
+           f'<span class="chip">immutable snapshot</span></div></div>'
+           f'<span class="pill-side {side_cls}">{side_text}</span>'
+           f'<h1>{html.escape(payload["kind"].title())} Options Report</h1>'
+           f'</div></header>'
            f'<div class="downloads">{downloads}</div>')
     toggle_all=('<div class="toggle-all">'
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=true)">Expand all</button>'
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
                 '</div>')
     body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
-         f'{render_opening_html(payload,inline)}{"".join(parts)}{bottom}</div>')
+         f'<div class="story">{render_opening_html(payload,inline)}</div>{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):
