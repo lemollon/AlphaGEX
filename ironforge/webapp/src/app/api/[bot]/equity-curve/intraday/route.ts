@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, validateBot, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getLoadedSandboxAccountsAsync, getAccountIdForKey, getTradierBalanceDetail, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl, getProductionAccountsForBot } from '@/lib/tradier'
 import { isMarketOpen } from '@/lib/pt-tiers'
 import { scopedStartingCapital } from '@/lib/account-basis'
@@ -78,7 +78,7 @@ export async function GET(
       // $10K basis while the card showed $52,972 off a $63,100 basis.
       dbQuery(
         `SELECT COALESCE(SUM(realized_pnl), 0) AS realized_pnl
-         FROM ${botTable(bot, 'positions')}
+         FROM ${livePositionsTable(bot)}
          WHERE status IN ('closed', 'expired')
            AND realized_pnl IS NOT NULL
            ${dteFilter} ${personFilter} ${accountTypeFilter}`,
