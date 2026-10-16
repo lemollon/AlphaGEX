@@ -112,6 +112,7 @@ const CUSTOMER_EXACT = new Set<string>([
   // Agent workspaces (UAT-008) — /live now only redirects into these.
   '/agents/spark',
   '/agents/flame',
+  '/agents/ember',
   '/performance',
   '/community',
   '/support',
