@@ -553,3 +553,55 @@ exists only for symmetry.
 - Other sections that read the same near-leg value (expected move, premium selling suitability)
   are not changed by this rule. That is a producer-level issue.
 
+## Surface producer guards: ATM pair and 25-delta wings (pre-registered 2026-10-16, before implementation)
+The renderer rule above only discloses a bad near leg; the number was already published into the
+expected move. These guards sit in `market_structure.py`, where `atm_iv` and the smile are produced.
+Full evidence and file:line references: `docs/surface-near-leg-quote-quality.md`. All bands below were
+fixed from the 138 stored payloads' own persisted `surface_points` and `smile` (272 SPY/QQQ readings)
+before any producer code was written.
+
+**ATM pair.** For each DTE, `atm_iv` is published only from a call and a put at the SAME strike K with
+`|K - spot| <= 0.15% of spot` (about one $1 strike step on SPY and QQQ: $1.17 and $1.11 at current
+prices), taking the common strike nearest spot, and only when `max(callIV, putIV) / min(callIV, putIV) <= 1.5`.
+The published value is the mean of the two, as the old median-of-two was. Otherwise `atm_iv` for that
+DTE is unavailable with a specific reason (strikes, distances, IVs); there is no fallback to another
+strike or another expiry.
+- Distance, measured: in 230 of 259 readings with both sides present, the nearest call and the nearest
+  put were each within $0.50 of spot. The other 29 are a continuous tail from $0.6 to $127.2. The two
+  famous bad readings: SPY 76.1% had its nearest call $127.2 and put $15.8 from spot (6 calls, all at
+  600 to 650); SPY 42.6% had $49.1 and $18.9.
+- Pair ratio, measured: across 243 readings with a common strike, call/put IV max/min was 1.0006 to
+  1.2833 (median 1.06 SPY, 1.04 QQQ). **The ratio is not what separates good from bad**: the bad readings
+  have no common strike at all, so the distance and same-strike tests do the work. 1.5 is a round number
+  above the largest measured pair (1.28); it has never been tested against a bad pair because none exists
+  in the sample. Say so; do not oversell it.
+- Applied offline to the 272 stored readings: all 4 known-bad SPY readings and all 3 QQQ 10-08 readings
+  (32.4%) are rejected. 39 of 272 (14.3%) readings are rejected in total, so 32 sound-looking readings
+  also become unavailable. That availability cost is the price of the same-strike rule; the band was not
+  widened to recover them.
+- Readings that pass move by at most 0.52 vol points versus the old value.
+
+**Confidence and downstream.** A DTE with no valid pair is dropped from the per-DTE map. If the reference
+DTE (nearest with at least 1 day) is the one that fails, `atm_iv` is None, confidence is LOW and the reason
+names the failure (not the old generic `missing_atm_iv`). Expected move, IV-versus-realized and the surface
+read are then None / unavailable by their existing None handling; nothing substitutes another expiry. The
+term buckets (`iv_0dte`, `iv_1_5dte`, ...) are medians over the DTEs that passed, so a bucket can still
+come from a different DTE than the failed reference; it is labelled by bucket, not as the reference leg.
+
+**25-delta wings (skew and smile).** Each wing's local Black-Scholes |delta| must be within 0.10 of 0.25
+(|delta| 0.15 to 0.35). Otherwise the smile is unavailable with the reason and `skew` is None.
+- Measured over 270 smile readings: 245 had both wings within 0.05, 246 within 0.10; the next values
+  are 0.136, 0.162, 0.162, 0.162, 0.195 and the maximum is 0.74. 0.10 is a round number inside the empty
+  gap 0.054 to 0.136; 24 readings (9%) fail. The bad 05a96eeb smile (24.3% put against 74.4% call) had
+  wing deltas 0.97 and 0.98.
+- Put/call wing IV ratio is NOT used: normal skew is 1.3 to 1.5x (median 1.34, 95th percentile 1.53), so it
+  does not separate good from bad.
+
+**Limits, stated plainly.**
+- The lower VIX9D bound (0.5x) in the renderer rule above remains untested, and the three SPY readings
+  at 0.53x of VIX9D (f4a02419, d916c592, b4910bdd, 10-09) were deliberately left alone; nothing here moves
+  a boundary to catch something that was not measured.
+- Stored `surface` rows in the database written before this guard are not re-validated (their per-leg data
+  is not in the table). `cached_core` can still serve one of them as a dated last-known reading when the
+  latest capture is LOW. It is labelled historical with its own clock, never presented as live.
+
