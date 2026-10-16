@@ -23,7 +23,8 @@ from backend.report_policy import (_narrative_premium_selling, normalize_blocks,
                                    catalyst_vol_narrative, catalyst_vol_narrative_html,
                                    _structure_family_hint, _structure_family, _tv_structure_check,
                                    _thesis_sentence, _thesis_display_item,
-                                   _narrative_strategy, _price_path_read)
+                                   _narrative_strategy, _price_path_read,
+                                   entry_watch_rows, entry_watches_table_markdown, entry_watches_table_html)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -789,15 +790,15 @@ def test_contract_packages_and_entry_watches_story_combines_both_builders():
     blocks['contract_packages']['legs']=item([{'setup_id':'day','strategy':'put_credit_spread','value':[{'strike':780},{'strike':775}]}])
     blocks['contract_packages']['debit_credit']=item([{'setup_id':'day','value':{'natural_credit':1.25}}])
     blocks['contract_packages']['max_risk_reward']=item([{'setup_id':'day','value':{'max_risk':375,'max_reward':125}}])
-    blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'day','state':'ENTRY_READY'}])
     story=contract_packages_and_entry_watches_story(blocks)
     assert 'Put Credit Spread at 775/780' in story and 'collects $1.25' in story and 'risking $375 to make $125' in story
-    assert 'SPY setup day is just confirmed and ready' in story
+    # 2026-10-16: the entry-watch half is a table now, not a prose sentence in the story.
+    assert 'setup day' not in story
 
 def test_contract_packages_and_entry_watches_story_falls_back_when_both_builders_return_none():
     blocks=empty_blocks()
     story=contract_packages_and_entry_watches_story(blocks)
-    assert story=='No qualified contract packages or registered entry watches right now.'
+    assert story=='No qualified contract packages right now.'
 
 def test_render_markdown_and_html_carry_the_contract_packages_entry_watches_section():
     blocks=empty_blocks()
@@ -806,10 +807,10 @@ def test_render_markdown_and_html_carry_the_contract_packages_entry_watches_sect
              'report_completeness':'INCOMPLETE','chart_urls':{}}
     md=render_markdown(payload)
     assert '## 📦 Contract packages & entry watches' in md
-    assert 'SPY setup day is still on watch, not confirmed yet' in md
+    assert '| Symbol | Stage | Activates | Invalidates |' in md and '| SPY | waiting |' in md
     html_out=render_opening_html(payload)
     assert '<h2>📦 Contract packages & entry watches</h2>' in html_out
-    assert 'SPY setup day is still on watch, not confirmed yet' in html_out
+    assert '<th>Activates</th>' in html_out and '<th>SPY</th><td>waiting</td>' in html_out
 
 def test_candidates_tracked_story_promotes_narrative_candidate_analysis_to_top_level():
     """_narrative_candidate_analysis's symbol-roster + qualified-package-count + registered-
@@ -996,11 +997,56 @@ def test_edge_board_trigger_cell_is_the_trigger_only_and_identical_rows_point_at
 def test_premium_selling_story_prints_the_shared_forward_volatility_sentence_once():
     blocks=empty_blocks()
     blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_FAIR','QQQ':'PREMIUM_FAIR'})
-    same='front-day premium is elevated versus 1-5DTE. This is forward volatility pricing, not proof of buying or selling.'
+    same='6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, not proof of buying or selling.'
     blocks['premium_selling']['forward_implications']=item({'SPY':same,'QQQ':same})
     text=_narrative_premium_selling(blocks['premium_selling'])
     assert text.count('This is forward volatility pricing')==1
     assert 'Same forward-volatility read as above.' in text
+
+def _late_session_0dte_blocks():
+    """The real 3:00 PM CT shape: SPY 0DTE IV 89.3% minutes before expiry, 14.7% for 21+ days."""
+    blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
+    late=datetime(2026,10,6,19,59,tzinfo=timezone.utc).isoformat()  # 2:59 PM CT
+    blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=late)
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_FAIR','QQQ':'PREMIUM_FAIR'})
+    fwd='front-day premium is elevated versus 1–5DTE; 6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, not proof of buying or selling.'
+    blocks['premium_selling']['forward_implications']=item({'SPY':fwd,'QQQ':fwd})
+    return blocks
+
+def test_markdown_and_email_never_call_the_curve_inverted_off_a_late_session_0dte_iv():
+    """2026-10-16: markdown/PDF/email rendered the per-field _narrative_surface, which called the
+    curve "inverted ... classic event/fear pattern" because SPY's 0DTE IV was 89.3% minutes before
+    expiry. The shape read is shared (_curve_shape, 1-5 day vs 21+ day) so every renderer agrees;
+    the 0DTE number still prints as its own data point with its time to the close, and the
+    producer's 0DTE-derived "front-day premium is elevated" clause is not repeated."""
+    blocks=_late_session_0dte_blocks()
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE','chart_urls':{}}
+    for out in (render_markdown(payload),render_opening_html(payload),section_summary('surface',blocks['surface']),
+                surface_smile_story(blocks),market_story(blocks,'neutral',None)):
+        low=out.lower()
+        assert 'event/fear' not in low and 'fear pattern' not in low
+        assert 'inverted' not in low
+        assert 'front-day premium is elevated' not in low
+        assert '0dte is pricing hotter' not in low
+    story=surface_smile_story(blocks)
+    assert "SPY's vol surface: ATM IV 10.9%; the term structure is upward-sloping" in story
+    assert 'SPY 0DTE IV is 89.3%' in story and '(with 1 minute to the close)' in story
+    assert '6–20DTE volatility is elevated versus the near curve' in market_story(blocks,'neutral',None)
+
+def test_front_day_clause_is_dropped_but_a_lone_clause_drops_the_whole_sentence():
+    from backend.report_policy import _without_front_day_clause
+    assert _without_front_day_clause('front-day premium is elevated versus 1–5DTE. This is forward volatility pricing, x.') is None
+    assert _without_front_day_clause('6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, x.').startswith('6–20DTE')
+    assert _without_front_day_clause(None) is None
+
+def test_narrative_surface_labels_last_known_readings_and_keeps_0dte_separate():
+    blocks=_surface_blocks(near=(.15,.12),far=(.147,.228))
+    stamp=datetime(2026,10,5,20,0,tzinfo=timezone.utc).isoformat()
+    for f in ('atm_iv','term_0dte','term_21plus','iv_vs_realized'):
+        blocks['surface'][f]=dict(blocks['surface'][f],status='historical',source_timestamp=stamp)
+    text=surface_smile_story(blocks)
+    assert text.startswith('On last-known readings from Oct 5: SPY')
+    assert 'on a last-known reading from Oct 5, SPY 0DTE IV is' in text
 
 def test_ranked_edge_board_puts_no_trade_first_when_nothing_else_qualifies():
     blocks=empty_blocks()  # every field unavailable -- no registered setup, no profile/gamma coverage
@@ -1124,7 +1170,8 @@ def test_entry_watches_never_dumps_a_corrupted_nonscalar_state():
     assert 'status unclear' in summary
     assert 'confirmation_evidence' not in summary and 'NEAR_TRIGGER' not in summary
     meaning=section_meaning('entry_watches',blocks['entry_watches'])
-    assert 'status is unclear' in meaning
+    assert 'NEAR_TRIGGER' not in meaning and 'confirmation_evidence' not in meaning
+    assert 'Stage is unclear for QQQ' in meaning
 
 def test_futures_context_unwraps_the_extra_observation_layer_some_producer_paths_leave():
     """Live bug, found 2026-10-13 on a real intraday report: the macro-fallback producer path
@@ -2115,3 +2162,183 @@ def test_today_vs_forward_html_table_shows_the_thesis_sentence_not_the_raw_press
     assert 'SPY flow leans upside pressure' in opening
     assert 'Upside initiation premium' not in opening
     assert '306147' not in opening and '306,147' not in opening
+
+
+def _surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.15,.12),far=(.147,.228)):
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':spy[0]},'QQQ':{'atm_iv':qqq[0]}})
+    blocks['surface']['term_0dte']=item({'SPY':{'iv_0dte':near[0]},'QQQ':{'iv_0dte':near[1]}})
+    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':far[0]},'QQQ':{'iv_21_365dte':far[1]}})
+    blocks['surface']['iv_vs_realized']=item({'SPY':{'atm_iv':spy[0],'realized_vol_60m':spy[1]},'QQQ':{'atm_iv':qqq[0],'realized_vol_60m':qqq[1]}})
+    return blocks
+
+def test_surface_takeaway_reads_rich_premium_as_a_sellers_edge_with_the_numbers():
+    """Leron, 2026-10-13: "the surface doesnt tell me what actions to take or what it means".
+    Rich front premium versus realized names the side that has the edge, leads with the meaning,
+    then proves it with the real IV / realized numbers and says which end of the curve is the
+    expensive one."""
+    blocks=_surface_blocks(spy=(.20,.12),qqq=(.30,.20),near=(.40,.45),far=(.15,.22))
+    text=section_meaning('surface',blocks['surface'])
+    assert text.startswith('Front-dated premium is rich')
+    assert 'favours premium sellers over premium buyers' in text
+    assert 'SPY ATM IV is 20.0% against 12.0% realized vol (1.67x)' in text
+    assert 'near-dated end is the expensive end' in text and '1-5 day ATM IV is 20.0% against 15.0% for 21+ days out' in text
+
+def test_surface_takeaway_reads_cheap_fair_and_split_premium():
+    cheap=section_meaning('surface',_surface_blocks(spy=(.08,.12),qqq=(.12,.20))['surface'])
+    assert 'cheap' in cheap and 'favours premium buyers over premium sellers' in cheap
+    fair=section_meaning('surface',_surface_blocks()['surface'])
+    assert 'neither sellers nor buyers an edge' in fair and '0.90x' in fair
+    split=section_meaning('surface',_surface_blocks(spy=(.20,.12),qqq=(.12,.20))['surface'])
+    assert 'disagree on who has the edge' in split and "SPY premium reads rich (sellers' edge)" in split
+
+def test_surface_takeaway_curve_back_end_and_missing_realized():
+    back=section_meaning('surface',_surface_blocks(spy=(.10,.12),qqq=(.12,.12),far=(.20,.25))['surface'])
+    assert 'back carries more premium than the near-dated end' in back
+    blocks=_surface_blocks()
+    blocks['surface']['iv_vs_realized']={'status':'unavailable','reason':'No source observation'}
+    text=section_meaning('surface',blocks['surface'])
+    assert "can't be called" in text and 'favours' not in text
+
+def test_surface_takeaway_never_uses_a_same_session_0dte_iv_as_the_front_of_the_curve():
+    """2026-10-16: on the real 3:00 PM CT report SPY's 0DTE IV was 89.3% against 14.7% for 21+
+    days and the section said "no edge" and "the front end is the expensive end" in one paragraph.
+    0DTE IV is a real price at any hour, so it stays on the page as its own data point with its
+    time to the close attached, but it never drives the term-structure verdict, which is always
+    1-5 day vs 21+ day. Same shape at 2:59 PM and at 9:00 AM."""
+    def surface_text(ts):
+        blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
+        blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=ts.isoformat())
+        return blocks,section_meaning('surface',blocks['surface'])
+    for ts,label in ((datetime(2026,10,6,19,59,tzinfo=timezone.utc),'1 minute to the close'),   # 2:59 PM CT
+                     (datetime(2026,10,6,14,0,tzinfo=timezone.utc),'6 hours to the close'),       # 9:00 AM CT
+                     (datetime(2026,10,6,19,59,50,tzinfo=timezone.utc),'under a minute to the close')):
+        blocks,text=surface_text(ts)
+        assert 'expensive end' not in text
+        assert 'SPY 0DTE IV is 89.3%' in text and 'QQQ 0DTE IV is 117.1%' in text
+        assert f'(with {label})' in text
+        assert 'separate data point, not a leg of the curve comparison' in text
+        assert 'neither sellers nor buyers an edge' in text and 'nothing near-dated priced as a fear premium' in text
+        assert "1-5 day ATM IV is 10.9% against 14.7% for 21+ days out" in text
+    # A reading carried over from the previous session (e.g. a morning report) says so by date.
+    blocks,text=surface_text(datetime(2026,10,5,20,0,tzinfo=timezone.utc))
+    assert '(a reading taken after the Oct 5 3:00 PM CT close)' in text and 'expensive end' not in text
+    # Unusable clock: the number still shows, labelled as lacking a time to expiry.
+    blocks,text=surface_text(datetime(2026,10,6,19,59,tzinfo=timezone.utc))
+    blocks['surface']['term_0dte']['source_timestamp']='not a time'
+    assert '(time to expiry unavailable)' in section_meaning('surface',blocks['surface'])
+    # No second tenor left: say so rather than letting 0DTE stand in for the curve.
+    only0=empty_blocks()
+    only0['surface']['term_0dte']=blocks['surface']['term_0dte']
+    only0['surface']['iv_vs_realized']=blocks['surface']['iv_vs_realized']
+    thin=section_meaning('surface',only0['surface'])
+    assert "There isn't enough of the curve left to call which end is richer." in thin and 'expensive end' not in thin
+
+def test_surface_breadth_and_entry_watch_takeaways_label_historical_fields_with_their_date():
+    """REPORT_REQUIREMENTS.md: dated last-known observations retain their clocks. A takeaway that
+    prints numbers from status 'historical' fields (e.g. a pre-open report carrying yesterday's
+    surface) must say so inline with the observation date; live fields must not carry the marker."""
+    stamp=datetime(2026,10,5,20,0,tzinfo=timezone.utc).isoformat()
+    def stale(block):
+        for f,v in block.items():
+            if v.get('status')!='unavailable':block[f]=dict(v,status='historical',source_timestamp=stamp)
+        return block
+    live=_surface_blocks()['surface']
+    assert 'last-known' not in section_meaning('surface',live)
+    old=section_meaning('surface',stale(_surface_blocks()['surface']))
+    assert old.startswith('On last-known readings from Oct 5, front-dated premium is priced close')
+    assert 'Along the curve, on last-known readings from Oct 5, the back carries more premium' in old
+    assert 'on a last-known reading from Oct 5, SPY 0DTE IV is' in old
+    blocks=_breadth_blocks(150,350,ratio=.5,highs=2,lows=40)['breadth']
+    assert 'last-known' not in section_meaning('breadth',blocks,None,'RISK-ON')
+    assert section_meaning('breadth',stale(blocks),None,'RISK-ON').startswith('These are last-known readings from Oct 5, not live ones.')
+    watch=empty_blocks()['entry_watches']
+    watch['trigger']=item(_watch_rows())
+    assert 'last-known' not in section_meaning('entry_watches',watch)
+    assert section_meaning('entry_watches',stale(watch)).startswith('These are last-known readings from Oct 5, not live ones.')
+
+def test_surface_takeaway_says_so_plainly_when_fields_are_empty():
+    text=section_meaning('surface',empty_blocks()['surface'])
+    assert text=='Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today.'
+
+def _breadth_blocks(adv,dec,ratio=None,highs=None,lows=None):
+    blocks=empty_blocks()
+    blocks['breadth']['advance_decline']=item({'advances':adv,'declines':dec})
+    if ratio is not None:blocks['breadth']['up_down_volume']=item({'up_down_volume_ratio':ratio})
+    if highs is not None:blocks['breadth']['new_highs_lows']=item({'new_52w_highs':highs,'new_52w_lows':lows})
+    return blocks
+
+def test_breadth_takeaway_narrow_tape_under_risk_on_contradicts_the_label():
+    """The case Leron cares about: a narrow tape under a RISK-ON label must be called out."""
+    blocks=_breadth_blocks(150,350,ratio=.5,highs=2,lows=40)
+    text=section_meaning('breadth',blocks['breadth'],'risk-on','RISK-ON')
+    assert text.startswith('Participation contradicts the flat RISK-ON regime call')
+    assert '150 advancers to 350 decliners' in text and 'up-volume at 0.50x down-volume' in text
+    assert '2 new 52-week highs against 40 new lows' in text
+
+def test_breadth_takeaway_agrees_conflicts_and_splits_against_every_label():
+    broad=_breadth_blocks(400,100,ratio=2.0,highs=30,lows=2)['breadth']
+    assert section_meaning('breadth',broad,None,'RISK-ON').startswith('Participation confirms the flat RISK-ON')
+    assert section_meaning('breadth',broad,None,'DEFENSIVE').startswith('Participation contradicts the flat DEFENSIVE')
+    weak=_breadth_blocks(100,400,ratio=.4,highs=1,lows=30)['breadth']
+    assert section_meaning('breadth',weak,None,'DEFENSIVE').startswith('Participation confirms the flat DEFENSIVE')
+    mixed=_breadth_blocks(249,253,ratio=.66,highs=20,lows=1)['breadth']
+    assert 'neither confirms nor contradicts the flat DEFENSIVE' in section_meaning('breadth',mixed,None,'DEFENSIVE')
+    assert section_meaning('breadth',mixed,None,'RISK-ON').startswith("Participation doesn't confirm the flat RISK-ON")
+    assert 'agrees with the flat CHOPPY' in section_meaning('breadth',mixed,None,'CHOPPY')
+    nolabel=section_meaning('breadth',broad)
+    assert nolabel.startswith('Participation is constructive.') and 'regime call' not in nolabel
+
+def test_breadth_takeaway_says_so_plainly_when_fields_are_empty():
+    text=section_meaning('breadth',empty_blocks()['breadth'],'risk-on','RISK-ON')
+    assert text=='Breadth coverage is too thin to say whether participation backs the regime call today.'
+
+def _watch_rows():
+    return [{'setup_id':'a','symbol':'QQQ','state':'WAIT','entry':{'type':'opening_range_rejection','range_low':726.21,'range_high':729.72,'confirmation_bars':2},
+             'invalidation':{'type':'close_above','level':729.72}},
+            {'setup_id':'b','symbol':'SPY','state':'WAIT','entry':{'type':'opening_range_breakout','range_high':773.9156,'confirmation_bars':2},
+             'invalidation':{'type':'close_below','level':772.25}}]
+
+def test_entry_watches_render_one_scannable_line_per_setup_and_a_real_takeaway():
+    """Leron, 2026-10-13: entry watch is "a wall of words". One row per setup: symbol, stage,
+    activating level, invalidating level -- a table in both renderers."""
+    blocks=empty_blocks()
+    blocks['entry_watches']['trigger']=item(_watch_rows())
+    rows=entry_watch_rows(blocks['entry_watches'])
+    assert rows[0]=={'symbol':'QQQ','stage':'waiting','activates':'opening range rejection, range 726.21-729.72, 2 confirming closes','invalidates':'close above 729.72'}
+    assert rows[1]['activates']=='opening range breakout, range high 773.916, 2 confirming closes' and rows[1]['invalidates']=='close below 772.25'
+    md=entry_watches_table_markdown(blocks)
+    assert md.count('\n')==3 and '| QQQ | waiting |' in md and 'close below 772.25' in md
+    assert '<th>Invalidates</th>' in entry_watches_table_html(blocks)
+    text=section_meaning('entry_watches',blocks['entry_watches'])
+    assert text.startswith('Nothing has triggered: all 2 registered setups (QQQ and SPY) are still waiting')
+    assert 'not an entry' in text
+
+def test_entry_watches_takeaway_covers_ready_near_and_invalidated():
+    blocks=empty_blocks()
+    rows=_watch_rows()
+    rows[0]['state']='NEAR_TRIGGER';rows[1]['state']='INVALIDATED'
+    blocks['entry_watches']['trigger']=item(rows)
+    text=section_meaning('entry_watches',blocks['entry_watches'])
+    assert text.startswith('QQQ is closest to firing') and 'SPY is already invalidated or expired' in text
+    rows[0]['state']='ENTRY_READY'
+    blocks['entry_watches']['trigger']=item(rows)
+    assert section_meaning('entry_watches',blocks['entry_watches']).startswith('1 of 2 registered setups just confirmed ENTRY_READY (QQQ)')
+
+def test_entry_watches_say_so_plainly_when_fields_are_empty():
+    blocks=empty_blocks()
+    assert entry_watch_rows(blocks['entry_watches'])==[]
+    assert entry_watches_table_markdown(blocks)=='' and entry_watches_table_html(blocks)==''
+    assert section_meaning('entry_watches',blocks['entry_watches'])=='No registered setups this checkpoint — nothing to watch yet.'
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE','chart_urls':{}}
+    assert 'No registered entry watches right now.' in render_markdown(payload)
+
+def test_surface_and_breadth_takeaways_reach_the_rendered_page_with_the_regime_label():
+    blocks=_breadth_blocks(150,350,ratio=.5,highs=2,lows=40)
+    blocks['surface']=_surface_blocks()['surface']
+    blocks['risk_on_defensive']['regime_label']=item('RISK-ON')
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE','chart_urls':{}}
+    html_out=render_opening_html(payload)
+    assert 'Participation contradicts the flat RISK-ON regime call' in html_out
+    assert 'neither sellers nor buyers an edge' in html_out
+    assert 'Cross-expiry volatility context for choosing' not in html_out

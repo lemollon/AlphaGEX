@@ -667,6 +667,22 @@ def _narrative_market_control(block):
         bits.append(sentence)
     return " ".join(bits) if bits else None
 
+def _without_front_day_clause(text):
+    """The producer's forward_implications string opens with "front-day premium is elevated /
+    discounted versus 1-5DTE", which it derives from iv_0dte -- the same expiry artifact
+    _curve_shape keeps out of every term-structure read (89% SPY 0DTE IV minutes before the
+    close). Renderers do not repeat it; the 6-20DTE / 21+D clauses compare real tenors and stay.
+    If nothing else is left the whole sentence is dropped (None)."""
+    if not isinstance(text, str) or not text:
+        return text
+    head, sep, tail = text.partition(". This is forward")
+    kept = [p for p in head.split("; ") if not p.strip().lower().startswith("front-day premium is")]
+    if len(kept) == len(head.split("; ")):
+        return text
+    if not kept:
+        return None
+    return "; ".join(kept) + sep + tail
+
 def _narrative_premium_selling(block):
     suit_item = block.get("suitability") or {}
     suit_val = suit_item.get("value")
@@ -689,7 +705,7 @@ def _narrative_premium_selling(block):
         if _num(ratio):
             sentence += f" (IV/realized ratio {ratio:.2f})"
         sentence += "."
-        forward = forward_val.get(sym) if isinstance(forward_val, dict) else None
+        forward = _without_front_day_clause(forward_val.get(sym)) if isinstance(forward_val, dict) else None
         if isinstance(forward, str) and forward:
             # Both symbols usually carry the identical term-structure sentence; say it once.
             sentence += " " + ("Same forward-volatility read as above." if forward in forwards else forward)
@@ -891,7 +907,6 @@ def _narrative_surface(block):
     atm_val = atm_item.get("value")
     if not isinstance(atm_val, dict) or atm_item.get("status") == "unavailable":
         return None
-    term0 = (block.get("term_0dte") or {}).get("value") or {}
     term_far = (block.get("term_21plus") or {}).get("value") or {}
     ivrv_val = (block.get("iv_vs_realized") or {}).get("value") or {}
     bits = []
@@ -899,13 +914,15 @@ def _narrative_surface(block):
         atm = (atm_val.get(sym) or {}).get("atm_iv") if isinstance(atm_val.get(sym), dict) else None
         if not _num(atm):
             continue
-        near = ((term0.get(sym) or {}) if isinstance(term0, dict) else {}).get("iv_0dte")
+        # Shared with the takeaway (_curve_shape): the front leg is the 1-5 day ATM IV, never
+        # term_0dte -- a 0DTE IV near expiry is an artifact, not an "event/fear" curve. The 0DTE
+        # reading is reported separately below by _zero_dte_sentence.
         far = ((term_far.get(sym) or {}) if isinstance(term_far, dict) else {}).get("iv_21_365dte")
         sentence = f"{sym}'s vol surface: ATM IV {atm*100:.1f}%"
-        if _num(near) and _num(far) and far > 0:
-            shape = ("inverted — 0DTE is pricing hotter than the back of the curve, classic event/fear pattern" if near > far * 1.15
-                     else "upward-sloping — normal contango, no near-term fear priced in" if near < far * 0.9
-                     else "flat across expiries")
+        if _num(far) and far > 0:
+            shape = {"front": "inverted — the near-dated (1-5 day) end is pricing above the back of the curve",
+                     "back": "upward-sloping — the back carries more premium than the near-dated end",
+                     "flat": "flat across expiries"}[_curve_shape(atm, far)]
             sentence += f"; the term structure is {shape}"
         row = ivrv_val.get(sym) if isinstance(ivrv_val, dict) else None
         iv, rv = (row or {}).get("atm_iv"), (row or {}).get("realized_vol_60m")
@@ -914,7 +931,14 @@ def _narrative_surface(block):
             sentence += f". IV is running {abs(gap):.1f} points {'above' if gap > 0 else 'below'} realized vol"
         sentence += "."
         bits.append(sentence)
-    return " ".join(bits) if bits else None
+    if not bits:
+        return None
+    stale = _last_known(block, "atm_iv", "term_21plus", "iv_vs_realized")
+    text = " ".join(bits)
+    if stale:
+        text = f"On {stale}: " + text
+    zero = _zero_dte_sentence(block)
+    return text + (" " + zero if zero else "")
 
 def _narrative_breadth(block):
     ad_item = block.get("advance_decline") or {}
@@ -1426,6 +1450,277 @@ def _per_symbol_floats(value):
                     break
     return out
 
+_WATCH_STAGE = {
+    "WAIT": "waiting", "WATCH": "waiting", "NEAR_TRIGGER": "near trigger", "ENTRY_READY": "entry ready",
+    "ACTIVE": "active", "INVALIDATED": "invalidated", "EXPIRED": "expired",
+    "DATA_UNAVAILABLE": "data unavailable", "LIQUIDITY_BLOCKED": "blocked on liquidity",
+}
+
+def entry_watch_rows(block):
+    """One scannable row per registered setup -- symbol, where it sits in its trigger lifecycle,
+    the level that activates it, the level that kills it. Leron, 2026-10-13: entry watch is
+    "a wall of words". Same shape as the Edge board Trigger cell (_trigger_text): entry
+    condition with its levels and confirming bars, then the invalidation level. A non-scalar
+    'state' (the producer bug documented on _narrative_entry_watches) reads "status unclear",
+    never a stringified blob. Returns [] when the trigger field is unavailable or empty."""
+    item = block.get("trigger") or {}
+    rows = item.get("value") if item.get("status") != "unavailable" else None
+    out = []
+    for r in (rows if isinstance(rows, list) else []):
+        if not isinstance(r, dict):
+            continue
+        state = r.get("state")
+        stage = _WATCH_STAGE.get(state, state.replace("_", " ").lower()) if isinstance(state, str) else "status unclear"
+        entry = r.get("entry") if isinstance(r.get("entry"), dict) else {}
+        low, high = entry.get("range_low"), entry.get("range_high")
+        act = []
+        if entry.get("type"):
+            act.append(str(entry["type"]).replace("_", " "))
+        if _num(low) and _num(high):
+            act.append(f"range {low:g}-{high:g}")
+        elif _num(high):
+            act.append(f"range high {high:g}")
+        if _num(entry.get("confirmation_bars")):
+            act.append(f"{int(entry['confirmation_bars'])} confirming closes")
+        inv = r.get("invalidation") if isinstance(r.get("invalidation"), dict) else {}
+        invalid = (f"{str(inv.get('type') or 'move through').replace('_', ' ')} {inv['level']:g}"
+                   if _num(inv.get("level")) else "not recorded")
+        out.append({"symbol": str(r.get("symbol") or "?"), "stage": stage,
+                    "activates": ", ".join(act) if act else "not recorded", "invalidates": invalid})
+    return out
+
+def entry_watches_table_markdown(blocks):
+    rows = entry_watch_rows(blocks["entry_watches"])
+    if not rows:
+        return ""
+    keys = ("symbol", "stage", "activates", "invalidates")
+    return "\n".join(["| Symbol | Stage | Activates | Invalidates |", "|---|---|---|---|"]
+                     + ["| " + " | ".join(r[k].replace("|", "\\|") for k in keys) + " |" for r in rows])
+
+def entry_watches_table_html(blocks):
+    rows = entry_watch_rows(blocks["entry_watches"])
+    if not rows:
+        return ""
+    return ('<div class="tablewrap"><table class="wide"><tr><th>Symbol</th><th>Stage</th><th>Activates</th><th>Invalidates</th></tr>'
+            + "".join("<tr><th>" + html.escape(r["symbol"]) + "</th><td>" + html.escape(r["stage"]) + "</td><td>"
+                      + html.escape(r["activates"]) + "</td><td>" + html.escape(r["invalidates"]) + "</td></tr>" for r in rows)
+            + "</table></div>")
+
+def _join_syms(syms):
+    syms = list(dict.fromkeys(syms))
+    return syms[0] if len(syms) == 1 else ", ".join(syms[:-1]) + " and " + syms[-1]
+
+def _entry_watches_takeaway(block):
+    """Leads with what the registered setups mean for the plans above, then who is where.
+    The levels live in the table, not in this sentence."""
+    rows = entry_watch_rows(block)
+    if not rows:
+        return "No registered setups this checkpoint — nothing to watch yet."
+    n = len(rows)
+    plural = "s" if n != 1 else ""
+    by = lambda *stages: [r["symbol"] for r in rows if r["stage"] in stages]
+    ready, near, waiting = by("entry ready"), by("near trigger"), by("waiting")
+    dead = by("invalidated", "expired")
+    unclear = by("status unclear", "data unavailable", "blocked on liquidity")
+    if ready:
+        text = (f"{len(ready)} of {n} registered setup{plural} just confirmed ENTRY_READY ({_join_syms(ready)}) — "
+                "check the matching plan above before anything else, and re-verify live per-leg quotes first.")
+    elif near:
+        text = (f"{_join_syms(near)} is closest to firing — price is at the edge of its trigger, but nothing has confirmed yet, "
+                "so the matching plan above is still a watch item, not an entry.")
+    elif len(waiting) == n:
+        who = "the one registered setup (" + waiting[0] + ") is" if n == 1 else f"all {n} registered setups ({_join_syms(waiting)}) are"
+        text = (f"Nothing has triggered: {who} still waiting on its confirming closes, so every plan above stays a watch item, not an entry."
+                if n == 1 else
+                f"Nothing has triggered: {who} still waiting on their confirming closes, so every plan above stays a watch item, not an entry.")
+    else:
+        text = f"{n} registered setup{plural} on file; none has confirmed an entry yet."
+    if dead:
+        text += f" {_join_syms(dead)} {'is' if len(dead) == 1 else 'are'} already invalidated or expired — that plan is off."
+    if unclear:
+        text += f" Stage is unclear for {_join_syms(unclear)} this checkpoint."
+    stale = _last_known(block, "trigger")
+    if stale:
+        text = f"These are {stale}, not live ones. " + text
+    return text + " The table shows the level that activates each one and the level that kills it."
+
+def _last_known(block, *fields):
+    """REPORT_REQUIREMENTS.md (refresh-first): dated last-known observations retain their clocks.
+    When any listed field is status 'historical', returns 'last-known readings from <date>' using
+    the dates already on those items (CT); None when every listed field is live/absent. A
+    historical item with no parseable clock says so rather than inventing a date."""
+    dates = []
+    for f in fields:
+        item = block.get(f) or {}
+        if item.get("status") != "historical":
+            continue
+        try:
+            d = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
+            label = f"{d.strftime('%b')} {d.day}"
+        except (ValueError, TypeError):
+            label = "an unknown date"
+        if label not in dates:
+            dates.append(label)
+    return ("last-known readings from " + " and ".join(dates)) if dates else None
+
+def _curve_shape(near, far):
+    """The one term-structure classifier every renderer shares (takeaway, per-field narrative,
+    markdown, email). `near` is the 1-5 day ATM IV, never the 0DTE IV: a 0DTE contract's
+    implied vol blows up as time to expiry collapses (89% on SPY minutes before the close), so
+    comparing it with the back of the curve reads an expiry artifact as an 'inverted, event/fear'
+    curve. Bands match market_structure's 1.15x / 0.85-0.90x conventions."""
+    return "front" if near > far * 1.15 else "back" if near < far * 0.9 else "flat"
+
+def _zero_dte_sentence(block):
+    """0DTE IV is a real, tradeable price at any hour, so it is always reported -- as its own data
+    point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
+    late-session number self-explanatory), dated if it is a last-known reading, and explicitly
+    not a leg of the curve comparison. None when no 0DTE value is present."""
+    item = block.get("term_0dte") or {}
+    val = item.get("value") if item.get("status") != "unavailable" else None
+    val = val if isinstance(val, dict) else {}
+    zero = [s for s in ("SPY", "QQQ") if isinstance(val.get(s), dict) and _num(val[s].get("iv_0dte"))]
+    if not zero:
+        return None
+    try:
+        seen = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
+        secs = (seen.replace(hour=15, minute=0, second=0, microsecond=0) - seen).total_seconds()
+        mins = int(secs // 60) if secs >= 60 else (0 if secs > 0 else -1)
+    except (ValueError, TypeError):
+        mins = None
+    if mins is None:
+        left = "time to expiry unavailable"
+    elif mins < 0:
+        left = f"a reading taken after the {seen.strftime('%b')} {seen.day} 3:00 PM CT close"
+    else:
+        left = "with " + ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120
+                          else f"{mins // 60} hours") + " to the close"
+    stale = _last_known(block, "term_0dte")
+    return ("On its own" + (f", on a {stale.replace('readings', 'reading')}," if stale else ",") + " "
+            + "; ".join(f"{s} 0DTE IV is {val[s]['iv_0dte']*100:.1f}%" for s in zero)
+            + f" ({left}); that is a separate data point, not a leg of the curve comparison.")
+
+def _surface_takeaway(block):
+    """What the vol surface means today: is front-dated premium rich or cheap against what
+    the tape is actually delivering, and which end of the curve carries the richness. Reads
+    only atm_iv, term_0dte, term_21plus and iv_vs_realized. Thresholds match market_structure's
+    own IV/realized bands (>=1.10 rich, <0.90 cheap) and _narrative_surface's curve bands."""
+    def val(field):
+        item = block.get(field) or {}
+        v = item.get("value") if item.get("status") != "unavailable" else None
+        return v if isinstance(v, dict) else {}
+    atm_v, near_v, far_v, ivrv = val("atm_iv"), val("term_0dte"), val("term_21plus"), val("iv_vs_realized")
+    def pct(x): return f"{x*100:.1f}%"
+    prem, curve = [], []
+    for sym in ("SPY", "QQQ"):
+        row = ivrv.get(sym) if isinstance(ivrv.get(sym), dict) else {}
+        atm_row = atm_v.get(sym) if isinstance(atm_v.get(sym), dict) else {}
+        iv = row.get("atm_iv") if _num(row.get("atm_iv")) else atm_row.get("atm_iv")
+        rv = row.get("realized_vol_60m")
+        if _num(iv) and _num(rv) and rv > 0:
+            ratio = iv / rv
+            prem.append((sym, iv, rv, ratio, "sellers" if ratio >= 1.10 else "buyers" if ratio < 0.90 else None))
+        # The front leg of the curve is the 1-5 day tenor (atm_iv), never term_0dte: see below.
+        near = atm_row.get("atm_iv")
+        far = (far_v.get(sym) or {}).get("iv_21_365dte") if isinstance(far_v.get(sym), dict) else None
+        if _num(near) and _num(far) and far > 0:
+            curve.append((sym, near, far, _curve_shape(near, far)))
+    if not prem and not curve:
+        return "Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today."
+    parts = []
+    stale_prem = _last_known(block, "atm_iv", "iv_vs_realized")
+    stale_curve = _last_known(block, "atm_iv", "term_21plus")
+    if prem:
+        sides = {p[4] for p in prem}
+        if sides == {"sellers"}:
+            lead = "front-dated premium is rich against what the tape is actually delivering, so today favours premium sellers over premium buyers."
+        elif sides == {"buyers"}:
+            lead = "front-dated premium is cheap against what the tape is actually delivering, so today favours premium buyers over premium sellers."
+        elif sides == {None}:
+            lead = "front-dated premium is priced close to what the tape is actually delivering, so price alone gives neither sellers nor buyers an edge today."
+        else:
+            label = {"sellers": "rich (sellers' edge)", "buyers": "cheap (buyers' edge)", None: "fairly priced (no edge)"}
+            lead = "the indexes disagree on who has the edge: " + "; ".join(f"{p[0]} premium reads {label[p[4]]}" for p in prem) + "."
+        parts.append((f"On {stale_prem}, " + lead) if stale_prem else lead[0].upper() + lead[1:])
+        parts.append("The proof: " + "; ".join(f"{p[0]} ATM IV is {pct(p[1])} against {pct(p[2])} realized vol ({p[3]:.2f}x)" for p in prem) + ".")
+    else:
+        parts.append("The realized-vol comparison is unavailable, so whether front-dated premium is rich or cheap against the tape can't be called.")
+    # 2026-10-16: 0DTE IV is a real, tradeable price at any hour, so it stays on the page as its own
+    # data point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
+    # late-session number self-explanatory). It is never a leg of the term-structure comparison
+    # above/below -- the two legs span different horizons -- so it cannot drive the rich/cheap call.
+    zero = _zero_dte_sentence(block)
+    if zero:
+        parts.append(zero)
+    if curve:
+        shapes = {c[3] for c in curve}
+        lead_side = ({p[4] for p in prem} or {"?"})
+        nums = "; ".join(f"{c[0]}'s 1-5 day ATM IV is {pct(c[1])} against {pct(c[2])} for 21+ days out" for c in curve)
+        along = "Along the curve" + (f", on {stale_curve}," if stale_curve else "")
+        if shapes == {"front"}:
+            tail = ""
+            if lead_side == {"buyers"}:
+                tail = " Cheap against the tape, but still the pricey end of the curve."
+            parts.append(f"{along} the near-dated end is the expensive end ({nums}), so the premium is concentrated in the short tenors and the back is the cheaper place to own optionality.{tail}")
+        elif shapes == {"back"}:
+            tail = " The richness is against the tape, not against the back of the curve." if lead_side == {"sellers"} else ""
+            parts.append(f"{along} the back carries more premium than the near-dated end ({nums}) — an ordinary upward-sloping shape, with nothing near-dated priced as a fear premium.{tail}")
+        elif shapes == {"flat"}:
+            parts.append(f"{along} nothing stands out ({nums}) — no end of it is clearly richer than the other.")
+        else:
+            names = {"front": "inverted", "back": "upward-sloping", "flat": "flat"}
+            parts.append("The curve is not telling one story" + (f", on {stale_curve}" if stale_curve else "") + ": " + "; ".join(f"{c[0]}'s is {names[c[3]]}" for c in curve) + f" ({nums}).")
+    elif zero or prem:
+        parts.append("There isn't enough of the curve left to call which end is richer.")
+    parts.append("Skew, just below, shows which side of the strike range is paying that premium.")
+    return " ".join(parts)
+
+def _breadth_takeaway(block, regime_label=None):
+    """Does participation confirm or contradict the flat regime label? Same agree/conflict
+    callback market_control uses. Votes from advance_decline, up_down_volume and new_highs_lows
+    only; thresholds match _narrative_breadth (65/40% advancing, 2x highs/lows) plus 1.25x/0.80x
+    for the volume ratio."""
+    def val(field):
+        item = block.get(field) or {}
+        v = item.get("value") if item.get("status") != "unavailable" else None
+        return v if isinstance(v, dict) else {}
+    ad, uv, nh = val("advance_decline"), val("up_down_volume"), val("new_highs_lows")
+    adv, dec = ad.get("advances"), ad.get("declines")
+    if not (_num(adv) and _num(dec)) or adv + dec <= 0:
+        return "Breadth coverage is too thin to say whether participation backs the regime call today."
+    pct_up = adv / (adv + dec) * 100
+    votes = [1 if pct_up >= 65 else -1 if pct_up <= 40 else 0]
+    bits = [f"{int(adv)} advancers to {int(dec)} decliners"]
+    ratio = uv.get("up_down_volume_ratio")
+    if _num(ratio):
+        bits.append(f"up-volume at {ratio:.2f}x down-volume")
+        votes.append(1 if ratio >= 1.25 else -1 if ratio <= 0.80 else 0)
+    highs, lows = nh.get("new_52w_highs"), nh.get("new_52w_lows")
+    if _num(highs) and _num(lows):
+        bits.append(f"{int(highs)} new 52-week high{'s' if int(highs) != 1 else ''} against {int(lows)} new low{'s' if int(lows) != 1 else ''}")
+        votes.append(1 if highs > lows * 2 and highs > 5 else -1 if lows > highs * 2 and lows > 5 else 0)
+    bull, bear = votes.count(1), votes.count(-1)
+    lean = "constructive" if bull > bear else "weak" if bear > bull else "mixed"
+    label = regime_label if regime_label in ("RISK-ON", "DEFENSIVE", "CHOPPY") else None
+    tie = {
+        ("constructive", "RISK-ON"): "Participation confirms the flat RISK-ON regime call — the move has broad backing.",
+        ("constructive", "DEFENSIVE"): "Participation contradicts the flat DEFENSIVE regime call — the tape underneath is healthier than that label says.",
+        ("constructive", "CHOPPY"): "Participation is leaning constructive, which the flat CHOPPY regime call doesn't capture.",
+        ("weak", "RISK-ON"): "Participation contradicts the flat RISK-ON regime call — the tape is narrower than that label suggests, so don't take the upside read at face value.",
+        ("weak", "DEFENSIVE"): "Participation confirms the flat DEFENSIVE regime call — the selling is broad, not confined to a few names.",
+        ("weak", "CHOPPY"): "Participation is leaning weak, which the flat CHOPPY regime call doesn't capture.",
+        ("mixed", "RISK-ON"): "Participation doesn't confirm the flat RISK-ON regime call — the tape isn't broadly behind it.",
+        ("mixed", "DEFENSIVE"): "Participation is split, so it neither confirms nor contradicts the flat DEFENSIVE regime call.",
+        ("mixed", "CHOPPY"): "Participation is split, which agrees with the flat CHOPPY regime call.",
+    }.get((lean, label)) or {"constructive": "Participation is constructive.", "weak": "Participation is weak.",
+                             "mixed": "Participation is split, with no broad lean either way."}[lean]
+    implication = {"constructive": "A move in the index has the rest of the market behind it.",
+                   "weak": "A move in the index has less of the market behind it.",
+                   "mixed": "With no broad lean, index direction deserves less trust than usual today."}[lean]
+    stale = _last_known(block, "advance_decline", "up_down_volume", "new_highs_lows")
+    prefix = f"These are {stale}, not live ones. " if stale else ""
+    return f"{prefix}{tie} Behind that: {', '.join(bits)}. {implication}"
+
 def section_meaning(name, block, mission_side=None, regime_label=None):
     """Deterministic "what it means for the day" line — a lookup on the section's own
     already-computed field values, never new analysis or a fabricated number. Strategy-
@@ -1500,18 +1795,11 @@ def section_meaning(name, block, mission_side=None, regime_label=None):
         status = val("status")
         return _STATUS_MEANING.get(status, "Status is " + str(status) + "; apply the adaptation rules before acting.")
     if name == "entry_watches":
-        rows = val("trigger")
-        states = [r.get("state") for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
-        if not states:
-            return "No registered setups this checkpoint — nothing to watch yet."
-        ready = sum(1 for s in states if s == "ENTRY_READY")
-        watch = sum(1 for s in states if s == "WATCH")
-        if ready:
-            return (f"{ready} of {len(states)} registered setup{'s' if len(states) != 1 else ''} just confirmed "
-                     "ENTRY_READY — check the matching plan above before anything else.")
-        if watch == len(states):
-            return f"All {len(states)} registered setup{'s' if len(states) != 1 else ''} are still on watch — nothing has confirmed yet."
-        return f"{len(states)} registered setup{'s' if len(states) != 1 else ''} on file; status is unclear for some this checkpoint."
+        return _entry_watches_takeaway(block)
+    if name == "surface":
+        return _surface_takeaway(block)
+    if name == "breadth":
+        return _breadth_takeaway(block, regime_label)
     if name == "candidate_analysis":
         symbols = val("symbols")
         packages = val("liquidity")
@@ -1951,10 +2239,12 @@ def contract_packages_and_entry_watches_story(blocks):
     lifecycle. Tagged in _SECTION_ROLE as "execution detail" supporting the day/forward plans
     shown elsewhere, not an independent signal -- promoted anyway per explicit instruction to
     cover every section. Zero new producer fields."""
-    parts = [p for p in (_narrative_contract_packages(blocks["contract_packages"]), _narrative_entry_watches(blocks["entry_watches"])) if p]
-    if not parts:
-        return "No qualified contract packages or registered entry watches right now."
-    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts)
+    # 2026-10-16: the entry-watch half is no longer prose -- it renders as a compact table
+    # (entry_watches_table_markdown/_html), one line per setup. This story is packages only.
+    part = _narrative_contract_packages(blocks["contract_packages"])
+    if not part:
+        return "No qualified contract packages right now."
+    return part if part.endswith((".", "!", "?")) else part + "."
 
 def candidates_tracked_story(blocks):
     """Promotes _narrative_candidate_analysis's existing symbol-roster + qualified-package-
@@ -2190,7 +2480,7 @@ def render_markdown(payload):
     lines.extend(["## 🏦 Macro & futures context",macro_futures_story(blocks)])
     lines.extend(["## 🕒 Since this morning",since_this_morning_story(blocks)])
     lines.extend(["## 🔭 TradingVolatility top setups",trade_volatility_scan_story(blocks)])
-    lines.extend(["## 📦 Contract packages & entry watches",contract_packages_and_entry_watches_story(blocks)])
+    lines.extend(["## 📦 Contract packages & entry watches",contract_packages_and_entry_watches_story(blocks),entry_watches_table_markdown(blocks) or "No registered entry watches right now."])
     lines.extend(["## 🔍 Candidates tracked",candidates_tracked_story(blocks)])
     lines.extend(["## 📋 Position & trigger audit",position_and_trigger_audit_story(blocks)])
     lines.extend(["## 🧩 Edge board","| Rank | Setup | Evidence | Trigger | Conflict | Status |","|---|---|---|---|---|---|"])
@@ -2779,7 +3069,7 @@ def render_opening_html(payload, images=None):
     out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"+takeaway("morning_comparison")
     out+=chart_img("baseline_comparison","Since-this-morning baseline comparison chart")
     out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"+takeaway("trade_volatility_scan")
-    out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"+takeaway("contract_packages","entry_watches")
+    out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"+entry_watches_table_html(blocks)+takeaway("contract_packages","entry_watches")
     out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"+takeaway("candidate_analysis")
     out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"+takeaway("position_management","trigger_accountability")
     out+='<h2>🧩 Edge board</h2><div class="tablewrap"><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
