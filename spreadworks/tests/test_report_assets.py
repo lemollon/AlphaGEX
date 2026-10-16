@@ -37,3 +37,19 @@ def test_markdown_report_pdf_handles_no_tables_or_images():
     markdown = '\n\n'.join(['# Title', 'Just a plain paragraph.', '- a bullet'])
     pdf = markdown_report_pdf(markdown)
     assert pdf.startswith(b'%PDF-')
+
+
+def test_markdown_report_pdf_survives_a_table_row_taller_than_a_page():
+    """2026-10-16 production 500 on report.pdf and portable.zip: a 5-column setup table whose
+    Trigger cell held a multi-KB dump got a fixed 1/5-width column, so one row was ~5000pt tall
+    and reportlab raised LayoutError (a row must fit the page frame to be placed)."""
+    huge = "catalyst " + "Fed speakers, yields fell sharply and opex pinning risk. " * 120
+    markdown = "\n\n".join([
+        "# Report",
+        "| Horizon | Trigger | Invalidation | Status | Contracts |",
+        "|---|---|---|---|---|",
+        f"| day strategy | {huge} | close above 729.72 | WAIT | next weekly |",
+        "After the table",
+    ])
+    pdf = markdown_report_pdf(markdown)
+    assert pdf.startswith(b"%PDF-")

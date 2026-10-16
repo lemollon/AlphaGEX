@@ -1061,3 +1061,33 @@ def test_promoted_blocks_and_supporting_cards_partition_the_contract():
     assert len(report._PROMOTED_BLOCKS)==25
     assert not report._PROMOTED_BLOCKS & supporting
     assert report._PROMOTED_BLOCKS|supporting==set(REQUIREMENTS)==set(SECTION_SUMMARY_SECTIONS)
+
+def _store_report_with_oversized_table(report_id,chart_ids=()):
+    """Stored report whose markdown carries a table row far taller than a PDF page -- the
+    shape of the live 2026-10-16 report that made report.pdf and portable.zip return 500."""
+    huge='catalyst '+'Fed speakers, yields fell sharply and opex pinning risk. '*120
+    markdown='\n\n'.join(['# Report','| Horizon | Trigger | Invalidation | Status | Contracts |','|---|---|---|---|---|',
+                          f'| day strategy | {huge} | close above 729.72 | WAIT | next weekly |','After the table'])
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
+    payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE',
+             'markdown_url':'https://example.test/'+report_id+'.md','report_markdown':markdown,'report_blocks':blocks,
+             'chart_urls':{'surface':'https://example.test/api/spreadworks/reports/charts/'+cid+'.png' for cid in chart_ids}}
+    return _store_report(payload)
+
+@freeze_time(NOW)
+def test_report_pdf_route_returns_pdf_when_markdown_has_a_page_tall_table_row(db):
+    report_id=_store_report_with_oversized_table('c'*24)
+    assert report.get_report_pdf(report_id).body.startswith(b'%PDF-')
+
+@freeze_time(NOW)
+def test_portable_zip_route_returns_zip_when_markdown_has_a_page_tall_table_row(db):
+    import base64,hashlib,zipfile
+    buf=io.BytesIO();Image.new('RGB',(1200,700),(11,18,32)).save(buf,format='PNG');png=buf.getvalue()
+    chart_id=hashlib.sha256(png).hexdigest()[:32]
+    with report.engine.begin() as c:
+        c.execute(text('INSERT INTO sw_report_charts (chart_id,png_base64,created_at) VALUES (:id,:b,:t)'),
+                  {'id':chart_id,'b':base64.b64encode(png).decode(),'t':NOW.replace(tzinfo=None)})
+    report_id=_store_report_with_oversized_table('d'*24,[chart_id])
+    body=report.get_portable_report(report_id).body
+    assert body.startswith(b'PK')
+    assert zipfile.ZipFile(io.BytesIO(body)).read('report.pdf').startswith(b'%PDF-')

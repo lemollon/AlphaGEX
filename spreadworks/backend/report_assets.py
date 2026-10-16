@@ -72,10 +72,16 @@ def markdown_report_pdf(markdown: str) -> bytes:
         if not table_rows:
             return
         n_cols = len(table_rows[0])
-        col_width = doc_width / n_cols
+        # Size columns by their longest text, not equally: a 5-column table whose "Trigger"
+        # cell holds a multi-KB setup dump got a ~97pt column and a 5000pt-tall row, and
+        # reportlab raises LayoutError for a row taller than the page frame (2026-10-16 500).
+        # splitInRow lets any row that is still taller than a page break across pages.
+        longest = [max(len(row[c]) if c < len(row) else 0 for row in table_rows) for c in range(n_cols)]
+        weights = [min(max(length, 60), 400) for length in longest]
+        col_widths = [doc_width * w / sum(weights) for w in weights]
         rendered = [[Paragraph(_pdf_text(cell_text), cell_head if r == 0 else cell) for cell_text in row]
                     for r, row in enumerate(table_rows)]
-        table = Table(rendered, colWidths=[col_width] * n_cols, repeatRows=1)
+        table = Table(rendered, colWidths=col_widths, repeatRows=1, splitInRow=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1b2330")),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#2a3341")),
