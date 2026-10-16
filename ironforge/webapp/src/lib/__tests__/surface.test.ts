@@ -86,6 +86,24 @@ describe('customer surface', () => {
     }
   })
 
+  it('DOES serve Ember\'s own trade/status/equity-curve routes, not just the auth layer', () => {
+    // Regression: OPERATOR_API_PREFIXES still claims the whole /api/ember/ namespace
+    // (the backtester proxy + /ember operator page), so without an exact-match
+    // carve-out here, servesPath() 404s these on the customer deployment BEFORE
+    // middleware ever runs decideAccess()/isCustomerPath() — the entitlement check
+    // in the route handler never even gets reached, and /agents/ember renders
+    // permanently empty for every real Ember customer.
+    for (const p of ['/api/ember/trades', '/api/ember/status', '/api/ember/equity-curve']) {
+      expect(servesPath('customer', p), `customer must serve ${p}`).toBe(true)
+    }
+  })
+
+  it('does NOT widen Ember\'s carve-out into the operator-only backtester proxy', () => {
+    for (const p of ['/api/ember/build', '/api/ember/evaluate', '/ember']) {
+      expect(servesPath('customer', p), `customer must NOT serve ${p}`).toBe(false)
+    }
+  })
+
   it('serves customer API namespaces', () => {
     for (const p of [
       '/api/live/summary',
