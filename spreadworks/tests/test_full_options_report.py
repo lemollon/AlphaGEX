@@ -1017,7 +1017,9 @@ async def test_report_view_is_single_pass_no_narrative_or_chart_appears_twice(db
     takeaways={n:section_meaning(n,blocks_[n],mission_side,label_ if isinstance(label_,str) else None)
                for n in report._PROMOTED_BLOCKS}
     assert len(takeaways)==25
-    sections=[('risk_on_defensive',),('day_strategy',),('near_forward_strategy',),('forward_strategy',),
+    # The three Today-vs-forward rows count as one slot: a sentence shared by several rows prints
+    # once and the later rows read "Same as day strategy above."
+    sections=[('risk_on_defensive',),('day_strategy','near_forward_strategy','forward_strategy'),
               ('premium_selling',),('market_control',),('gamma',),('flow',),('surface','smile'),('expected_move',),
               ('breadth','sector_credit'),('macro','futures_context'),('morning_comparison',),
               ('trade_volatility_scan',),('contract_packages','entry_watches'),('candidate_analysis',),
