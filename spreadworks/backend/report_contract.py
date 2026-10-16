@@ -100,6 +100,7 @@ REQUIREMENTS = {
         "val",
         "hvn",
         "lvn",
+        "vwap",
         "method",
         "acceptance_rejection"
     ],
@@ -383,7 +384,7 @@ MORNING_PRE_OPEN_UNAVAILABLE = {
     ("premium_selling", "forward_implications"), ("premium_selling", "credit_structure_fit"),
     ("premium_selling", "avoid"),
     ("profile", "poc"), ("profile", "vah"), ("profile", "val"), ("profile", "hvn"),
-    ("profile", "lvn"), ("profile", "method"), ("profile", "acceptance_rejection"),
+    ("profile", "lvn"), ("profile", "vwap"), ("profile", "method"), ("profile", "acceptance_rejection"),
     ("range_stall", "chop_low"), ("range_stall", "midpoint"), ("range_stall", "chop_high"),
     ("range_stall", "room_to_edges"), ("range_stall", "two_fresh_confirmations"),
     ("range_stall", "actual_rejection"), ("range_stall", "first_touch_watch"), ("range_stall", "breakout_ends_chop"),

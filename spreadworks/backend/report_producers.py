@@ -132,6 +132,12 @@ async def collect_breadth(now,vwap_symbols):
     except Exception as e:return {'reason':'Breadth collector failed: '+type(e).__name__,'source_timestamp':None}
 
 def volume_profile(trades,bin_size,start,end):
+    """Leron, 2026-10-16: "audience is day/swing traders, vwap should be mentioned."
+    Session VWAP is volume-weighted average PRICE across every trade in the window, which
+    is exactly what the price-binned `grid` this function already builds for POC/VAH/VAL
+    gives for free: sum(bin center price * bin volume) / total volume. No new fetch or
+    field -- the real tick-level trades already accumulated here are a finer-grained,
+    more accurate VWAP input than Tradier's own per-bar vwap field would be."""
     if not math.isfinite(bin_size) or bin_size<=0:raise ValueError('Invalid price bin')
     bins=defaultdict(float);timestamps=[];count=rejected=0
     for trade in trades:
@@ -148,6 +154,7 @@ def volume_profile(trades,bin_size,start,end):
     med=statistics.median(grid.values());centers=lambda ids:[round((i+.5)*bin_size,4) for i in ids]
     return {'poc':centers([poc])[0],'val':round(lower*bin_size,4),'vah':round((upper+1)*bin_size,4),
       'hvn':centers(sorted(grid,key=grid.get,reverse=True)[:5]),'lvn':centers([i for i,v in grid.items() if v<med*.5][:10]),
+      'vwap':round(sum((i+.5)*bin_size*v for i,v in grid.items())/total,4) if total else None,
       'bins':[{'price':(i+.5)*bin_size,'volume':v} for i,v in grid.items()],
       'total_volume':total,'trade_count':count,'rejected_rows':rejected,'source_timestamp':max(timestamps).isoformat(),
       'window_start':start.isoformat(),'window_end':end.isoformat(),
@@ -205,6 +212,7 @@ def merge_profiles(old,new,bin_size):
     return dict(new,poc=(poc+.5)*bin_size,val=lo*bin_size,vah=(hi+1)*bin_size,
       hvn=[(i+.5)*bin_size for i in sorted(grid,key=grid.get,reverse=True)[:5]],
       lvn=[(i+.5)*bin_size for i,v in grid.items() if v<med*.5][:10],
+      vwap=round(sum((i+.5)*bin_size*v for i,v in grid.items())/total,4) if total else None,
       bins=[{'price':(i+.5)*bin_size,'volume':v} for i,v in grid.items()],total_volume=total,
       trade_count=old['trade_count']+new['trade_count'],rejected_rows=old.get('rejected_rows',0)+new.get('rejected_rows',0),
       window_start=old['window_start'])
