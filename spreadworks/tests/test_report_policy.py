@@ -2342,3 +2342,46 @@ def test_surface_and_breadth_takeaways_reach_the_rendered_page_with_the_regime_l
     assert 'Participation contradicts the flat RISK-ON regime call' in html_out
     assert 'neither sellers nor buyers an edge' in html_out
     assert 'Cross-expiry volatility context for choosing' not in html_out
+
+
+def _with_vix9d(blocks,vix9d):
+    blocks['surface']['vix_family']=item({'VIX':{'price':15.08},'VIX9D':{'price':vix9d},'VIX1D':{'price':9.14}})
+    return blocks
+
+def test_uncorroborated_spy_near_leg_is_disclosed_not_called():
+    """2026-10-07 e1a60ef7: SPY 1-5 day ATM IV printed 76.1% against VIX9D 11.77 (6.5x) and read 10.3%
+    ten minutes later. Outside the pre-registered 0.5x-2.0x band the section shows both numbers and
+    the ratio and makes no curve-shape or premium call for SPY."""
+    blocks=_with_vix9d(_surface_blocks(spy=(.761,.048),qqq=(.211,.067),far=(.126,.226)),11.77)
+    for out in (surface_smile_story(blocks),section_summary('surface',blocks['surface']),section_meaning('surface',blocks['surface']),
+                render_markdown({'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE','chart_urls':{}})):
+        assert 'the near-dated spy quote reads 76.1% against vix9d at 11.8, a 6.5x gap' in out.lower()
+        assert 'inverted' not in out.lower()
+        assert 'SPY ATM IV is 76.1% against' not in out
+    story=surface_smile_story(blocks)
+    assert "SPY's vol surface: ATM IV 76.1%; the near-dated SPY quote" in story
+    assert 'the term structure is' in story  # QQQ is still called, labelled uncorroborated
+    assert "QQQ has no index-vol comparator of its own" in story
+
+def test_corroborated_spy_near_leg_is_called_normally_at_the_measured_extremes():
+    # Highest sound reading measured (17.8% vs VIX9D 11.96 = 1.49x) and lowest (10.3% vs 11.78 = 0.87x).
+    for near,vix9d in ((.178,11.96),(.103,11.78)):
+        blocks=_with_vix9d(_surface_blocks(spy=(near,.07),far=(.126,.226)),vix9d)
+        story=surface_smile_story(blocks)
+        assert 'a gap' not in story and 'not made this checkpoint' not in story
+        assert "SPY's vol surface: ATM IV %.1f%%; the term structure is"%(near*100) in story
+
+def test_spy_without_vix9d_is_labelled_uncorroborated_not_corroborated():
+    blocks=_surface_blocks(spy=(.761,.048),far=(.126,.226))
+    story=surface_smile_story(blocks)
+    assert 'uncorroborated: no VIX9D in this report' in story and 'not made this checkpoint' not in story
+
+def test_near_leg_band_edges():
+    from backend.report_policy import _near_leg_check
+    blocks=_with_vix9d(_surface_blocks(),10.0)['surface']
+    assert _near_leg_check(blocks,'SPY',.20)[0]=='corroborated'
+    assert _near_leg_check(blocks,'SPY',.05)[0]=='corroborated'
+    assert _near_leg_check(blocks,'SPY',.2001)[0]=='gap'
+    assert _near_leg_check(blocks,'SPY',.0499)[0]=='gap'
+    assert _near_leg_check(blocks,'QQQ',.30)[0]=='no_comparator'
+
