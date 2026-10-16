@@ -774,6 +774,23 @@ def latest_report():
     payload['snapshot_notice']='Immutable stored report. Re-reading it does not refresh any observation; source clocks must be rechecked.'
     return payload
 
+@router.get('/rerender-archive')
+def rerender_archive_dry_run(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$')):
+    """Operator diagnostic: what re-rendering the stored archive WOULD change. Writes nothing,
+    fetches no market data; markdown is regenerated only from each report's own stored blocks."""
+    from .report_rerender import run
+    ensure_tables()
+    return JSONResponse(run(engine, apply=False, report_id=report_id), headers={'Cache-Control': 'no-store'})
+
+@router.post('/rerender-archive')
+def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$')):
+    """Operator-triggered, never scheduled. Backs up each report_markdown to
+    report_markdown_pre_rerender, then rewrites ONLY report_markdown. Idempotent; a failing row
+    keeps its original markdown and does not stop the run."""
+    from .report_rerender import run
+    ensure_tables()
+    return JSONResponse(run(engine, apply=True, report_id=report_id), headers={'Cache-Control': 'no-store'})
+
 @router.get('/producer-status')
 def producer_status():
     now=datetime.now(UTC)
