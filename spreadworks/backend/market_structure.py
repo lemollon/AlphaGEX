@@ -982,22 +982,48 @@ def fetch_tradier_chain(symbol, now=None, max_dte=None, strike_range=None):
             'gamma_source': 'Tradier fresh BBO, locally modeled IV/gamma; provider daily OI (publication time unavailable)'}
 
 
-def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float) -> dict[int, float]:
-    by_dte: dict[int, dict[str, list[dict[str, Any]]]] = defaultdict(
-        lambda: {"call": [], "put": []}
-    )
+# Pre-registered in REPORT_REQUIREMENTS.md ("Surface producer guards"), fixed from the 138 stored payloads
+# before this code was written. ~one $1 strike step on SPY/QQQ; the measured call/put IV ratio at one
+# strike was at most 1.28; the 25-delta wings of sound readings sat within 0.05 of 0.25 (next value 0.136).
+ATM_PAIR_MAX_DISTANCE = 0.0015
+ATM_PAIR_MAX_IV_RATIO = 1.5
+WING_DELTA_TOLERANCE = 0.10
+
+
+def _atm_ivs_by_dte(records: list[dict[str, Any]], spot: float,
+                    rejected: dict[int, str] | None = None) -> dict[int, float]:
+    """ATM IV per DTE from a call and a put at the SAME strike within ATM_PAIR_MAX_DISTANCE of spot whose
+    IVs agree within ATM_PAIR_MAX_IV_RATIO. A DTE with no such pair is omitted and, when `rejected` is
+    given, gets a specific reason there; it is never filled from a far strike or another expiry."""
+    by_dte: dict[int, dict[str, dict[float, float]]] = defaultdict(lambda: {"call": {}, "put": {}})
     for row in records:
-        by_dte[int(row["dte"])][str(row["right"])].append(row)
+        by_dte[int(row["dte"])][str(row["right"])][float(row["strike"])] = float(row["iv"])
     result: dict[int, float] = {}
     for dte, legs in by_dte.items():
-        values: list[float] = []
-        for right in ("call", "put"):
-            rows = legs[right]
-            if rows:
-                nearest = min(rows, key=lambda row: abs(float(row["strike"]) - spot))
-                values.append(float(nearest["iv"]))
-        if values:
-            result[dte] = statistics.median(values)
+        calls, puts = legs["call"], legs["put"]
+        if not calls or not puts:
+            if rejected is not None:
+                rejected[dte] = f"{dte}DTE ATM IV unavailable: no {'call' if not calls else 'put'} quotes survived filtering"
+            continue
+        limit = spot * ATM_PAIR_MAX_DISTANCE
+        common = [k for k in calls if k in puts and abs(k - spot) <= limit]
+        if not common:
+            if rejected is not None:
+                nc = min(calls, key=lambda k: abs(k - spot))
+                np_ = min(puts, key=lambda k: abs(k - spot))
+                rejected[dte] = (f"{dte}DTE ATM IV unavailable: no call and put at one strike within "
+                                 f"{ATM_PAIR_MAX_DISTANCE*100:.2f}% of spot {spot:.2f}; nearest call strike {nc:g} "
+                                 f"(${abs(nc - spot):.1f} away), nearest put strike {np_:g} (${abs(np_ - spot):.1f} away)")
+            continue
+        strike = min(common, key=lambda k: abs(k - spot))
+        civ, piv = calls[strike], puts[strike]
+        ratio = max(civ, piv) / min(civ, piv) if min(civ, piv) > 0 else float("inf")
+        if ratio > ATM_PAIR_MAX_IV_RATIO:
+            if rejected is not None:
+                rejected[dte] = (f"{dte}DTE ATM IV unavailable: call {civ*100:.1f}% and put {piv*100:.1f}% at strike "
+                                 f"{strike:g} disagree by {ratio:.2f}x (limit {ATM_PAIR_MAX_IV_RATIO:g}x)")
+            continue
+        result[dte] = (civ + piv) / 2
     return result
 
 
@@ -1125,6 +1151,13 @@ def _surface_smile(records: list[dict[str, Any]], spot: float) -> dict[str, Any]
         return {"available": False, "reference_dte": reference_dte}
     call = min(calls, key=lambda row: abs(float(row["_delta"]) - 0.25))
     put = min(puts, key=lambda row: abs(float(row["_delta"]) + 0.25))
+    off = [f"{name} strike {float(row['strike']):g} is at |delta| {abs(float(row['_delta'])):.2f}"
+           for name, row in (("call", call), ("put", put))
+           if abs(abs(float(row["_delta"])) - 0.25) > WING_DELTA_TOLERANCE]
+    if off:
+        return {"available": False, "reference_dte": reference_dte,
+                "reason": (f"{reference_dte}DTE 25-delta wings unavailable: nearest listed {' and '.join(off)}, "
+                           f"outside {0.25 - WING_DELTA_TOLERANCE:.2f}-{0.25 + WING_DELTA_TOLERANCE:.2f}; skew not published")}
     atm = min(subset, key=lambda row: abs(float(row["strike"]) - spot))
     return {
         "available": True, "reference_dte": reference_dte,
@@ -1159,11 +1192,14 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
                 "reason": reason, "spot": spot.get("price"),
                 "captured_at": completed_at.isoformat()}
     price = float(spot["price"])
-    atm_by_dte = _atm_ivs_by_dte(rows, price)
-    positive_dtes = sorted(dte for dte in atm_by_dte if dte >= 1)
-    reference_dte = positive_dtes[0] if positive_dtes else min(atm_by_dte, default=None)
+    atm_rejections: dict[int, str] = {}
+    atm_by_dte = _atm_ivs_by_dte(rows, price, atm_rejections)
+    listed_dtes = sorted({int(row["dte"]) for row in rows})
+    positive_dtes = [dte for dte in listed_dtes if dte >= 1]
+    reference_dte = positive_dtes[0] if positive_dtes else min(listed_dtes, default=None)
     atm_iv = atm_by_dte.get(reference_dte) if reference_dte is not None else None
     skew, skew_dte = _surface_skew(rows, price)
+    smile_result = _surface_smile(rows, price)
     source_ts = min(row["timestamp"] for row in rows)
     age = (completed_at - source_ts).total_seconds()
     confidence = "HIGH" if age <= 30 and len(rows) >= 100 else "MEDIUM"
@@ -1206,7 +1242,7 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
         "source_timestamp": source_ts.isoformat(), "age_seconds": round(age, 1),
         "confidence": confidence, "field_timestamps": field_clocks, "n_rows": len(rows), "atm_iv": atm_iv,
         "atm_reference_dte": reference_dte, "skew_25d": skew,
-        "skew_reference_dte": skew_dte, "smile": _surface_smile(rows, price), "iv_0dte": term_0dte,
+        "skew_reference_dte": skew_dte, "smile": smile_result, "iv_0dte": term_0dte,
         "iv_1_5dte": term_1_5dte,
         "iv_6_20dte": term_6_20dte,
         "iv_21_365dte": term_21_365dte,
@@ -1230,7 +1266,8 @@ def build_volatility_surface(symbol: str, now: datetime | None = None, *, backgr
                             "right": row["right"], "iv": row["iv"], "dte": row["dte"],
                             "source_timestamp": row["timestamp"].isoformat()}
                            for row in rows],
-        "reason": None if confidence != "LOW" else "missing_atm_iv",
+        "reason": (atm_rejections.get(reference_dte) or "missing_atm_iv") if confidence == "LOW"
+                  else (smile_result.get("reason") if skew is None else None),
     }
 
 

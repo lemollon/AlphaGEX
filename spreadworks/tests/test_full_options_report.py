@@ -1091,3 +1091,18 @@ def test_portable_zip_route_returns_zip_when_markdown_has_a_page_tall_table_row(
     body=report.get_portable_report(report_id).body
     assert body.startswith(b'PK')
     assert zipfile.ZipFile(io.BytesIO(body)).read('report.pdf').startswith(b'%PDF-')
+
+
+def test_rejected_atm_pair_leaves_every_downstream_surface_read_unavailable_with_the_reason():
+    """The producer now returns atm_iv=None / LOW with a specific reason when no call and put share a strike
+    near spot. Every report field built from that row must be unavailable with that reason: no expected
+    move, no IV-versus-realized, no ATM IV."""
+    reason='1DTE ATM IV unavailable: no call and put at one strike within 0.15% of spot 777.22; nearest call strike 650 ($127.2 away), nearest put strike 793 ($15.8 away)'
+    row={'symbol':'SPY','available':False,'confidence':'LOW','reason':reason,'source':'Tradier','source_timestamp':NOW.isoformat(),
+         'atm_iv':None,'expected_move_pct_1d':None,'expected_move_dollars_1d':None,'expected_move_low':None,'expected_move_high':None,
+         'realized_vol_60m':0.048,'iv_minus_realized_vol':None,'iv_rv_comparison':{'atm_iv':None,'realized_vol_60m':0.048,'iv_minus_realized_vol':None}}
+    for keys in (['atm_iv'],['expected_move_pct_1d'],['expected_move_dollars_1d'],['expected_move_low','expected_move_high'],
+                 ['atm_iv','realized_vol_60m','iv_minus_realized_vol','realized_vol_source_timestamp']):
+        item=report.merge_symbols({'SPY':dict(row,**row['iv_rv_comparison'])} if 'iv_minus_realized_vol' in keys else {'SPY':row},keys,NOW)
+        assert item['status']=='unavailable' and reason in item['reason'] and not item.get('value')
+

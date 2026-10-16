@@ -601,6 +601,8 @@ come from a different DTE than the failed reference; it is labelled by bucket, n
 - The lower VIX9D bound (0.5x) in the renderer rule above remains untested, and the three SPY readings
   at 0.53x of VIX9D (f4a02419, d916c592, b4910bdd, 10-09) were deliberately left alone; nothing here moves
   a boundary to catch something that was not measured.
+- `smile.atm_iv` / `smile.atm_strike` (the 30DTE reference smile) still use the nearest surviving strike; not measured, unchanged.
+- Archived reports keep their stored (bad) numbers; the producer guards apply to new captures only.
 - Stored `surface` rows in the database written before this guard are not re-validated (their per-leg data
   is not in the table). `cached_core` can still serve one of them as a dated last-known reading when the
   latest capture is LOW. It is labelled historical with its own clock, never presented as live.

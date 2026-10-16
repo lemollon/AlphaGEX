@@ -102,6 +102,11 @@ accepted rather than widening the band.
   measured.
 - `surface` table rows written before the guard keep their stored values (the table has no per-leg data) and can still be
   served as dated last-known readings.
+- `smile.atm_iv` / `smile.atm_strike` (`market_structure.py:1161`, the 30DTE reference smile) still use the nearest surviving
+  strike with no distance limit. It was not part of the measurement and is unchanged.
+- Archived reports hold the bad numbers in their stored blocks; the producer guards cannot change them. The renderer-side VIX9D rule
+  is what limits SPY there; QQQ in archived reports stays uncorroborated. The stored `surface_points` could be re-checked at render
+  time (they are persisted in each report's evidence) but that is not built.
 - The pair-ratio ceiling of 1.5 has not been tested against a genuinely bad pair; none exists in the sample.
 - Quote freshness (90 s, `tradier_report_source.py:64`), the 30% spread filter (`:67`) and the 500% IV bracket (`:34`) are
   unchanged. They are plausible contributors to thin books but were not the demonstrated cause here.
