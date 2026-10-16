@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, validateBot, dteMode, escapeSql, CT_TODAY } from '@/lib/db'
+import { dbQuery, livePositionsTable, num, int, validateBot, dteMode, escapeSql, CT_TODAY } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,7 @@ export async function GET(
   const rows = await dbQuery(
     `SELECT position_id, close_reason, total_credit, close_price, contracts,
             realized_pnl, collateral_required, open_time, close_time
-     FROM ${botTable(bot, 'positions')}
+     FROM ${livePositionsTable(bot)}
      WHERE status IN ('closed', 'expired')
        AND realized_pnl IS NOT NULL
        AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
