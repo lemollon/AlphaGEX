@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, sharedTable, num, int, escapeSql, validateBot, heartbeatName, dteMode, CT_TODAY } from '@/lib/db'
 import { getIcMarkToMarket, isConfigured, calculateIcUnrealizedPnl, getSandboxAccountBalances, getAccountsForBot, PRODUCTION_BOT, isProductionBot, canReadProductionBalance, getProductionAccountsForBot, getTradierBalanceDetail, getTradierOrders, getSandboxAccountPositions, getLoadedSandboxAccountsAsync, getAccountIdForKey, getVerticalMarkToMarket, calculateVerticalUnrealizedPnl } from '@/lib/tradier'
 
 import { scopedStartingCapital } from '@/lib/account-basis'
@@ -46,7 +46,7 @@ export async function GET(
       `SELECT
         COALESCE(SUM(realized_pnl), 0) as actual_realized_pnl,
         COUNT(*) as actual_total_trades
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          ${dteFilter} ${personFilter} ${accountTypeFilter}`,
@@ -57,7 +57,7 @@ export async function GET(
       `SELECT
         COALESCE(SUM(realized_pnl), 0) as today_realized_pnl,
         COUNT(*) as today_trades_closed
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
@@ -67,7 +67,7 @@ export async function GET(
     // Today's close reason breakdown (which PT tiers hit, with IC return data)
     const todayCloseReasonsQuery = dbQuery(
       `SELECT close_reason, realized_pnl, total_credit, contracts, close_price
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}

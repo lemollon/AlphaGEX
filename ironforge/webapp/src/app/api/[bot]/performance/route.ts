@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,7 +31,7 @@ export async function GET(
         COALESCE(AVG(CASE WHEN realized_pnl <= 0 THEN realized_pnl END), 0) as avg_loss,
         COALESCE(MAX(realized_pnl), 0) as best_trade,
         COALESCE(MIN(realized_pnl), 0) as worst_trade
-      FROM ${botTable(bot, 'positions')}
+      FROM ${livePositionsTable(bot)}
       WHERE status IN ('closed', 'expired')
         AND realized_pnl IS NOT NULL
         ${dteFilter} ${personFilter} ${accountTypeFilter}`,
@@ -47,7 +47,7 @@ export async function GET(
       `SELECT
         COALESCE(SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl END), 0) as gross_wins,
         COALESCE(SUM(CASE WHEN realized_pnl < 0 THEN realized_pnl END), 0) as gross_losses
-      FROM ${botTable(bot, 'positions')}
+      FROM ${livePositionsTable(bot)}
       WHERE status IN ('closed', 'expired')
         AND realized_pnl IS NOT NULL
         ${dteFilter} ${personFilter} ${accountTypeFilter}`,
@@ -59,7 +59,7 @@ export async function GET(
     // Current streak — walk most recent trades
     const streakRows = await dbQuery(
       `SELECT realized_pnl
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE status IN ('closed', 'expired')
          AND realized_pnl IS NOT NULL
          ${dteFilter} ${personFilter} ${accountTypeFilter}
