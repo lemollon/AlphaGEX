@@ -730,6 +730,92 @@ def _narrative_flow(block):
         bits.append(sentence)
     return " ".join(bits) if bits else None
 
+def _concentration_rows(blocks, sym):
+    """Reconstruct per-(strike, expiration, right, side) classified flow concentrations for
+    one symbol from forward_strikes.* -- the same tape _narrative_flow only ever reads in
+    aggregate (market_structure.summarize_flow_evidence's 'concentrations', sorted by premium,
+    required by the contract, but never read by any narrative builder before this one).
+    Index-aligned across forward_strikes' five fields: all five are built in
+    full_options_report.py from the identical ordered concentrations list, one field
+    extraction per key, so index i means the same concentration row in every field.
+    Unclassified rows carry no directional information and are dropped."""
+    block = blocks.get("forward_strikes") or {}
+    def _vals(field):
+        return ((block.get(field) or {}).get("value") or {}).get(sym) or []
+    strikes, expiries = _vals("strikes"), _vals("expiries")
+    premiums, initiation = _vals("premium"), _vals("initiation_estimate")
+    rows = []
+    for i, strike_row in enumerate(strikes):
+        if not isinstance(strike_row, dict) or not _num(strike_row.get("strike")):
+            continue
+        init_row = initiation[i] if i < len(initiation) else None
+        category = init_row.get("initiation") if isinstance(init_row, dict) else None
+        if category not in ("calls_bought", "calls_sold", "puts_bought", "puts_sold"):
+            continue
+        prem_row = premiums[i] if i < len(premiums) else None
+        premium = prem_row.get("premium") if isinstance(prem_row, dict) else None
+        if not _num(premium) or premium <= 0:
+            continue
+        exp_row = expiries[i] if i < len(expiries) else None
+        expiration = exp_row.get("expiration") if isinstance(exp_row, dict) else None
+        rows.append({"strike": strike_row["strike"], "expiration": expiration,
+                     "premium": premium, "category": category,
+                     "right": "call" if "call" in category else "put"})
+    rows.sort(key=lambda r: -r["premium"])
+    return rows
+
+_FLOW_SIDE_WORD = {"calls_bought": "buyers paying up for calls",
+                   "calls_sold": "sellers writing calls",
+                   "puts_bought": "buyers paying up for puts",
+                   "puts_sold": "sellers writing puts"}
+
+def _moneyness(right, strike, spot):
+    if not _num(spot):
+        return None
+    if right == "call":
+        return "ATM" if strike == spot else "OTM" if strike > spot else "ITM"
+    return "ATM" if strike == spot else "OTM" if strike < spot else "ITM"
+
+def _wall_strike(blocks, sym, right):
+    walls_val = ((blocks.get("gamma") or {}).get("walls") or {}).get("value") or {}
+    wall_row = (walls_val.get(sym) or {}).get("walls") or {}
+    top = wall_row.get("top_call" if right == "call" else "top_put") or []
+    strike = top[0].get("strike") if top and isinstance(top[0], dict) else None
+    return strike if _num(strike) else None
+
+def _narrative_forward_strikes(blocks):
+    """Leron, 2026-10-16: "the flow is nice but i need to know specfics... is there
+    continuation because ther big flow in OTM." forward_strikes.* is already fed from the
+    exact per-(expiration, strike, right, side) premium concentrations above, required by
+    the contract, rendered only in the generic per-field appendix today. This surfaces the
+    single biggest classified bet per symbol with its real strike and expiration, tags it
+    OTM/ITM against the real spot, and checks it against the nearest gamma wall so "big OTM
+    call buying" becomes "a real bet on breaking the wall" or "a bet on testing it, not
+    through it" instead of a bare dollar figure. Zero new producer fields."""
+    spots = ((blocks.get("expected_move") or {}).get("reference_spot") or {}).get("value") or {}
+    bits = []
+    for sym in ("SPY", "QQQ"):
+        rows = _concentration_rows(blocks, sym)
+        if not rows:
+            continue
+        top = rows[0]
+        spot_row = spots.get(sym)
+        spot = spot_row.get("spot") if isinstance(spot_row, dict) else None
+        moneyness = _moneyness(top["right"], top["strike"], spot)
+        sentence = (f"{sym}'s single biggest classified bet right now: {top['strike']:g} "
+                    f"{top['right']}s" + (f" expiring {top['expiration']}" if top["expiration"] else "")
+                    + f" — ${top['premium']:,.0f} in premium, {_FLOW_SIDE_WORD[top['category']]}"
+                    + (f", {moneyness}" if moneyness else "") + ".")
+        wall = _wall_strike(blocks, sym, top["right"])
+        if moneyness == "OTM" and _num(wall) and top["category"].endswith("bought"):
+            through = (top["strike"] >= wall) if top["right"] == "call" else (top["strike"] <= wall)
+            if through:
+                sentence += f" That strike is through the {wall:g} {top['right']} wall — real conviction on a breakout, not just a hedge."
+            else:
+                sentence += f" Still short of the {wall:g} {top['right']} wall — a bet on testing resistance, not clearing it yet."
+        bits.append(sentence)
+    return " ".join(bits) if bits else None
+
 def _narrative_expected_move(block):
     dollars_item = block.get("dollars") or {}
     dollars_val = dollars_item.get("value")
@@ -1631,6 +1717,77 @@ def _what_changed_today_html(blocks):
         return ""
     return '<h2>\U0001f4c8 What changed today</h2><p>' + " ".join(html.escape(l) for l in lines) + "</p>"
 
+def _price_path_read(blocks, sym):
+    """Leron, 2026-10-16, repeated across several messages: "is it looking to stall at a
+    support or call wall... is there high probability of breakout to what price levels or is
+    it looking to pin and at what price levels... what does it mean for intraday and the
+    future." No producer anywhere in this contract computes a calibrated numeric probability
+    -- inventing one would be fabricated data. This reads the real, already-required signals
+    (value area, gamma walls/flip/net GEX, who's in control and how confident, forward
+    control outlook, and the biggest classified OTM/ITM bet from _concentration_rows) into an
+    honest stall/pin/breakout call with real price levels, using the real confidence labels
+    the contract already carries (HIGH/MEDIUM/thin, persists/flips) in place of a number that
+    doesn't exist. Zero new producer fields."""
+    profile = blocks.get("profile") or {}
+    def _profile_val(field):
+        row = ((profile.get(field) or {}).get("value") or {}).get(sym)
+        return row.get(field) if isinstance(row, dict) else None
+    val, vah, poc = _profile_val("val"), _profile_val("vah"), _profile_val("poc")
+    spot_row = (((blocks.get("expected_move") or {}).get("reference_spot") or {}).get("value") or {}).get(sym)
+    spot = spot_row.get("spot") if isinstance(spot_row, dict) else None
+    if not (_num(spot) and _num(val) and _num(vah) and _num(poc)):
+        return None
+    call_wall, put_wall = _wall_strike(blocks, sym, "call"), _wall_strike(blocks, sym, "put")
+    net_gex_row = (((blocks.get("gamma") or {}).get("net_gex") or {}).get("value") or {}).get(sym)
+    net_gex = net_gex_row.get("net_gex_b") if isinstance(net_gex_row, dict) else None
+    accelerant, cushion = (_num(net_gex) and net_gex < 0), (_num(net_gex) and net_gex > 0)
+
+    rows = _concentration_rows(blocks, sym)
+    top_buy = next((r for r in rows if r["category"].endswith("bought")), None)
+    otm_buy_through_wall = False
+    if top_buy:
+        wall = call_wall if top_buy["right"] == "call" else put_wall
+        if _num(wall):
+            otm_buy_through_wall = (top_buy["strike"] >= wall) if top_buy["right"] == "call" else (top_buy["strike"] <= wall)
+
+    near_call_wall = _num(call_wall) and spot >= call_wall * 0.995
+    near_put_wall = _num(put_wall) and spot <= put_wall * 1.005
+    if near_call_wall:
+        if accelerant and otm_buy_through_wall:
+            verdict = (f"a real breakout setup — if it clears {call_wall:g}, dealers are short gamma "
+                       "up there and have to chase, which can accelerate the move")
+        else:
+            cushion_bit = "dealers are long gamma and will lean on the tape there" if cushion else "no confirming OTM buying is pushing through it yet"
+            verdict = f"more likely to stall at the {call_wall:g} call wall than break it clean — {cushion_bit}"
+    elif near_put_wall:
+        if accelerant and otm_buy_through_wall:
+            verdict = (f"a real breakdown setup — if it loses {put_wall:g}, dealers are short gamma "
+                       "below it and have to chase lower")
+        else:
+            cushion_bit = "dealers are long gamma and will defend it" if cushion else "no confirming OTM selling is pushing through it yet"
+            verdict = f"more likely to hold the {put_wall:g} put wall than break it clean — {cushion_bit}"
+    elif val <= spot <= vah:
+        pin_bit = " — long gamma keeps it boxed in" if cushion else ""
+        verdict = f"pinning inside the value area, gravitating toward {poc:g} (POC){pin_bit}"
+    else:
+        verdict = "outside the value area with no wall close enough yet to call a level"
+
+    conf_row = (((blocks.get("market_control") or {}).get("control_confidence") or {}).get("value") or {}).get(sym)
+    conf_label = conf_row.get("label") if isinstance(conf_row, dict) else None
+    conf_word = {"HIGH": "high-confidence read", "MEDIUM": "medium-confidence read",
+                 "LOW_FORCES_INCONCLUSIVE": "thin, low-confidence read"}.get(conf_label)
+    outlook_row = (((blocks.get("market_control") or {}).get("forward_control_outlook") or {}).get("value") or {}).get(sym)
+    outlook = outlook_row.get("outlook") if isinstance(outlook_row, dict) else None
+    forward_bit = {"persists": "Forward flow agrees this isn't just a one-day lean — this level matters past today, too.",
+                   "flips": "Forward flow disagrees, so don't assume this level holds past today."}.get(outlook)
+
+    sentence = f"{sym} at {spot:g}: {verdict}."
+    if conf_word:
+        sentence += f" ({conf_word.title()})"
+    if forward_bit:
+        sentence += " " + forward_bit
+    return sentence
+
 def market_story(blocks, mission_side=None, regime_label=None):
     """Leron, 2026-10-10: "each section should flow into each [other]" -- the flagship
     paragraph right under the mission call was still just the flat verdict label plus two
@@ -1645,19 +1802,29 @@ def market_story(blocks, mission_side=None, regime_label=None):
     the flat suitability label), then the gamma read. Zero new producer fields -- every
     fragment is an existing function call. Each richer fragment can return None when its
     block is unavailable; falls back to the flat display rather than dropping a sentence
-    entirely."""
+    entirely.
+
+    Leron, 2026-10-16: "is it looking to stall at a support or call wall... is there high
+    probability of breakout... or is it looking to pin... what does it mean for intraday and
+    the future" -- leads with _price_path_read's stall/pin/breakout call and real price
+    levels for SPY and QQQ before the four supporting fragments, so the story opens with the
+    actual question being asked instead of burying it after dealer-positioning/premium/gamma
+    detail."""
+    price_paths = [p for p in (_price_path_read(blocks, sym) for sym in ("SPY", "QQQ")) if p]
     parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or display(blocks["risk_on_defensive"]["verdict"], compact=True),
              section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
              _narrative_premium_selling(blocks["premium_selling"]) or display(blocks["premium_selling"]["suitability"], compact=True),
              section_meaning("gamma", blocks["gamma"])]
-    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in parts if p)
+    return " ".join(p if p.endswith((".", "!", "?")) else p + "." for p in price_paths + parts if p)
 
 def market_story_html(blocks, mission_side=None, regime_label=None):
     """Same four fragments as market_story(), without the "[LIVE NOW; updated ...]" bracket
     tag glued onto each sentence — the scoreboard immediately above this paragraph already
     shows that same reliability info as its own pill, so repeating it inline here just adds
-    clutter to a paragraph meant to read as plain prose."""
-    parts = [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or _value_text(blocks["risk_on_defensive"]["verdict"]),
+    clutter to a paragraph meant to read as plain prose. Same _price_path_read lead as
+    market_story()."""
+    price_paths = [p for p in (_price_path_read(blocks, sym) for sym in ("SPY", "QQQ")) if p]
+    parts = price_paths + [_narrative_risk_on_defensive(blocks["risk_on_defensive"]) or _value_text(blocks["risk_on_defensive"]["verdict"]),
              section_meaning("market_control", blocks["market_control"], mission_side, regime_label),
              _narrative_premium_selling(blocks["premium_selling"]) or _value_text(blocks["premium_selling"]["suitability"]),
              section_meaning("gamma", blocks["gamma"])]
@@ -1669,8 +1836,15 @@ def options_flow_story(blocks):
     previously this richer read only ever surfaced in the per-field appendix under "### Flow".
     Zero new producer fields; _narrative_flow already degrades gracefully to None when
     classified coverage is too thin, so a plain fallback sentence stands in for that case
-    rather than an empty section."""
-    return _narrative_flow(blocks["flow"]) or "Classified options flow coverage is too thin to read a direction right now."
+    rather than an empty section.
+
+    Leron, 2026-10-16: "the flow is nice but i need to know specfics... is there continouino
+    bencause ther big flow in OTM" -- the aggregate dominant-flow-type read above answers
+    "who's buying," not "which exact strike, is it OTM, and does it clear the wall." Appends
+    _narrative_forward_strikes' single-biggest-bet read, which answers exactly that."""
+    base = _narrative_flow(blocks["flow"]) or "Classified options flow coverage is too thin to read a direction right now."
+    strike_read = _narrative_forward_strikes(blocks)
+    return base + ((" " + strike_read) if strike_read else "")
 
 def dealer_positioning_story(blocks):
     """Promotes _narrative_market_control's existing per-symbol "who's running this today,
@@ -2441,8 +2615,21 @@ def catalyst_vol_narrative_html(blocks):
             '<p style="font-size:.8rem;color:#8b97a8">Built from today\'s own verified fields above — '
             "never a new number, never an invented strike.</p>")
 
-def render_opening_html(payload):
+def render_opening_html(payload, images=None):
+    """Leron, 2026-10-16: "add visuals." This page previously carried zero chart images --
+    render_markdown's flat !["Name"](url) dump of every chart_urls entry at the very end had
+    no equivalent here, so the live /view page and the email both rendered as text only.
+    `images` lets a caller substitute base64 data: URIs for consistency with every other
+    chart already on the /view page (report_view passes its `inline` map); omitted, this
+    falls back to the plain chart_urls external links, which is what report_email.py wants."""
     blocks=payload.get("report_blocks") or {};escape=html.escape
+    images=images if images is not None else (payload.get("chart_urls") or {})
+    def chart_img(name,alt):
+        # Inline style, not a CSS class -- report_email.py's HTML has no stylesheet to carry
+        # a class, and most email clients strip <style> blocks anyway.
+        src=images.get(name)
+        return ('<p style="margin:10px 0"><img src="'+escape(src)+'" alt="'+escape(alt)+'" loading="lazy" '
+                'style="max-width:100%;border-radius:6px;display:block"></p>') if src else ""
     divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
     def cell(name,field):return item_cell_html((blocks.get(name) or {}).get(field,{}))
     scoreboard_rows=[
@@ -2477,13 +2664,19 @@ def render_opening_html(payload):
     html_regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
     html_regime_label=html_regime_label_item.get("value") if isinstance(html_regime_label_item.get("value"),str) else None
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,html_mission_side,html_regime_label))+"</p>"
+    out+=chart_img("gamma_expiry","Gamma exposure by expiration chart")
     out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"
+    out+=chart_img("flow","Options flow chart")
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
     out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
+    out+=chart_img("surface","Volatility surface chart")+chart_img("smile_term","Smile and term structure chart")
     out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
+    out+=chart_img("market_map","Market map chart")
     out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"
+    out+=chart_img("sector_credit","Sector and credit relative-strength chart")
     out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"
     out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"
+    out+=chart_img("baseline_comparison","Since-this-morning baseline comparison chart")
     out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"
     out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"
     out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"
