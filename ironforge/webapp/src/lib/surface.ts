@@ -163,6 +163,21 @@ export const CUSTOMER_API_EXCEPTIONS: readonly string[] = [
   // ironforge-legacy is a web-only reader (SCANNER_ENABLED=false) and cannot be
   // auto-restarted into fixing a stuck scanner no matter what it's health-checked on.
   '/api/scanner/status',
+  // Ember's own trade book, REFLEX status, and equity curve for the signed-in
+  // customer who owns Ember (resolveEmberOwner — entitlement-gated in-route,
+  // same 403-not-401 reasoning as every other Ember customer route). These
+  // three live under the otherwise-operator-only /api/ember/ namespace (the
+  // EMBER BACKTESTER proxy and its /ember operator page), which OPERATOR_API_PREFIXES
+  // below still claims via a blanket prefix — without this exact-match carve-out
+  // servesPath() 404s all three on the customer deployment before the request
+  // ever reaches the route handler's own entitlement check, so EmberWorkspaceClient
+  // (/agents/ember) silently renders empty for every real Ember customer. Exact
+  // match only, same as access.ts's isCustomerPath — never widen this into an
+  // /api/ember/ prefix, which would also expose /api/ember/build and /evaluate
+  // (the operator-only backtester proxy, no in-route entitlement check of its own).
+  '/api/ember/trades',
+  '/api/ember/status',
+  '/api/ember/equity-curve',
 ]
 
 /**
