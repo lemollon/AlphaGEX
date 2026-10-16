@@ -667,6 +667,22 @@ def _narrative_market_control(block):
         bits.append(sentence)
     return " ".join(bits) if bits else None
 
+def _without_front_day_clause(text):
+    """The producer's forward_implications string opens with "front-day premium is elevated /
+    discounted versus 1-5DTE", which it derives from iv_0dte -- the same expiry artifact
+    _curve_shape keeps out of every term-structure read (89% SPY 0DTE IV minutes before the
+    close). Renderers do not repeat it; the 6-20DTE / 21+D clauses compare real tenors and stay.
+    If nothing else is left the whole sentence is dropped (None)."""
+    if not isinstance(text, str) or not text:
+        return text
+    head, sep, tail = text.partition(". This is forward")
+    kept = [p for p in head.split("; ") if not p.strip().lower().startswith("front-day premium is")]
+    if len(kept) == len(head.split("; ")):
+        return text
+    if not kept:
+        return None
+    return "; ".join(kept) + sep + tail
+
 def _narrative_premium_selling(block):
     suit_item = block.get("suitability") or {}
     suit_val = suit_item.get("value")
@@ -689,7 +705,7 @@ def _narrative_premium_selling(block):
         if _num(ratio):
             sentence += f" (IV/realized ratio {ratio:.2f})"
         sentence += "."
-        forward = forward_val.get(sym) if isinstance(forward_val, dict) else None
+        forward = _without_front_day_clause(forward_val.get(sym)) if isinstance(forward_val, dict) else None
         if isinstance(forward, str) and forward:
             # Both symbols usually carry the identical term-structure sentence; say it once.
             sentence += " " + ("Same forward-volatility read as above." if forward in forwards else forward)
@@ -891,7 +907,6 @@ def _narrative_surface(block):
     atm_val = atm_item.get("value")
     if not isinstance(atm_val, dict) or atm_item.get("status") == "unavailable":
         return None
-    term0 = (block.get("term_0dte") or {}).get("value") or {}
     term_far = (block.get("term_21plus") or {}).get("value") or {}
     ivrv_val = (block.get("iv_vs_realized") or {}).get("value") or {}
     bits = []
@@ -899,13 +914,15 @@ def _narrative_surface(block):
         atm = (atm_val.get(sym) or {}).get("atm_iv") if isinstance(atm_val.get(sym), dict) else None
         if not _num(atm):
             continue
-        near = ((term0.get(sym) or {}) if isinstance(term0, dict) else {}).get("iv_0dte")
+        # Shared with the takeaway (_curve_shape): the front leg is the 1-5 day ATM IV, never
+        # term_0dte -- a 0DTE IV near expiry is an artifact, not an "event/fear" curve. The 0DTE
+        # reading is reported separately below by _zero_dte_sentence.
         far = ((term_far.get(sym) or {}) if isinstance(term_far, dict) else {}).get("iv_21_365dte")
         sentence = f"{sym}'s vol surface: ATM IV {atm*100:.1f}%"
-        if _num(near) and _num(far) and far > 0:
-            shape = ("inverted — 0DTE is pricing hotter than the back of the curve, classic event/fear pattern" if near > far * 1.15
-                     else "upward-sloping — normal contango, no near-term fear priced in" if near < far * 0.9
-                     else "flat across expiries")
+        if _num(far) and far > 0:
+            shape = {"front": "inverted — the near-dated (1-5 day) end is pricing above the back of the curve",
+                     "back": "upward-sloping — the back carries more premium than the near-dated end",
+                     "flat": "flat across expiries"}[_curve_shape(atm, far)]
             sentence += f"; the term structure is {shape}"
         row = ivrv_val.get(sym) if isinstance(ivrv_val, dict) else None
         iv, rv = (row or {}).get("atm_iv"), (row or {}).get("realized_vol_60m")
@@ -914,7 +931,14 @@ def _narrative_surface(block):
             sentence += f". IV is running {abs(gap):.1f} points {'above' if gap > 0 else 'below'} realized vol"
         sentence += "."
         bits.append(sentence)
-    return " ".join(bits) if bits else None
+    if not bits:
+        return None
+    stale = _last_known(block, "atm_iv", "term_21plus", "iv_vs_realized")
+    text = " ".join(bits)
+    if stale:
+        text = f"On {stale}: " + text
+    zero = _zero_dte_sentence(block)
+    return text + (" " + zero if zero else "")
 
 def _narrative_breadth(block):
     ad_item = block.get("advance_decline") or {}
@@ -1539,6 +1563,43 @@ def _last_known(block, *fields):
             dates.append(label)
     return ("last-known readings from " + " and ".join(dates)) if dates else None
 
+def _curve_shape(near, far):
+    """The one term-structure classifier every renderer shares (takeaway, per-field narrative,
+    markdown, email). `near` is the 1-5 day ATM IV, never the 0DTE IV: a 0DTE contract's
+    implied vol blows up as time to expiry collapses (89% on SPY minutes before the close), so
+    comparing it with the back of the curve reads an expiry artifact as an 'inverted, event/fear'
+    curve. Bands match market_structure's 1.15x / 0.85-0.90x conventions."""
+    return "front" if near > far * 1.15 else "back" if near < far * 0.9 else "flat"
+
+def _zero_dte_sentence(block):
+    """0DTE IV is a real, tradeable price at any hour, so it is always reported -- as its own data
+    point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
+    late-session number self-explanatory), dated if it is a last-known reading, and explicitly
+    not a leg of the curve comparison. None when no 0DTE value is present."""
+    item = block.get("term_0dte") or {}
+    val = item.get("value") if item.get("status") != "unavailable" else None
+    val = val if isinstance(val, dict) else {}
+    zero = [s for s in ("SPY", "QQQ") if isinstance(val.get(s), dict) and _num(val[s].get("iv_0dte"))]
+    if not zero:
+        return None
+    try:
+        seen = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
+        secs = (seen.replace(hour=15, minute=0, second=0, microsecond=0) - seen).total_seconds()
+        mins = int(secs // 60) if secs >= 60 else (0 if secs > 0 else -1)
+    except (ValueError, TypeError):
+        mins = None
+    if mins is None:
+        left = "time to expiry unavailable"
+    elif mins < 0:
+        left = f"a reading taken after the {seen.strftime('%b')} {seen.day} 3:00 PM CT close"
+    else:
+        left = "with " + ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120
+                          else f"{mins // 60} hours") + " to the close"
+    stale = _last_known(block, "term_0dte")
+    return ("On its own" + (f", on a {stale.replace('readings', 'reading')}," if stale else ",") + " "
+            + "; ".join(f"{s} 0DTE IV is {val[s]['iv_0dte']*100:.1f}%" for s in zero)
+            + f" ({left}); that is a separate data point, not a leg of the curve comparison.")
+
 def _surface_takeaway(block):
     """What the vol surface means today: is front-dated premium rich or cheap against what
     the tape is actually delivering, and which end of the curve carries the richness. Reads
@@ -1563,13 +1624,12 @@ def _surface_takeaway(block):
         near = atm_row.get("atm_iv")
         far = (far_v.get(sym) or {}).get("iv_21_365dte") if isinstance(far_v.get(sym), dict) else None
         if _num(near) and _num(far) and far > 0:
-            curve.append((sym, near, far, "front" if near > far * 1.15 else "back" if near < far * 0.9 else "flat"))
+            curve.append((sym, near, far, _curve_shape(near, far)))
     if not prem and not curve:
         return "Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today."
     parts = []
     stale_prem = _last_known(block, "atm_iv", "iv_vs_realized")
     stale_curve = _last_known(block, "atm_iv", "term_21plus")
-    stale_zero = _last_known(block, "term_0dte")
     if prem:
         sides = {p[4] for p in prem}
         if sides == {"sellers"}:
@@ -1589,25 +1649,9 @@ def _surface_takeaway(block):
     # data point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
     # late-session number self-explanatory). It is never a leg of the term-structure comparison
     # above/below -- the two legs span different horizons -- so it cannot drive the rich/cheap call.
-    zero = [s for s in ("SPY", "QQQ") if isinstance(near_v.get(s), dict) and _num(near_v[s].get("iv_0dte"))]
+    zero = _zero_dte_sentence(block)
     if zero:
-        item = block.get("term_0dte") or {}
-        try:
-            seen = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
-            secs = (seen.replace(hour=15, minute=0, second=0, microsecond=0) - seen).total_seconds()
-            mins = int(secs // 60) if secs >= 60 else (0 if secs > 0 else -1)
-        except (ValueError, TypeError):
-            mins = None
-        if mins is None:
-            left = "time to expiry unavailable"
-        elif mins < 0:
-            left = f"a reading taken after the {seen.strftime('%b')} {seen.day} 3:00 PM CT close"
-        else:
-            left = ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120
-                    else f"{mins // 60} hours") + " to the close"
-            left = "with " + left
-        parts.append("On its own" + (f", on a {stale_zero.replace('readings', 'reading')}," if stale_zero else ",") + " " + "; ".join(f"{s} 0DTE IV is {pct(near_v[s]['iv_0dte'])}" for s in zero)
-                     + f" ({left}); that is a separate data point, not a leg of the curve comparison.")
+        parts.append(zero)
     if curve:
         shapes = {c[3] for c in curve}
         lead_side = ({p[4] for p in prem} or {"?"})

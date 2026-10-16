@@ -997,11 +997,56 @@ def test_edge_board_trigger_cell_is_the_trigger_only_and_identical_rows_point_at
 def test_premium_selling_story_prints_the_shared_forward_volatility_sentence_once():
     blocks=empty_blocks()
     blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_FAIR','QQQ':'PREMIUM_FAIR'})
-    same='front-day premium is elevated versus 1-5DTE. This is forward volatility pricing, not proof of buying or selling.'
+    same='6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, not proof of buying or selling.'
     blocks['premium_selling']['forward_implications']=item({'SPY':same,'QQQ':same})
     text=_narrative_premium_selling(blocks['premium_selling'])
     assert text.count('This is forward volatility pricing')==1
     assert 'Same forward-volatility read as above.' in text
+
+def _late_session_0dte_blocks():
+    """The real 3:00 PM CT shape: SPY 0DTE IV 89.3% minutes before expiry, 14.7% for 21+ days."""
+    blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
+    late=datetime(2026,10,6,19,59,tzinfo=timezone.utc).isoformat()  # 2:59 PM CT
+    blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=late)
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_FAIR','QQQ':'PREMIUM_FAIR'})
+    fwd='front-day premium is elevated versus 1–5DTE; 6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, not proof of buying or selling.'
+    blocks['premium_selling']['forward_implications']=item({'SPY':fwd,'QQQ':fwd})
+    return blocks
+
+def test_markdown_and_email_never_call_the_curve_inverted_off_a_late_session_0dte_iv():
+    """2026-10-16: markdown/PDF/email rendered the per-field _narrative_surface, which called the
+    curve "inverted ... classic event/fear pattern" because SPY's 0DTE IV was 89.3% minutes before
+    expiry. The shape read is shared (_curve_shape, 1-5 day vs 21+ day) so every renderer agrees;
+    the 0DTE number still prints as its own data point with its time to the close, and the
+    producer's 0DTE-derived "front-day premium is elevated" clause is not repeated."""
+    blocks=_late_session_0dte_blocks()
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),'report_completeness':'INCOMPLETE','chart_urls':{}}
+    for out in (render_markdown(payload),render_opening_html(payload),section_summary('surface',blocks['surface']),
+                surface_smile_story(blocks),market_story(blocks,'neutral',None)):
+        low=out.lower()
+        assert 'event/fear' not in low and 'fear pattern' not in low
+        assert 'inverted' not in low
+        assert 'front-day premium is elevated' not in low
+        assert '0dte is pricing hotter' not in low
+    story=surface_smile_story(blocks)
+    assert "SPY's vol surface: ATM IV 10.9%; the term structure is upward-sloping" in story
+    assert 'SPY 0DTE IV is 89.3%' in story and '(with 1 minute to the close)' in story
+    assert '6–20DTE volatility is elevated versus the near curve' in market_story(blocks,'neutral',None)
+
+def test_front_day_clause_is_dropped_but_a_lone_clause_drops_the_whole_sentence():
+    from backend.report_policy import _without_front_day_clause
+    assert _without_front_day_clause('front-day premium is elevated versus 1–5DTE. This is forward volatility pricing, x.') is None
+    assert _without_front_day_clause('6–20DTE volatility is elevated versus the near curve. This is forward volatility pricing, x.').startswith('6–20DTE')
+    assert _without_front_day_clause(None) is None
+
+def test_narrative_surface_labels_last_known_readings_and_keeps_0dte_separate():
+    blocks=_surface_blocks(near=(.15,.12),far=(.147,.228))
+    stamp=datetime(2026,10,5,20,0,tzinfo=timezone.utc).isoformat()
+    for f in ('atm_iv','term_0dte','term_21plus','iv_vs_realized'):
+        blocks['surface'][f]=dict(blocks['surface'][f],status='historical',source_timestamp=stamp)
+    text=surface_smile_story(blocks)
+    assert text.startswith('On last-known readings from Oct 5: SPY')
+    assert 'on a last-known reading from Oct 5, SPY 0DTE IV is' in text
 
 def test_ranked_edge_board_puts_no_trade_first_when_nothing_else_qualifies():
     blocks=empty_blocks()  # every field unavailable -- no registered setup, no profile/gamma coverage
