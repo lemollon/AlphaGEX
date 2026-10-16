@@ -917,7 +917,7 @@ export default function SqueezePage() {
               {/* 1 — how close are we */}
               <div style={{ ...S.small, marginBottom: 4 }}>
                 How close are we — gamma percentile
-                <InfoTip text="Where net dealer gamma sits within its own trailing 60 sessions. The rank is a much stronger signal than the level: a −$4B print can be oversold in a calm month and unremarkable in a volatile one." />
+                <InfoTip text="Where net dealer gamma sits within its own trailing 60 sessions. The rank is a much stronger signal than the level: a −$4B print can be oversold in a calm month and unremarkable in a volatile one. live = this minute's net gamma and where it ranks vs the trailing distribution; the bar thresholds are the oversold/overbought trigger levels." />
               </div>
               <div style={{ position: 'relative', height: 24, background: '#0e1220', border: '1px solid #232a3d', borderRadius: 6 }}>
                 <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20%', background: AMBER, opacity: 0.18 }} />
@@ -958,7 +958,7 @@ export default function SqueezePage() {
                     left: `${Math.min(92, Math.max(8, livePctNow)).toFixed(1)}%`,
                     transform: 'translateX(-50%)', whiteSpace: 'nowrap',
                   }}>
-                    live {pct(livePctRaw)}
+                    live {signedBn(intraday.net_gex_b)} · {pct(livePctRaw)} pctile
                   </span>
                 </div>
               )}
