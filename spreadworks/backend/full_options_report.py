@@ -1033,16 +1033,11 @@ def report_view(report_id:str):
             'surface':'surface',
             'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
             'morning_comparison':'baseline_comparison','profile':'volume_profile'}
-    # Leron, repeatedly: "a long boring ass scroll." Every section now reads as 2 narrative
-    # lines instead of a field dump (see SECTION_SUMMARY_SECTIONS above), but 34 of them
-    # stacked is still a long page. Collapsed-by-default for sections that are honestly
-    # bookkeeping/audit (same classification report_policy.py's _SECTION_ROLE already uses);
-    # open by default for the sections a trader actually reads for today's call. Collapsing
-    # removes nothing from the DOM -- every required field is still fully present and found
-    # by in-page search, just not forced onto the screen before scrolling.
-    _OPEN_BY_DEFAULT = {'risk_on_defensive', 'market_control', 'gamma', 'flow', 'premium_selling',
-                         'day_strategy', 'near_forward_strategy', 'forward_strategy',
-                         'entry_watches', 'trade_volatility_scan'}
+    # Leron, 2026-10-16: "nothing should be collapse." The prior collapsed-by-default split
+    # (bookkeeping/audit sections closed, trade-relevant ones open) still hid real fields
+    # behind a click the first time anyone loaded the page. <details> stays in the markup
+    # (keeps the per-section anchor/expand-collapse toggle working), but every section now
+    # renders open on load; collapsing is something the reader does, never the default.
     _CHART_DIV_OPEN = '<div class="chart">'
     for name,block in _ordered_blocks(payload['report_blocks']):
         anchor='sec-'+name.replace('_','-')
@@ -1065,7 +1060,7 @@ def report_view(report_id:str):
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
         section_meta_html=f'<div class="meta section-meta">{shared_meta}</div>' if shared_meta else ''
-        open_attr=' open' if name in _OPEN_BY_DEFAULT else ''
+        open_attr=' open'
         parts.append(f'<section class="card" id="{anchor}"><details{open_attr}><summary>{html.escape(title)}</summary>{section_meta_html}'
                      f'{_CHART_DIV_OPEN+image+"</div>" if image else ""}'
                      f'<div class="fields">{fields_html}</div></details></section>')
@@ -1086,7 +1081,13 @@ def report_view(report_id:str):
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
 margin:0;padding:0}
-.wrap{max-width:900px;margin:0 auto;padding:16px}
+/* Leron, 2026-10-16: "the report should be wide enough so i dont have to scroll
+   horizontally for anything." 900px was sized for prose, not the 6-column Edge Board or
+   the per-field evidence tables -- those needed their own .tablewrap scroll escape hatch
+   (2026-10-14) specifically because the page itself was too narrow to hold them. Widening
+   the page is the real fix; .tablewrap stays below as a safety net for a genuinely
+   oversized table on a narrow viewport, but no longer carries the load on desktop. */
+.wrap{max-width:1400px;margin:0 auto;padding:16px}
 header.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--border);
 padding:14px 16px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:baseline}
 header.top h1{font-size:1.05rem;margin:0}

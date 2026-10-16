@@ -812,10 +812,12 @@ def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
     assert 'defensive/risk-on' not in tv_card  # the old bug: both words, every time
 
 @freeze_time(NOW)
-def test_report_view_sections_are_collapsible_but_keep_every_field_in_the_dom(db):
-    """Leron, repeatedly: "a long boring ass scroll." Collapsing bookkeeping sections by
-    default must not drop a single required field from the page -- <details> without the
-    open attribute still renders its content in the HTML, just not expanded on first paint."""
+def test_report_view_sections_are_all_open_by_default_and_keep_every_field_in_the_dom(db):
+    """Leron, 2026-10-16: "nothing should be collapse." Every section -- bookkeeping or
+    decision-relevant -- now opens on first paint; collapsing (via <details>'s native
+    toggle or the page's Collapse-all button) is something the reader does, not a default
+    that hides real fields behind a click. <details> stays in the markup either way, so
+    every required field is always present in the HTML regardless of open/closed state."""
     from backend.report_policy import observed
     blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
     blocks['risk_on_defensive']['verdict']=observed('Risk-on price confirmation','Observed provider feed',NOW,NOW)
@@ -829,9 +831,7 @@ def test_report_view_sections_are_collapsible_but_keep_every_field_in_the_dom(db
     mission_card=view.split('id="sec-risk-on-defensive"')[1].split('</section>')[0]
     scanner_card=view.split('id="sec-scanner"')[1].split('</section>')[0]
     assert '<details open>' in mission_card  # decision-relevant section opens by default
-    assert '<details>' in scanner_card  # bookkeeping section collapsed by default
-    # Collapsed or not, the content is still fully present in the HTML -- <details> without
-    # the open attribute hides nothing from the page source, only from first paint.
+    assert '<details open>' in scanner_card  # bookkeeping section now opens by default too
     assert 'Section summary' in mission_card and 'Section summary' in scanner_card
 
 def test_report_view_raw_field_branch_still_used_for_a_section_outside_summary_sections(monkeypatch,db):
