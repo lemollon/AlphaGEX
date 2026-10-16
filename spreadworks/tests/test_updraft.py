@@ -221,9 +221,10 @@ def test_astra3_falls_through_to_backdraft_mechanism():
 
 
 def test_astra3_registry_is_the_frozen_500_dollar_forward_book():
+    # Enabled 2026-10-16 per Leron ("unpause all bots").
     bot = get_bot("astra3")
     d = bot["defaults"]
-    assert d["enabled"] is False
+    assert d["enabled"] is True
     assert d["starting_capital"] == 500.0
     assert d["bp_pct"] == 0.25 and d["max_contracts"] == 3
     assert d["mode"] == "astra3" and d["hold_minutes"] == 30
@@ -380,7 +381,7 @@ def test_reversal_ignores_flow_entirely():
 def test_reversal_ships_disarmed_and_atm():
     meta = get_bot("reversal")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "reversal"
     assert d["strike_offset"] == 0
     assert d["hold_minutes"] == 45
@@ -569,7 +570,7 @@ def test_em_breach_ignores_flow_entirely():
 def test_em_breach_ships_disarmed_one_entry_per_day():
     meta = get_bot("embreach")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "em_breach"
     assert d["strike_offset"] == 0 and d["hold_minutes"] == 45
     assert meta["one_entry_per_day"] is True
@@ -630,7 +631,7 @@ def test_flashpoint_registry_runs_1k_account_and_sizes_one_contract():
     meta = get_bot("flashpoint")
     d = meta["defaults"]
     assert meta["ticker"] == "SPY"
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "flashpoint"
     assert d["starting_capital"] == 1000.0, "Leron's $1k paper framing"
     # ATM calls run ~$100-350; the bp budget must never floor to zero
@@ -675,7 +676,7 @@ def test_or_state_reader_builds_range_from_snapshots(tmp_path):
 def test_thermal_is_updraft_ridden_to_the_close():
     meta = get_bot("thermal")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "updraft", "THERMAL = UPDRAFT's exact signal"
     assert d["flow_max"] == -0.1378 and d["r30_min"] == 19.23, \
         "gates FROZEN, identical to UPDRAFT"
@@ -693,7 +694,7 @@ def test_thermal_is_updraft_ridden_to_the_close():
 def test_wildfire_is_backdraft_ridden_to_the_close():
     meta = get_bot("wildfire")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "backdraft", "WILDFIRE = BACKDRAFT's exact signal"
     assert d["backdraft_flow_max"] == -0.35 and d["require_put_wall"] is True, \
         "gates FROZEN, identical to BACKDRAFT"
@@ -741,7 +742,7 @@ def test_afterglow_registry_two_day_swing_mechanics():
     for bot in ("afterglow", "ember"):
         meta = get_bot(bot)
         d = meta["defaults"]
-        assert d["enabled"] is False, "no bot ships armed"
+        assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
         assert meta["front_dte"] == 5, "nearest weekly, the researched expiry"
         assert d["hold_minutes"] == 2880, "wall-clock ~2 trading days"
         assert d["sl_pct"] == 0.99, "research ran NO stop"
@@ -800,7 +801,7 @@ def test_day_signal_reader_flags_updraft_burst(tmp_path):
 def test_squall_is_the_frequency_tier_with_the_deeper_discount():
     meta = get_bot("squall")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "updraft"
     assert d["flow_max"] == -0.0983 and d["r30_min"] == 14.44,         "TRAIN q30/q85, frozen — looser than UPDRAFT by exactly one notch"
     assert d["limit_entry_frac"] == 0.20,         "the deeper discount is what rescues the looser gate (market entry "         "at these gates is OOS-negative — the frequency-frontier verdict)"
@@ -836,7 +837,7 @@ def test_tempest_dispatch_takes_the_first_firing_leg_and_records_it():
 def test_tempest_registry_is_the_whole_book_in_one_account():
     meta = get_bot("tempest")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "tempest"
     assert d["starting_capital"] == 1000.0
     assert d["flow_max"] == -0.1378 and d["backdraft_flow_max"] == -0.35
@@ -935,7 +936,7 @@ def test_embreachq_is_embreach_on_qqq_with_own_thresholds():
     meta = get_bot("embreachq")
     d = meta["defaults"]
     assert meta["ticker"] == "QQQ"
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert d["mode"] == "em_breach"
     assert d["em_frac"] == 0.8, "breach multiple is structural, carried over"
     assert d["max_open_straddle_pct"] == 1.04, "QQQ's OWN TRAIN q90, not SPY's"
@@ -1034,7 +1035,7 @@ def test_afterburn_registry_overnight_mechanics():
     three so nobody 'simplifies' one and silently breaks the exit."""
     meta = get_bot("afterburn")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert meta["front_dte"] == 1, "1DTE: EOD close must NOT fire on entry day"
     assert d["hold_minutes"] == 1056, "wall-clock timer = exit ~08:31 next day"
     assert d["entry_days"] == "mon,tue,wed,thu", "no 1DTE into a weekend"
@@ -1079,7 +1080,7 @@ def test_weekender_fires_unconditionally_with_day_state():
 def test_weekender_registry_weekend_mechanics():
     meta = get_bot("weekender")
     d = meta["defaults"]
-    assert d["enabled"] is False, "no bot ships armed"
+    assert d["enabled"] is True, "enabled 2026-10-16 per Leron (unpause all bots)"
     assert meta["front_dte"] == 3, "Friday entry -> Monday expiry"
     assert d["entry_days"] == "fri"
     assert d["hold_minutes"] == 3936, "Fri 14:55 + 3936m = Mon ~08:31 CT"

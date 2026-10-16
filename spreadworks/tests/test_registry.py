@@ -151,8 +151,8 @@ def test_list_bots_returns_keys():
 def test_monarch_defaults(db_session):
     # MONARCH-A/B — PAPER-ONLY forward validation of two UNCONFIRMED TRIAGE 29
     # cells. Same SPY 0DTE ATM butterfly construction, differing only in wing
-    # delta target. Both must ship disarmed — this is the one invariant that
-    # must never silently flip.
+    # delta target. Enabled 2026-10-16 per Leron ("unpause all bots") -- this
+    # flag never touches a broker either way, paper-only.
     from backend.bots.registry import get_bot
     from sqlalchemy import text
     a = get_bot("monarch_a")
@@ -168,8 +168,7 @@ def test_monarch_defaults(db_session):
         assert bot["compare_with"] == peer
         assert bot["defaults"]["wing_delta_target"] == target
         assert bot["defaults"]["starting_capital"] == 10000.0
-        # PAPER ONLY — the one line that must never silently become True.
-        assert bot["defaults"]["enabled"] is False
+        assert bot["defaults"]["enabled"] is True
         assert bot["defaults"]["max_contracts"] == 1
 
     eng = db_session.get_bind()
@@ -178,18 +177,19 @@ def test_monarch_defaults(db_session):
             text(f"SELECT enabled, starting_capital FROM {table} WHERE id=1")
         ).mappings().first()
         assert row is not None
-        assert bool(row["enabled"]) is False
+        assert bool(row["enabled"]) is True
         assert float(row["starting_capital"]) == 10000.0
 
 
 def test_undertow_registered():
+    # Enabled 2026-10-16 per Leron ("unpause all bots"). Paper-only.
     from backend.bots.registry import get_bot
     meta = get_bot("undertow")
     assert meta["display"] == "UNDERTOW"
     assert meta["strategy"] == "vertical_debit"
     assert "SPY" in meta["universe"] and "NVDA" in meta["universe"]
     assert meta["params"]["lookback_n"] == 5
-    assert meta["defaults"]["enabled"] is False
+    assert meta["defaults"]["enabled"] is True
     assert meta["defaults"]["max_concurrent_positions"] == 5
 
 
@@ -203,22 +203,24 @@ def test_undertow_is_vertical_debit():
 
 def test_undertow_tables_autocreate(db_session):
     # create_bot_tables ran in the fixture; the config row must be seeded.
+    # Enabled 2026-10-16 per Leron ("unpause all bots").
     from sqlalchemy import text
     eng = db_session.get_bind()
     row = eng.connect().execute(
         text("SELECT enabled, bp_pct FROM undertow_config WHERE id=1")
     ).mappings().first()
     assert row is not None
-    assert bool(row["enabled"]) is False
+    assert bool(row["enabled"]) is True
 
 
 def test_delta_registered_credit(db_session):
+    # Enabled 2026-10-16 per Leron ("unpause all bots").
     from backend.bots.registry import get_bot
     from sqlalchemy import text
     m = get_bot("delta")
     assert m["display"] == "DELTA" and m["vertical_mode"] == "credit"
     assert m["params"]["min_credit"] == 0.20
-    assert m["defaults"]["enabled"] is False and m["defaults"]["sl_pct"] == 1.5
+    assert m["defaults"]["enabled"] is True and m["defaults"]["sl_pct"] == 1.5
     eng = db_session.get_bind()
     row = eng.connect().execute(text("SELECT enabled FROM delta_config WHERE id=1")).first()
     assert row is not None
@@ -256,7 +258,7 @@ def test_ebb_defaults(db_session):
     assert b["defaults"]["vix_decay_max"] == 0.90
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
-    assert d["enabled"] is False        # no bot ships armed
+    assert d["enabled"] is True         # enabled 2026-10-16 per Leron
     assert d["max_contracts"] == 1
     assert d["max_concurrent_positions"] == 1
     assert d["entry_start_ct"] == "10:05"
@@ -265,7 +267,7 @@ def test_ebb_defaults(db_session):
     eng = db_session.get_bind()
     row = eng.connect().execute(text("SELECT enabled FROM ebb_config WHERE id=1")).mappings().first()
     assert row is not None
-    assert bool(row["enabled"]) is False
+    assert bool(row["enabled"]) is True
 
 
 def test_ebb_discord_routes_to_risk_channel():
@@ -311,7 +313,7 @@ def test_ebb_pm_defaults(db_session):
     assert b["defaults"]["vix_decay_max"] == 0
     d = b["defaults"]
     assert d["starting_capital"] == 3000.0
-    assert d["enabled"] is False        # no bot ships armed
+    assert d["enabled"] is True         # enabled 2026-10-16 per Leron
     assert d["max_contracts"] == 1
     assert d["max_concurrent_positions"] == 1
     assert d["entry_start_ct"] == "13:05"
@@ -322,4 +324,4 @@ def test_ebb_pm_defaults(db_session):
     eng = db_session.get_bind()
     row = eng.connect().execute(text("SELECT enabled FROM ebb_pm_config WHERE id=1")).mappings().first()
     assert row is not None
-    assert bool(row["enabled"]) is False
+    assert bool(row["enabled"]) is True

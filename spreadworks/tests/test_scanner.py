@@ -68,6 +68,11 @@ def _enable_bot(engine, bot):
         conn.execute(text(f"UPDATE {bot}_config SET enabled = 1 WHERE id = 1"))
 
 
+def _disable_bot(engine, bot):
+    with engine.begin() as conn:
+        conn.execute(text(f"UPDATE {bot}_config SET enabled = 0 WHERE id = 1"))
+
+
 def _set_stacking(engine, bot, on):
     with engine.begin() as conn:
         conn.execute(text(f"UPDATE {bot}_config SET allow_stacking = :v WHERE id = 1"),
@@ -114,9 +119,11 @@ def test_surge_opens_position_in_entry_window(db_session, fake_chain_0dte):
 
 
 def test_disabled_blocks_trading(db_session, fake_chain_0dte):
-    # FLOW ships disabled by default, so it exercises the disabled-gate path
-    # (SURGE and SURGE are enabled). Disabled check precedes any chain fetch.
-    engine = db_session.bind  # NOT enabling
+    # Every bot ships enabled by default since 2026-10-16 (Leron, "unpause all
+    # bots") -- explicitly disable FLOW here to still exercise the
+    # disabled-gate path. Disabled check precedes any chain fetch.
+    engine = db_session.bind
+    _disable_bot(engine, "flow")
     provider = FakeChainProvider(chain_0dte=fake_chain_0dte)
     now = datetime(2026, 5, 20, 9, 0, tzinfo=CT)
     res = run_scan_cycle(engine=engine, bot="flow", now_ct=now,
