@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, livePositionsTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +40,7 @@ export async function GET(
         underlying_at_entry, vix_at_entry,
         wings_adjusted, sandbox_order_id,
         hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at${tradesDirectionalCols}
-      FROM ${botTable(bot, 'positions')}
+      FROM ${livePositionsTable(bot)}
       WHERE status IN ('closed', 'expired') ${dteFilter} ${personFilter} ${accountTypeFilter}
       ORDER BY close_time DESC
       LIMIT ${limit} OFFSET ${offset}`,
