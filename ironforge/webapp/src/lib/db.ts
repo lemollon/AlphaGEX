@@ -86,8 +86,12 @@ export function botTable(bot: string, suffix: string): string {
  * the result is a derived table pre-aliased to the real table name, so
  * every existing unqualified column reference and WHERE clause at the call
  * site keeps working verbatim. Columns the sub-strategy tables don't carry
- * (hypothetical_eod_pnl, put_short_strike, put_long_strike) come back NULL
- * for their rows — never fabricated, same as any other optional field.
+ * (hypothetical_eod_pnl, hypothetical_eod_spot, hypothetical_eod_computed_at,
+ * put_short_strike, put_long_strike, spread_width, vix_at_entry,
+ * wings_adjusted) come back NULL for their rows — never fabricated, same as
+ * any other optional field. close_price, underlying_at_entry and
+ * sandbox_order_id ARE real columns on flint_positions/flame_stoke_positions
+ * (same names, same meaning) so those pass through unmodified.
  */
 export function livePositionsTable(bot: string): string {
   const main = botTable(bot, 'positions')
@@ -106,7 +110,9 @@ export function livePositionsTable(bot: string): string {
       account_type, person, open_time::timestamptz AS open_time, close_time::timestamptz AS close_time,
       open_date, realized_pnl, contracts, total_credit, collateral_required,
       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
-      dte_mode, hypothetical_eod_pnl
+      dte_mode, hypothetical_eod_pnl,
+      spread_width, close_price, underlying_at_entry, vix_at_entry, wings_adjusted,
+      sandbox_order_id, hypothetical_eod_spot, hypothetical_eod_computed_at
     FROM ${main}`
   const subSelect = (s: { table: string; filter: string }) => `SELECT
       position_id, ticker, expiration, status, close_reason,
@@ -114,7 +120,11 @@ export function livePositionsTable(bot: string): string {
       open_date, realized_pnl, contracts, entry_credit AS total_credit, collateral_required,
       NULL::numeric AS put_short_strike, NULL::numeric AS put_long_strike,
       call_short_strike, call_long_strike,
-      '0DTE' AS dte_mode, NULL::numeric AS hypothetical_eod_pnl
+      '0DTE' AS dte_mode, NULL::numeric AS hypothetical_eod_pnl,
+      NULL::numeric AS spread_width, close_price, underlying_at_entry,
+      NULL::numeric AS vix_at_entry, NULL::boolean AS wings_adjusted,
+      sandbox_order_id, NULL::numeric AS hypothetical_eod_spot,
+      NULL::timestamptz AS hypothetical_eod_computed_at
     FROM ${s.table} ${s.filter}`
 
   return `(${[mainSelect, ...subs.map(subSelect)].join(' UNION ALL ')}) AS ${main}`
