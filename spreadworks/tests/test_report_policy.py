@@ -7,7 +7,7 @@ from freezegun import freeze_time
 from sqlalchemy import create_engine
 from backend import full_options_report as report
 from backend.report_contract import REQUIREMENTS, validate_report, prepare_report_delivery, validate_rendered_report, LIVE_MAX_AGE_SECONDS
-from backend.report_policy import (normalize_blocks, observed, policy_identity, build_strategy_blocks,
+from backend.report_policy import (_narrative_premium_selling, normalize_blocks, observed, policy_identity, build_strategy_blocks,
                                    validate_semantics, section_summary, section_meaning, market_story,
                                    options_flow_story, dealer_positioning_story, surface_smile_story,
                                    expected_move_story, breadth_sector_story, macro_futures_story,
@@ -574,7 +574,9 @@ def test_dealer_positioning_story_falls_back_when_coverage_too_thin():
     top-level section must still render a plain disclosure, never an empty heading."""
     blocks=empty_blocks()
     story=dealer_positioning_story(blocks)
-    assert story=="Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+    assert story=="No per-symbol dealer breakdown this checkpoint: too little of the tape is classified."
+    # Must differ from section_meaning's thin-coverage sentence, which Market story prints.
+    assert story!=section_meaning('market_control',blocks['market_control'])
 
 def test_render_markdown_and_html_carry_the_dealer_positioning_section():
     blocks=empty_blocks()
@@ -954,6 +956,51 @@ def test_ranked_edge_board_ranks_a_confirmed_registered_setup_above_a_range_idea
     assert any(r[1]=='No trade' for r in ranked)
     assert any('SPY range structure' in r[1] for r in ranked)
     assert any('QQQ range structure' in r[1] for r in ranked)
+
+def _watch_setup(symbol,strategy,entry_type,high,invalid):
+    return {'symbol':symbol,'strategy':strategy,'catalyst':'CATALYST-PROSE '+symbol,
+            'main_risks':'RISK-PROSE '+symbol,'profit_taking_framework':'PROFIT-PROSE '+symbol,
+            'thesis_reason':'THESIS-PROSE '+symbol,
+            'entry':{'type':entry_type,'range_high':high,'confirmation_bars':2},
+            'invalidation':{'type':'close_below','level':invalid},
+            'expiration_preference':"Not today's expiring contracts. Prefer the next weekly."}
+
+def test_edge_board_trigger_cell_is_the_trigger_only_and_identical_rows_point_at_the_first():
+    """Leron, 2026-10-13/14: the Edge board is "hard to read" / "wall of words". The Trigger
+    cell used to dump each stored setup record (catalyst, main risks, profit-taking, thesis
+    prose) and day/near/forward all carry the same list, so the dump printed once per row plus
+    once more in the scoreboard's No-trade row."""
+    blocks=empty_blocks()
+    triggers=[_watch_setup('QQQ','put_debit_spread','opening_range_rejection',729.72,729.72),
+              _watch_setup('SPY','call_debit_spread','opening_range_breakout',773.92,772.25)]
+    for name in ('day_strategy','near_forward_strategy','forward_strategy'):
+        blocks[name]['status']=item('WATCH')
+        blocks[name]['trigger']=item(triggers)
+        blocks[name]['thesis']=item('Risk-on price confirmation')
+    ranked=ranked_edge_board(blocks)
+    registered=[r for r in ranked if r[5]=='WATCH' and r[1]=='QQQ']  # setup name = first trigger's symbol
+    assert len(registered)==3
+    first=registered[0]
+    assert 'QQQ put debit spread: opening range rejection' in first[3]
+    assert 'range high 773.92' in first[3] and 'invalid on close below 772.25' in first[3]
+    assert "Expiration: Not today's expiring contracts." in first[3]
+    for prose in ('CATALYST-PROSE','RISK-PROSE','PROFIT-PROSE','THESIS-PROSE'):
+        assert prose not in first[3]
+    # Later rows reference the first instead of re-dumping it; ranking/order are unchanged.
+    assert all(r[3]==f'Same trigger as #{first[0]}.' for r in registered[1:])
+    assert [r[0] for r in ranked]==list(range(1,len(ranked)+1))
+    # The scoreboard row names the condition and the row; it does not restate the trigger.
+    no_trade=next(r[1] for r in scoreboard(blocks) if r[0]=='No-trade condition')
+    assert no_trade==f'Top-ranked: {first[1]} (WATCH) — see Edge board #{first[0]} for its trigger and evidence.'
+
+def test_premium_selling_story_prints_the_shared_forward_volatility_sentence_once():
+    blocks=empty_blocks()
+    blocks['premium_selling']['suitability']=item({'SPY':'PREMIUM_FAIR','QQQ':'PREMIUM_FAIR'})
+    same='front-day premium is elevated versus 1-5DTE. This is forward volatility pricing, not proof of buying or selling.'
+    blocks['premium_selling']['forward_implications']=item({'SPY':same,'QQQ':same})
+    text=_narrative_premium_selling(blocks['premium_selling'])
+    assert text.count('This is forward volatility pricing')==1
+    assert 'Same forward-volatility read as above.' in text
 
 def test_ranked_edge_board_puts_no_trade_first_when_nothing_else_qualifies():
     blocks=empty_blocks()  # every field unavailable -- no registered setup, no profile/gamma coverage
@@ -1808,6 +1855,18 @@ def test_catalyst_vol_narrative_names_the_catalyst_and_favors_selling_premium_wh
 
     html_out=catalyst_vol_narrative_html(blocks)
     assert 'Catalyst' in html_out and 'CPI Report' in html_out
+
+def test_catalyst_vol_narrative_does_not_requote_the_surface_section():
+    """2026-10-16: the morning page printed _narrative_surface twice -- once in the catalyst
+    paragraph, once in "Surface, smile & term structure" a few screens down."""
+    from backend.report_policy import _narrative_surface
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':.2}})
+    blocks['surface']['term_0dte']=item({'SPY':{'iv_0dte':.22}})
+    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':.19}})
+    surface_sentence=_narrative_surface(blocks['surface'])
+    assert surface_sentence
+    assert surface_sentence not in catalyst_vol_narrative(blocks)
 
 def test_trade_volatility_scan_narrative_and_meaning_surface_tv_ranked_opportunities():
     """Leron, 2026-10-13: "which stock show the best opprotunity to go long... what are the

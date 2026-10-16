@@ -62,7 +62,7 @@ section should flow into each [other]." Every section now carries the "Section
 summary" / "What it means for the day" pair, not just the 19 originally judged
 decision-relevant; the 14 bookkeeping sections get an honest line describing
 their real role (several explicitly say "not a market read" rather than
-inventing one). `market_control`'s line additionally calls back to Today's
+inventing one). (On the HTML `/view` page the pair still appears once per block, the takeaway now inside the block's curated section -- see Reader experience.) `market_control`'s line additionally calls back to Today's
 Mission's verdict — agreeing or in tension with it — the one section with its
 own genuine bull/bear-leaning read; no other section's line claims a direction
 it doesn't actually carry. No new REQUIREMENTS fields.
@@ -71,28 +71,66 @@ Every delivered report carries its policy version and SHA-256 schema/rule hash.
 
 ## Reader experience
 
-Morning, opening and intraday reports use the same dark layout: Today's mission,
-a 30-second scoreboard, a Today vs forward table, four decision-first opening
-panels (Market story, Edge board, Biggest traps, If/then day plan), the entire
-required contract, and eleven PNG panels. HTML shows the charts beside their
-corresponding topics. The original panels and data points remain present.
-Every one of the 33 sections (`SECTION_SUMMARY_SECTIONS` in `report_policy.py`)
-has its required fields followed by a "Section summary" line (a mechanical
-recap of up to three of that section's own populated field:value pairs) and a
-"What it means for the day" line (a deterministic lookup against that
-section's own field values — never a new number, never a specific
-structure/strategy recommendation, since the trader this serves runs every
-options strategy, not credit spreads alone). For the 14 sections that are
-honestly bookkeeping or audit trail (contract_packages, entry_watches,
-candidate_analysis, position_management, trigger_accountability,
-paper_scorecard, scanner, event_study, engine_consensus, morning_comparison,
-horizon_comparison, adaptation_rules, visuals, data_integrity), that line says
-so plainly rather than forcing a trading signal onto evidence that doesn't
-carry one. Missing observations have source-specific reasons; dated
-last-known observations retain their clocks. Arbitrary model narrative is
-stored only for diagnosis and cannot introduce facts into the canonical
-rendered report — the decision-first lines above are templated code, not
-model output, and are covered by the same no-model-prose rule.
+Morning, opening and intraday reports use the same dark layout. The HTML `/view`
+page is a single pass: Today's mission, a 30-second scoreboard, a Today vs
+forward table, and the curated top-of-page sections (Decision brief, Market
+story, Options flow, Dealer positioning, Surface/smile/term structure, Expected
+move, Breadth/sectors/credit, Macro/futures, Since this morning, TradingVolatility
+top setups, Contract packages & entry watches, Candidates tracked, Position &
+trigger audit, Edge board, Biggest traps, If/then day plan), with the charts
+beside their topics. Those sections narrate 25 report blocks (`_PROMOTED_BLOCKS`
+in `full_options_report.py`, which mirrors `render_opening_html`); each of those
+blocks is rendered exactly once, never again as a card. The 9 blocks with no
+top-level home (forward_strikes, profile, paper_scorecard, scanner,
+event_study, engine_consensus, horizon_comparison, visuals, data_integrity)
+follow under one "Supporting detail" heading as `<details open>` cards. Seven
+of the eleven PNG panels are embedded by the curated sections; the other four
+appear once, on the supporting card that owns them (paper_equity_drawdown on
+paper_scorecard, volume_profile on profile, event_risk and term_structure on
+visuals). Every panel appears at most once in the document. A panel whose
+stored bytes are missing or corrupt prints a "VISUAL DELIVERY FAILED" notice
+instead of silently disappearing.
+
+Every one of the 33 sections still carries the "Section summary" / "What it
+means for the day" pair on `/view`, rendered exactly once. For the 25 promoted
+blocks the summary is the narrative paragraph of their curated section and the
+"What it means for the day" line is printed once, right after that paragraph, as
+an accent-bordered takeaway (the `.field.decision` treatment, inlined so the
+email shows it too) — never again in a second card. Where one curated section
+covers two blocks (Surface + Smile, Breadth + Sector Credit, Macro + Futures
+Context, Contract Packages + Entry Watches, Position Management + Trigger
+Accountability) it gets one combined takeaway. Market story already carries
+`market_control`'s and `gamma`'s takeaways inline (so Dealer positioning adds no
+second one) and adds `premium_selling`'s after the paragraph; `risk_on_defensive`'s
+sits under Today's mission, each horizon's under its Today vs forward row,
+`range_stall`'s under the Edge board, `event_calendar`'s under Biggest traps and
+`adaptation_rules`' under the If/then day plan. The `trade_volatility_scan`
+takeaway keeps its flat-regime tie-in ("...today's flat DEFENSIVE regime call")
+because `mission_side` and `regime_label` are threaded through. Each supporting
+card carries its own "Section summary" line (a mechanical recap of up to three of
+that section's own populated field:value pairs) and "What it means for the day"
+line (a deterministic lookup against that section's own field values — never a new
+number, never a specific structure/strategy recommendation, since the trader this
+serves runs every options strategy, not credit spreads alone). For the
+bookkeeping or audit-trail blocks (paper_scorecard, scanner, event_study,
+engine_consensus, horizon_comparison, and the promoted contract_packages,
+entry_watches, candidate_analysis, position_management, trigger_accountability,
+morning_comparison, adaptation_rules), that line says so plainly rather than
+forcing a trading signal onto evidence that doesn't carry one. `visuals` and
+`data_integrity` instead show a one-line "Status" counted from the block's own
+fields (panels delivered and verified; fields carrying a source clock, last-known,
+unavailable, producer failures) — no hashes, image dimensions or per-field
+clocks. The full per-field detail of every required field, for all 33 sections,
+remains at `/reports/{id}/data` and in the Markdown/PDF deliverables. Missing
+observations have source-specific reasons; dated last-known observations retain
+their clocks. Arbitrary model narrative is stored only for diagnosis and cannot
+introduce facts into the canonical rendered report — the decision-first lines
+above are templated code, not model output, and are covered by the same
+no-model-prose rule.
+
+No sentence is printed twice on the page: the morning "Catalyst & volatility read"
+no longer re-quotes the surface sentence, and Dealer positioning's thin-coverage
+fallback is worded differently from Market story's.
 
 ## Website and historical archive
 
@@ -457,3 +495,8 @@ Stored UTC database clocks must regain their explicit UTC offset on reads; resto
 2026-10-14: two more top-level sections promoted the same way -- "Since this morning" (markdown and HTML) surfaces _narrative_morning_comparison's existing per-symbol HOLDING/CHANGED/FIRST_REPORT regime-shift read, and "TradingVolatility top setups" surfaces _narrative_trade_volatility_scan's existing best-long/best-short/best-income setup + put/call-ratio + expected-move-trend read -- both previously only in the per-field appendix under "### Morning Comparison" and "### Trade Volatility Scan".
 
 2026-10-14: per explicit instruction to cover every narrative-builder section, the remaining five (contract_packages, entry_watches, candidate_analysis, position_management, trigger_accountability -- each tagged in _SECTION_ROLE as execution/audit detail, not an independent signal) are now also promoted to three top-level sections: "Contract packages & entry watches" (combines _narrative_contract_packages's qualified-structure read with _narrative_entry_watches's per-setup trigger-lifecycle read), "Candidates tracked" (_narrative_candidate_analysis's symbol-roster + qualified-package-count read), and "Position & trigger audit" (combines _narrative_position_management's open-paper-risk read with _narrative_trigger_accountability's registered/verified-trigger + loss-cluster read). Their _SECTION_ROLE tags are unchanged -- these stay execution/audit detail, now simply visible earlier in the report instead of only in the per-field appendix. No new producer fields, no contract version change.
+
+2026-10-16: the HTML `/view` page rendered every report block twice -- once in the curated top-of-page sections (`render_opening_html`) and again as one card per block, both built by the same `_narrative_*` functions, so 25 of 34 cards reprinted their narrative verbatim and 7 chart panels were embedded twice (live report 031c51b0ca214b8caec06ae9: 18 `<img>` for 11 unique panels, 56% of the words a reprint). `report_view` now skips the 25 blocks in `_PROMOTED_BLOCKS` (mirrors `render_opening_html`) and renders cards only for the 9 blocks with no top-level home, under a "Supporting detail" heading; each chart appears once; `visuals` and `data_integrity` show a counted one-line Status instead of the sha256/dimension/source-clock dump. The "What it means for the day" requirement is preserved, not removed: `render_opening_html` now prints each promoted block's `section_meaning` once, right after its narrative (one combined line for two-block sections), so the pair appears once per block instead of twice. The morning Catalyst paragraph no longer re-quotes the surface sentence and Dealer positioning's thin-coverage fallback no longer equals Market story's. The Markdown and PDF renderers are unchanged and `/reports/{id}/data` still carries every field. `<details open>` and the 1160px page width are unchanged. No new producer fields, no contract version change.
+
+2026-10-16 (same change, Edge board): the Edge board Trigger cell shows the trigger only -- each registered setup's entry condition with its levels and confirming bars, the invalidation level, and the expiration preference -- instead of dumping the whole stored setup record (catalyst, main risks, profit-taking framework, thesis prose belong to the plan sections). Strikes and expirations of qualified packages stay in the Evidence cell. Day, near-forward and forward usually carry the identical trigger list: the first row prints it, later rows read "Same trigger as #N." (likewise Evidence). The scoreboard's "No-trade condition" row is one line naming the top-ranked row ("Top-ranked: ... see Edge board #N") rather than restating that row. Ranking and order are unchanged. Also: Market story prints the shared forward-volatility sentence once instead of once per symbol, the three Today-vs-forward rows print an identical takeaway once, and the "updated ... age" meta line shows a real middle dot instead of a literal "&middot;". No new producer fields, no contract version change.
+
