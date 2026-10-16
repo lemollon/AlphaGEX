@@ -824,6 +824,11 @@ export default function SqueezePage() {
           const cal = outlook.calendar || {};
           const pColor = PROXIMITY_COLOR[outlook.proximity] || GREY;
           const gammaPctNow = data.gamma_pct != null ? Math.min(100, Math.max(0, data.gamma_pct * 100)) : null;
+          // The gauge tick above was pinned to the 15:05 capture all session —
+          // the only thing that moved was the text box below it. This is the
+          // same live chain pull (polled every 60s), plotted on the bar too.
+          const livePctRaw = intraday?.live_outlook?.pct;
+          const livePctNow = livePctRaw != null ? Math.min(100, Math.max(0, livePctRaw * 100)) : null;
           const fuelPct = outlook.fuel != null ? Math.abs(outlook.fuel) * 100 : null;
           const fuelTopDecile = fuelPct != null && Math.abs(outlook.fuel) >= FUEL_TOP_DECILE;
 
@@ -918,7 +923,14 @@ export default function SqueezePage() {
                 <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '20%', background: AMBER, opacity: 0.18 }} />
                 <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: '20%', background: GREEN, opacity: 0.18 }} />
                 {gammaPctNow != null && (
-                  <div style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
+                  <div title="15:05 CT capture" style={{ position: 'absolute', left: `calc(${gammaPctNow.toFixed(1)}% - 1px)`, top: -3, bottom: -3, width: 2, background: '#e6e9f2' }} />
+                )}
+                {livePctNow != null && (
+                  <div title="this minute's reading — recomputed every 60s" style={{
+                    position: 'absolute', left: `calc(${livePctNow.toFixed(1)}% - 4px)`, top: 6,
+                    width: 8, height: 8, borderRadius: '50%', background: LIVE,
+                    boxShadow: '0 0 0 2px #0e1220',
+                  }} />
                 )}
               </div>
               {/* The moving "current" label gets its OWN row under the bar and
@@ -932,10 +944,24 @@ export default function SqueezePage() {
                     left: `${Math.min(92, Math.max(8, gammaPctNow)).toFixed(1)}%`,
                     transform: 'translateX(-50%)', whiteSpace: 'nowrap',
                   }}>
-                    current {pct(data.gamma_pct)}
+                    15:05 {pct(data.gamma_pct)}
                   </span>
                 )}
               </div>
+              {/* Second row, only when the live chain has diverged enough from
+                  the 15:05 capture to be worth a label — otherwise the dot on
+                  the bar already says "same place". */}
+              {livePctNow != null && Math.abs(livePctNow - (gammaPctNow ?? livePctNow)) >= 4 && (
+                <div style={{ position: 'relative', marginTop: 2, height: 18, overflow: 'hidden' }}>
+                  <span style={{
+                    ...S.small, color: LIVE, fontWeight: 700, position: 'absolute',
+                    left: `${Math.min(92, Math.max(8, livePctNow)).toFixed(1)}%`,
+                    transform: 'translateX(-50%)', whiteSpace: 'nowrap',
+                  }}>
+                    live {pct(livePctRaw)}
+                  </span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
                 <span style={S.small}>oversold ≤ {signedBn(outlook.oversold_trigger_b)}</span>
                 <span style={S.small}>overbought ≥ {signedBn(outlook.overbought_trigger_b)}</span>

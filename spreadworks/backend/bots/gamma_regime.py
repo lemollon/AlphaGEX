@@ -582,6 +582,11 @@ def squeeze_outlook(engine: Engine, asof: date,
     else:
         gp = gamma_percentile(engine, asof, window)
         pct = gp.get("pct")
+    # Exposed so the gauge on the page can plot THIS reading's position, not
+    # just derive a verdict from it. Previously computed and discarded here —
+    # the frontend tick mark had nothing live to plot against, so it stayed
+    # pinned to the 15:05 capture all session even while this box updated.
+    out["pct"] = pct
     if pct is not None and len(rows) > 5:
         prior5 = [float(r[1]) for r in rows[5:]][:window]
         if len(prior5) >= 20:
