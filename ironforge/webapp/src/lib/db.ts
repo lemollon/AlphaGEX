@@ -65,6 +65,61 @@ export function botTable(bot: string, suffix: string): string {
   return `${prefix}_${suffix}`
 }
 
+/**
+ * FLAME and SPARK's closed-trade reads (equity curve, trade history,
+ * performance) must see more than `{bot}_positions`. STOKE (flame_stoke_
+ * positions) and FLINT (flint_positions) are own-table, own-arm-switch
+ * sleeves that place real orders on FLAME's (STOKE, FLINT) or SPARK's
+ * (FLINT) own accounts — see lib/stoke.ts / lib/flint.ts — but every
+ * customer-facing reader before this only ever queried `{bot}_positions`,
+ * so a real STOKE loss (-$26, 2026-10-15) was invisible on every dashboard.
+ * `flint_positions` is bot-agnostic (FLINT runs on BOTH accounts, tagged by
+ * its own `bot` column — scanner.ts's SPARK_FLINT block), so it is filtered
+ * to the caller's bot here; `flame_stoke_positions` is FLAME-only by
+ * construction and needs no filter.
+ *
+ * Returns the plain `{bot}_positions` table name, unchanged, for every bot
+ * with no sub-strategy sleeve — this never alters a query's behavior for
+ * inferno/blaze/flare/kindle/forge, or for any existing OPEN-position read.
+ *
+ * Only usable as a direct FROM target (`FROM ${livePositionsTable(bot)}`);
+ * the result is a derived table pre-aliased to the real table name, so
+ * every existing unqualified column reference and WHERE clause at the call
+ * site keeps working verbatim. Columns the sub-strategy tables don't carry
+ * (hypothetical_eod_pnl, put_short_strike, put_long_strike) come back NULL
+ * for their rows — never fabricated, same as any other optional field.
+ */
+export function livePositionsTable(bot: string): string {
+  const main = botTable(bot, 'positions')
+  const subs: Array<{ table: string; filter: string }> =
+    bot === 'flame'
+      ? [
+          { table: 'flint_positions', filter: `WHERE bot = 'flame'` },
+          { table: 'flame_stoke_positions', filter: '' },
+        ]
+      : bot === 'spark'
+        ? [{ table: 'flint_positions', filter: `WHERE bot = 'spark'` }]
+        : []
+  if (subs.length === 0) return main
+
+  const mainSelect = `SELECT position_id, ticker, expiration, status, close_reason,
+      account_type, person, open_time::timestamptz AS open_time, close_time::timestamptz AS close_time,
+      open_date, realized_pnl, contracts, total_credit, collateral_required,
+      put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+      dte_mode, hypothetical_eod_pnl
+    FROM ${main}`
+  const subSelect = (s: { table: string; filter: string }) => `SELECT
+      position_id, ticker, expiration, status, close_reason,
+      account_type, person, open_time::timestamptz AS open_time, close_time::timestamptz AS close_time,
+      open_date, realized_pnl, contracts, entry_credit AS total_credit, collateral_required,
+      NULL::numeric AS put_short_strike, NULL::numeric AS put_long_strike,
+      call_short_strike, call_long_strike,
+      '0DTE' AS dte_mode, NULL::numeric AS hypothetical_eod_pnl
+    FROM ${s.table} ${s.filter}`
+
+  return `(${[mainSelect, ...subs.map(subSelect)].join(' UNION ALL ')}) AS ${main}`
+}
+
 /** Get the heartbeat bot_name for this display bot. */
 export function heartbeatName(bot: string): string {
   return HEARTBEAT_MAP[bot] || bot.toUpperCase()

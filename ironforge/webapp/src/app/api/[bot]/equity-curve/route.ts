@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, validateBot, dteMode } from '@/lib/db'
 import { scopedStartingCapital } from '@/lib/account-basis'
 import {
   getIcMarkToMarket,
@@ -104,7 +104,7 @@ export async function GET(
           realized_pnl,
           ${includeArchived ? archivedPredicate : 'FALSE'} AS is_archived,
           SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl${hypoSelect}
-        FROM ${botTable(bot, 'positions')}
+        FROM ${livePositionsTable(bot)}
         WHERE ${curveStatusFilter}
           AND realized_pnl IS NOT NULL
           AND close_time IS NOT NULL
@@ -129,7 +129,7 @@ export async function GET(
                     COUNT(*)                       AS trades,
                     MIN(close_time)                AS first_close,
                     MAX(close_time)                AS last_close
-             FROM ${botTable(bot, 'positions')}
+             FROM ${livePositionsTable(bot)}
              WHERE ${archivedPredicate}
                AND realized_pnl IS NOT NULL
                AND close_time IS NOT NULL

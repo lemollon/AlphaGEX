@@ -1,4 +1,4 @@
-import { dbQuery, botTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, int, escapeSql, dteMode, CT_TODAY } from '@/lib/db'
 import { scopeFilter, resolveAccountMode, type LiveBot } from './viewer'
 import { LIVE_BOT_LABEL, LIVE_BOT_ACCENT } from './bots'
 import { getSandboxAccountBalances } from '@/lib/tradier'
@@ -147,7 +147,7 @@ async function loadBot(
       `SELECT COUNT(*) AS trades,
               COUNT(*) FILTER (WHERE realized_pnl > 0) AS wins,
               COALESCE(SUM(realized_pnl), 0) AS pnl
-       FROM ${botTable(bot, 'positions')} WHERE ${closed}`,
+       FROM ${livePositionsTable(bot)} WHERE ${closed}`,
     ),
     dbQuery(
       `SELECT starting_capital, buying_power, collateral_in_use
@@ -156,14 +156,14 @@ async function loadBot(
     ),
     dbQuery(
       `SELECT (close_time AT TIME ZONE 'America/Chicago')::date AS ct_date, close_time, realized_pnl
-       FROM ${botTable(bot, 'positions')} WHERE ${closed} ORDER BY close_time ASC`,
+       FROM ${livePositionsTable(bot)} WHERE ${closed} ORDER BY close_time ASC`,
     ),
     // db-kpi "Today": realized P&L for TODAY's session only — a separate sum from
     // the all-time `pnl` above, which the daily_bars/weekly/monthly windows below
     // also need their own trading-day math for, not this plain calendar date.
     dbQuery(
       `SELECT COALESCE(SUM(realized_pnl), 0) AS today_realized_pnl
-       FROM ${botTable(bot, 'positions')}
+       FROM ${livePositionsTable(bot)}
        WHERE status IN ('closed', 'expired') AND realized_pnl IS NOT NULL
          AND (close_time AT TIME ZONE 'America/Chicago')::date = ${CT_TODAY}
          ${dteFilter} ${prod}`,

@@ -27,6 +27,7 @@ vi.mock('@/lib/db', () => ({
     return []
   },
   botTable: (bot: string, suffix: string) => `${bot}_${suffix}`,
+  livePositionsTable: (bot: string) => `${bot}_positions`,
   num: (v: unknown) => (v == null || v === '' ? 0 : Number(v)),
   int: (v: unknown) => (v == null || v === '' ? 0 : parseInt(String(v), 10)),
   escapeSql: (v: string) => String(v).replace(/'/g, "''"),
