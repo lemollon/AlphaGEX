@@ -27,6 +27,7 @@ def test_create_bot_tables_creates_all_15():
 
 
 def test_create_bot_tables_seeds_config():
+    # Every bot ships enabled by default since 2026-10-16 (Leron, "unpause all bots").
     engine = create_engine("sqlite:///:memory:", future=True)
     create_bot_tables(engine)
     with engine.begin() as conn:
@@ -35,7 +36,7 @@ def test_create_bot_tables_seeds_config():
                 text(f"SELECT pt_pct, sl_pct, enabled FROM {bot}_config")
             ).fetchone()
             assert row is not None, f"{bot}_config not seeded"
-            assert row.enabled is False or row.enabled == 0
+            assert row.enabled is True or row.enabled == 1
 
 
 def test_create_bot_tables_does_not_overwrite_existing_config():

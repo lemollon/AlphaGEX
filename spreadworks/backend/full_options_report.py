@@ -1190,7 +1190,7 @@ h2{display:flex;align-items:center;gap:8px}
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
                 '</div>')
     body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
-         f'{render_opening_html(payload,inline)}{"".join(parts)}{bottom}</div>')
+         f'{render_opening_html(payload)}{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):

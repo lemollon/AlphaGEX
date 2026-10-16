@@ -51,12 +51,12 @@ def client(monkeypatch):
 
 
 def test_status_returns_basic_fields(client):
-    # FLOW ships disabled (SURGE and SURGE are enabled by default).
+    # Every bot ships enabled by default since 2026-10-16 (Leron, "unpause all bots").
     r = client.get("/api/spreadworks/bots/flow/status")
     assert r.status_code == 200
     d = r.json()
     assert d["bot"] == "flow"
-    assert d["enabled"] is False
+    assert d["enabled"] is True
     assert d["open_positions"] == 0
 
 
@@ -172,12 +172,13 @@ def test_unknown_bot_returns_404(client):
 
 
 def test_toggle_flips_enabled(client):
-    # Start from FLOW (disabled by default) so the first toggle -> True.
+    # FLOW ships enabled by default since 2026-10-16 (Leron, "unpause all bots"),
+    # so the first toggle -> False.
     r = client.post("/api/spreadworks/bots/flow/toggle")
     assert r.status_code == 200
-    assert r.json()["enabled"] is True
+    assert r.json()["enabled"] is False
     r2 = client.post("/api/spreadworks/bots/flow/toggle")
-    assert r2.json()["enabled"] is False
+    assert r2.json()["enabled"] is True
 
 
 def test_config_get_and_post(client):
@@ -613,12 +614,13 @@ def test_status_equity_mtm_includes_open_position_marks():
 # health bands surface on /fleet-stats.
 # ---------------------------------------------------------------------------
 
-def test_ebb_registered_and_ships_disabled(client):
+def test_ebb_registered_and_ships_enabled(client):
+    # Every bot ships enabled by default since 2026-10-16 (Leron, "unpause all bots").
     r = client.get("/api/spreadworks/bots")
     assert r.status_code == 200
     by_bot = {b["bot"]: b for b in r.json()["bots"]}
     assert "ebb" in by_bot
-    assert by_bot["ebb"]["enabled"] is False
+    assert by_bot["ebb"]["enabled"] is True
     assert by_bot["ebb"]["strategy"] == "bull_put_spread"
 
 
@@ -646,12 +648,13 @@ def test_ebb_fleet_stats_health_watch_on_rolling_60_drawdown(client):
 # (looser) rolling health bands surface on /fleet-stats — not EBB's.
 # ---------------------------------------------------------------------------
 
-def test_ebb_pm_registered_and_ships_disabled(client):
+def test_ebb_pm_registered_and_ships_enabled(client):
+    # Every bot ships enabled by default since 2026-10-16 (Leron, "unpause all bots").
     r = client.get("/api/spreadworks/bots")
     assert r.status_code == 200
     by_bot = {b["bot"]: b for b in r.json()["bots"]}
     assert "ebb_pm" in by_bot
-    assert by_bot["ebb_pm"]["enabled"] is False
+    assert by_bot["ebb_pm"]["enabled"] is True
     assert by_bot["ebb_pm"]["strategy"] == "bull_put_spread"
 
 
