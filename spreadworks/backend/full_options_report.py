@@ -307,7 +307,7 @@ def report_blocks(core,context,plan,runtime,paper,study,comparison,events,now):
     put('breadth','percent_above_vwap',vw if vw.get('covered') else None,source='Observed minute-bar VWAP; report-candidate sample',ts=vts)
     put('breadth','proxy_labels',{'constituent_scope':'SSGA SPY holdings','vwap_scope':vw.get('scope'),'volume_scope':breadth.get('volume_method')})
     profiles={s:context.get('profile_'+s) or {} for s in ('SPY','QQQ')}
-    for field in ('poc','vah','val','hvn','lvn','method'):
+    for field in ('poc','vah','val','hvn','lvn','vwap','method'):
         blocks['profile'][field]=merge_symbols(profiles,[field],now)
     acceptance={}
     for s,r in profiles.items():

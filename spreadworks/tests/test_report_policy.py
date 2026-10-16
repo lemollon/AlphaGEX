@@ -23,7 +23,7 @@ from backend.report_policy import (normalize_blocks, observed, policy_identity, 
                                    catalyst_vol_narrative, catalyst_vol_narrative_html,
                                    _structure_family_hint, _structure_family, _tv_structure_check,
                                    _thesis_sentence, _thesis_display_item,
-                                   _narrative_strategy)
+                                   _narrative_strategy, _price_path_read)
 
 NOW=datetime(2026,10,6,16,5,tzinfo=timezone.utc)
 
@@ -39,8 +39,8 @@ def test_schema_retains_all_legacy_fields_and_new_strategy_policy():
     # + 5 trade_volatility_scan fields (top_long_setups, top_short_setups, income_setups,
     # put_call_ratio, expected_move_trend), 2026-10-13, + tv_structure_check (day_strategy
     # only -- reuses trade_volatility_scan's existing top_long_setups/top_short_setups
-    # "structures" field, no new collector field needed), 2026-10-14.
-    assert sum(map(len,REQUIREMENTS.values()))==251
+    # "structures" field, no new collector field needed), 2026-10-14, + profile.vwap, 2026-10-16.
+    assert sum(map(len,REQUIREMENTS.values()))==252
     assert 'regime_shift' in REQUIREMENTS['morning_comparison']
     assert 'delivery_manifest' in REQUIREMENTS['visuals']
     assert all(n in REQUIREMENTS for n in ('day_strategy','near_forward_strategy','forward_strategy','horizon_comparison','adaptation_rules','data_integrity','market_control'))
@@ -496,6 +496,29 @@ def test_market_story_carries_market_control_tie_in_to_mission_call():
     story=market_story(blocks,mission_side='risk-on',regime_label=None)
     assert 'Call sellers dominate' in story
     assert 'tension with the risk-on mission call above' in story
+
+def _price_path_blocks(vwap):
+    blocks=empty_blocks()
+    blocks['profile']['val']=item({'SPY':{'val':776}})
+    blocks['profile']['vah']=item({'SPY':{'vah':780}})
+    blocks['profile']['poc']=item({'SPY':{'poc':778}})
+    blocks['profile']['vwap']=item({'SPY':{'vwap':vwap}})
+    blocks['expected_move']['reference_spot']=item({'SPY':{'spot':778}})
+    return blocks
+
+def test_price_path_read_flags_bullish_bias_when_spot_holds_above_vwap():
+    story=_price_path_read(_price_path_blocks(750), 'SPY')
+    assert 'Session VWAP is 750' in story
+    assert 'holding above it' in story and 'bullish line' in story
+
+def test_price_path_read_flags_bearish_bias_when_spot_sits_below_vwap():
+    story=_price_path_read(_price_path_blocks(810), 'SPY')
+    assert 'Session VWAP is 810' in story
+    assert 'stuck below it' in story and 'bearish line' in story
+
+def test_price_path_read_flags_no_edge_when_spot_is_glued_to_vwap():
+    story=_price_path_read(_price_path_blocks(778), 'SPY')
+    assert 'glued to it' in story and 'no intraday edge' in story
 
 def test_options_flow_story_promotes_narrative_flow_to_top_level():
     """_narrative_flow's per-symbol dominant-flow-type + $ premium + price-confirms/conflicts

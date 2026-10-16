@@ -1781,9 +1781,21 @@ def _price_path_read(blocks, sym):
     forward_bit = {"persists": "Forward flow agrees this isn't just a one-day lean — this level matters past today, too.",
                    "flips": "Forward flow disagrees, so don't assume this level holds past today."}.get(outlook)
 
+    vwap = _profile_val("vwap")
+    vwap_bit = None
+    if _num(vwap) and vwap:
+        if abs(spot - vwap) / vwap < 0.0015:
+            vwap_bit = f"Session VWAP is {vwap:g} and price is glued to it — no intraday edge from either side yet."
+        elif spot > vwap:
+            vwap_bit = f"Session VWAP is {vwap:g} and price is holding above it — the day's bullish line for intraday buyers to defend."
+        else:
+            vwap_bit = f"Session VWAP is {vwap:g} and price is stuck below it — the day's bearish line intraday sellers are leaning on."
+
     sentence = f"{sym} at {spot:g}: {verdict}."
     if conf_word:
         sentence += f" ({conf_word.title()})"
+    if vwap_bit:
+        sentence += " " + vwap_bit
     if forward_bit:
         sentence += " " + forward_bit
     return sentence

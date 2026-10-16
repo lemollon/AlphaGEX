@@ -90,6 +90,16 @@ def test_true_profile_volume_conservation_and_contiguous_value_area():
     assert result['total_volume']==300;assert sum(r['volume'] for r in result['bins'])==300
     assert result['val']<=result['poc']<=result['vah'];assert result['rejected_rows']==1
     assert 'not full session' in result['method']
+    assert result['vwap']==100.1667
+
+def test_profile_vwap_is_a_required_contract_field():
+    assert 'vwap' in REQUIREMENTS['profile']
+
+def test_profile_vwap_threads_from_producer_into_report_block():
+    context={'profile_SPY':{'poc':100,'vah':101,'val':99,'hvn':[100],'lvn':[99],
+      'vwap':100.3,'method':'m','source_timestamp':NOW.isoformat()}}
+    blocks=report.report_blocks(core(),context,{},{},ledger_empty(),{},{},[],NOW)
+    assert blocks['profile']['vwap']['value']['SPY']=={'vwap':100.3}
 
 def test_profile_restart_fetches_recent_tape_and_parses_string_millisecond_epoch(monkeypatch):
     previous={'method':'Tradier observed tape','window_end':(NOW-timedelta(hours=2)).isoformat(),'bins':[]}
@@ -531,6 +541,7 @@ def test_session_profile_checkpoint_merges_observed_bins_without_new_trades():
     assert merged['trade_count']==2;assert merged['total_volume']==150
     assert merged['window_start']==start.isoformat();assert merged['window_end']==NOW.isoformat()
     assert sum(r['volume'] for r in merged['bins'])==150
+    assert merged['vwap']==100.2167
 
 def test_fmt_value_caps_nested_per_symbol_chain_dump():
     """Real shape (evidence.observed_expiry_points): a plain field dict containing a
