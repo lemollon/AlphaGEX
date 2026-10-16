@@ -574,7 +574,9 @@ def test_dealer_positioning_story_falls_back_when_coverage_too_thin():
     top-level section must still render a plain disclosure, never an empty heading."""
     blocks=empty_blocks()
     story=dealer_positioning_story(blocks)
-    assert story=="Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+    assert story=="No per-symbol dealer breakdown this checkpoint: too little of the tape is classified."
+    # Must differ from section_meaning's thin-coverage sentence, which Market story prints.
+    assert story!=section_meaning('market_control',blocks['market_control'])
 
 def test_render_markdown_and_html_carry_the_dealer_positioning_section():
     blocks=empty_blocks()
@@ -1808,6 +1810,18 @@ def test_catalyst_vol_narrative_names_the_catalyst_and_favors_selling_premium_wh
 
     html_out=catalyst_vol_narrative_html(blocks)
     assert 'Catalyst' in html_out and 'CPI Report' in html_out
+
+def test_catalyst_vol_narrative_does_not_requote_the_surface_section():
+    """2026-10-16: the morning page printed _narrative_surface twice -- once in the catalyst
+    paragraph, once in "Surface, smile & term structure" a few screens down."""
+    from backend.report_policy import _narrative_surface
+    blocks=empty_blocks()
+    blocks['surface']['atm_iv']=item({'SPY':{'atm_iv':.2}})
+    blocks['surface']['term_0dte']=item({'SPY':{'iv_0dte':.22}})
+    blocks['surface']['term_21plus']=item({'SPY':{'iv_21_365dte':.19}})
+    surface_sentence=_narrative_surface(blocks['surface'])
+    assert surface_sentence
+    assert surface_sentence not in catalyst_vol_narrative(blocks)
 
 def test_trade_volatility_scan_narrative_and_meaning_surface_tv_ranked_opportunities():
     """Leron, 2026-10-13: "which stock show the best opprotunity to go long... what are the

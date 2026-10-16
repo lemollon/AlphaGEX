@@ -824,16 +824,11 @@ def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
              'report_blocks':blocks,'chart_urls':{}}
     _store_report(payload)
     view=report.report_view(report_id)
-    # 2026-10-16: trade_volatility_scan is narrated in the opening ("TradingVolatility top
-    # setups") and no longer has a card, so /view no longer prints its "what it means" line.
-    # The regime_label threading that line depends on (report_view -> section_meaning) is
-    # still what the Markdown renderer uses, so assert it on section_meaning directly.
-    from backend.report_policy import section_meaning,_side_label
+    # 2026-10-16: trade_volatility_scan has no card of its own any more; its takeaway (with the
+    # flat-regime tie-in) is printed once inside the opening's "TradingVolatility top setups".
     assert 'id="sec-trade-volatility-scan"' not in view
-    mission_side=_side_label(blocks['risk_on_defensive']['verdict']['value'])
-    meaning=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side,'DEFENSIVE')
-    assert 'flat DEFENSIVE regime call' in meaning
-    assert 'defensive/risk-on' not in meaning  # the old bug: both words, every time
+    assert view.count('flat DEFENSIVE regime call')==1
+    assert 'defensive/risk-on' not in view  # the old bug: both words, every time
 
 @freeze_time(NOW)
 def test_report_view_sections_are_all_open_by_default_and_keep_every_field_in_the_dom(db):
@@ -1011,6 +1006,33 @@ async def test_report_view_is_single_pass_no_narrative_or_chart_appears_twice(db
             allowed=opening.count(seen)+(0 if name in report._PROMOTED_BLOCKS else 1)
             assert view.count(seen)<=allowed,f'{name} narrative printed again outside the opening: {text_[:80]}'
     assert checked>0
+    # The takeaway survives the de-dupe: every promoted block's "What it means for the day" text
+    # is printed once, inside its own promoted section (no card carries it any more). Where two
+    # blocks share a section they get one combined takeaway; two blocks whose lines happen to
+    # be word-for-word identical collapse to one printed line.
+    from backend.report_policy import _side_label
+    blocks_=result['report_blocks']
+    mission_side=_side_label((blocks_['risk_on_defensive']['verdict'] or {}).get('value'))
+    label_=(blocks_['risk_on_defensive'].get('regime_label') or {}).get('value')
+    takeaways={n:section_meaning(n,blocks_[n],mission_side,label_ if isinstance(label_,str) else None)
+               for n in report._PROMOTED_BLOCKS}
+    assert len(takeaways)==25
+    sections=[('risk_on_defensive',),('day_strategy',),('near_forward_strategy',),('forward_strategy',),
+              ('premium_selling',),('market_control',),('gamma',),('flow',),('surface','smile'),('expected_move',),
+              ('breadth','sector_credit'),('macro','futures_context'),('morning_comparison',),
+              ('trade_volatility_scan',),('contract_packages','entry_watches'),('candidate_analysis',),
+              ('position_management','trigger_accountability'),('range_stall',),('event_calendar',),('adaptation_rules',)]
+    assert sorted(n for sec in sections for n in sec)==sorted(takeaways)
+    # One printed line per (section, distinct text): two sections may legitimately share a canned
+    # sentence (near/forward strategy), but no section prints its takeaway twice.
+    slots={}
+    for sec in sections:
+        for t in {takeaways[n] for n in sec}:
+            slots[t]=slots.get(t,0)+1
+    for t,expected in slots.items():
+        assert view.count(html.escape(t))==expected,f'takeaway printed {view.count(html.escape(t))}x, expected {expected}: {t[:80]}'
+    # 18 promoted-section takeaways + 7 supporting cards that keep the Summary/Means pair.
+    assert view.count('What it means for the day')==25
     # Charts: every panel embedded at most once (identical base64 payloads => identical image).
     sources=re.findall(r'<img[^>]*\ssrc="([^"]+)"',view)
     assert len(sources)==len(set(sources))==11

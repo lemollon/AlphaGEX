@@ -1865,7 +1865,9 @@ def dealer_positioning_story(blocks):
     that one is section_meaning's single aggregate sentence with its agree/conflict callback
     to the mission verdict; this is the richer per-symbol breakdown that previously only
     surfaced in the per-field appendix under "### Market Control". Zero new producer fields."""
-    return _narrative_market_control(blocks["market_control"]) or "Dealer positioning is unclear today; classified flow coverage is too thin to say who's in control."
+    # The fallback must NOT equal section_meaning("market_control")'s thin-coverage sentence:
+    # Market story already prints that one, and the page would say the same words twice.
+    return _narrative_market_control(blocks["market_control"]) or "No per-symbol dealer breakdown this checkpoint: too little of the tape is classified."
 
 def surface_smile_story(blocks):
     """Promotes _narrative_surface's existing per-symbol ATM IV + term-structure-shape +
@@ -2600,9 +2602,8 @@ def catalyst_vol_narrative(blocks):
     elif contained:
         bits.append(f"Price is {label.lower() if isinstance(label, str) else 'trending'} but still contained inside today's value area on the names checked.")
 
-    surface_sentence = _narrative_surface(blocks.get("surface") or {})
-    if surface_sentence:
-        bits.append(surface_sentence)
+    # No surface sentence here: the "Surface, smile & term structure" section already says it,
+    # and re-quoting _narrative_surface made the morning page repeat itself verbatim.
 
     suit_val = ((blocks.get("premium_selling") or {}).get("suitability") or {}).get("value") or {}
     rich_syms = sorted(s for s, v in suit_val.items() if v == "PREMIUM_RICH") if isinstance(suit_val, dict) else []
@@ -2643,6 +2644,23 @@ def render_opening_html(payload, images=None):
         return ('<p style="margin:10px 0"><img src="'+escape(src)+'" alt="'+escape(alt)+'" loading="lazy" '
                 'style="max-width:100%;border-radius:6px;display:block"></p>') if src else ""
     divider='<div style="margin-top:8px;padding-top:8px;border-top:1px solid #2a3341">'
+    mission_side=_side_label((blocks.get("risk_on_defensive",{}).get("verdict") or {}).get("value"))
+    regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
+    regime_label=regime_label_item.get("value") if isinstance(regime_label_item.get("value"),str) else None
+    def takeaway(*names):
+        """The block's "What it means for the day" line, printed once inside its promoted
+        section (the per-block cards that used to carry it are gone from /view). A section that
+        combines two blocks gets one combined takeaway. Inline styles mirror .field.decision so
+        the email, which has no stylesheet, shows the same accent treatment."""
+        texts=[]
+        for n in names:
+            t=section_meaning(n,blocks.get(n) or {},mission_side,regime_label)
+            if t and t not in texts:texts.append(t)
+        if not texts:return ""
+        return ('<div class="field decision" style="border-left:2px solid #3dd6c4;padding:8px 0 8px 12px;margin:8px 0;'
+                'background:rgba(61,214,196,.14);border-radius:0 8px 8px 0">'
+                '<div class="fieldname" style="color:#3dd6c4;font-size:.78rem;font-weight:600">What it means for the day</div>'
+                '<div class="fieldval">'+escape(" ".join(texts))+'</div></div>')
     def cell(name,field):return item_cell_html((blocks.get(name) or {}).get(field,{}))
     scoreboard_rows=[
         ("Regime / trend",cell("risk_on_defensive","verdict")),
@@ -2663,44 +2681,44 @@ def render_opening_html(payload, images=None):
          +(catalyst_vol_narrative_html(blocks) if payload.get("kind")=="morning" else "")
          +_what_changed_today_html(blocks)
          +"<h2>🎯 Today’s mission</h2><div>"+item_cell_html(blocks.get("risk_on_defensive",{}).get("verdict",{}))+"</div>"
+         +takeaway("risk_on_defensive")+
          "<p>Everything below supports or challenges this call — scoreboard for the quick read, "
          "Today vs Forward for the trade thesis, Edge Board for the exact trigger and invalidation.</p>"
          +positioning_panel_html(blocks)+
          "<h2>🚦 30-second scoreboard</h2><table>"+rows+"</table><h2>Today vs forward</h2><table>")
     for name in ("day_strategy","near_forward_strategy","forward_strategy"):
         row=blocks.get(name) or {}
-        cell_html=item_cell_html(_thesis_display_item(row.get("thesis",{})))+divider+item_cell_html(row.get("status",{}))+'</div>'
+        cell_html=item_cell_html(_thesis_display_item(row.get("thesis",{})))+divider+item_cell_html(row.get("status",{}))+'</div>'+takeaway(name)
         out+="<tr><th>"+escape(name.replace("_"," "))+"</th><td>"+cell_html+"</td></tr>"
     out+="</table>"
-    html_mission_side=_side_label((blocks.get("risk_on_defensive",{}).get("verdict") or {}).get("value"))
-    html_regime_label_item=(blocks.get("risk_on_defensive") or {}).get("regime_label") or {}
-    html_regime_label=html_regime_label_item.get("value") if isinstance(html_regime_label_item.get("value"),str) else None
-    out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,html_mission_side,html_regime_label))+"</p>"
+    # Market story already carries market_control's and gamma's takeaways inline
+    # (market_story_html calls section_meaning on both), so only premium_selling's is added.
+    out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,mission_side,regime_label))+"</p>"+takeaway("premium_selling")
     out+=chart_img("gamma_expiry","Gamma exposure by expiration chart")
-    out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"
+    out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"+takeaway("flow")
     out+=chart_img("flow","Options flow chart")
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
-    out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"
+    out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"+takeaway("surface","smile")
     out+=chart_img("surface","Volatility surface chart")+chart_img("smile_term","Smile and term structure chart")
-    out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"
+    out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"+takeaway("expected_move")
     out+=chart_img("market_map","Market map chart")
-    out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"
+    out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"+takeaway("breadth","sector_credit")
     out+=chart_img("sector_credit","Sector and credit relative-strength chart")
-    out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"
-    out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"
+    out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"+takeaway("macro","futures_context")
+    out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"+takeaway("morning_comparison")
     out+=chart_img("baseline_comparison","Since-this-morning baseline comparison chart")
-    out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"
-    out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"
-    out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"
-    out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"
+    out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"+takeaway("trade_volatility_scan")
+    out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"+takeaway("contract_packages","entry_watches")
+    out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"+takeaway("candidate_analysis")
+    out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"+takeaway("position_management","trigger_accountability")
     out+='<h2>🧩 Edge board</h2><div class="tablewrap"><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
         out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
               "<td>"+escape(trigger)+"</td><td>"+escape(conflict)+"</td><td>"+escape(status)+"</td></tr>")
-    out+="</table></div>"
-    out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"
+    out+="</table></div>"+takeaway("range_stall")
+    out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"+takeaway("event_calendar")
     out+="<h2>🧮 If/then day plan</h2><table>"
     for k,item in (blocks.get("adaptation_rules") or {}).items():
         out+="<tr><th>"+escape(field_label(k))+"</th><td>"+item_cell_html(item)+"</td></tr>"
-    out+="</table>"
+    out+="</table>"+takeaway("adaptation_rules")
     return out
