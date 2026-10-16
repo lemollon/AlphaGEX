@@ -2137,7 +2137,7 @@ def test_surface_takeaway_reads_rich_premium_as_a_sellers_edge_with_the_numbers(
     assert text.startswith('Front-dated premium is rich')
     assert 'favours premium sellers over premium buyers' in text
     assert 'SPY ATM IV is 20.0% against 12.0% realized vol (1.67x)' in text
-    assert 'front end is the expensive end' in text and '0DTE IV is 40.0% against 15.0% for 21+ days out' in text
+    assert 'near-dated end is the expensive end' in text and '1-5 day ATM IV is 20.0% against 15.0% for 21+ days out' in text
 
 def test_surface_takeaway_reads_cheap_fair_and_split_premium():
     cheap=section_meaning('surface',_surface_blocks(spy=(.08,.12),qqq=(.12,.20))['surface'])
@@ -2148,12 +2148,35 @@ def test_surface_takeaway_reads_cheap_fair_and_split_premium():
     assert 'disagree on who has the edge' in split and "SPY premium reads rich (sellers' edge)" in split
 
 def test_surface_takeaway_curve_back_end_and_missing_realized():
-    back=section_meaning('surface',_surface_blocks(near=(.10,.12),far=(.20,.25))['surface'])
-    assert 'back is pricier than the front' in back
+    back=section_meaning('surface',_surface_blocks(spy=(.10,.12),qqq=(.12,.12),far=(.20,.25))['surface'])
+    assert 'back carries more premium than the near-dated end' in back
     blocks=_surface_blocks()
     blocks['surface']['iv_vs_realized']={'status':'unavailable','reason':'No source observation'}
     text=section_meaning('surface',blocks['surface'])
     assert "can't be called" in text and 'favours' not in text
+
+def test_surface_takeaway_never_uses_a_same_session_0dte_iv_as_the_front_of_the_curve():
+    """2026-10-16: on the real 3:00 PM CT report SPY's 0DTE IV was 89.3% against 14.7% for 21+
+    days -- an expiry artifact -- and the section said "no edge" and "the front end is the
+    expensive end" in one paragraph. The 0DTE contract expires at today's close and the reading
+    was taken before it, so it must not drive the curve claim, the reason must be stated, and the
+    lead and curve sentences must agree."""
+    blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
+    late=(datetime(2026,10,6,19,59,tzinfo=timezone.utc)).isoformat()  # 2:59 PM CT, one minute before expiry
+    blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=late)
+    text=section_meaning('surface',blocks['surface'])
+    assert 'front end is the expensive end' not in text and 'near-dated end is the expensive end' not in text
+    assert '89.3%' not in text and '117.1%' not in text
+    assert "expires at today's 3:00 PM CT close, 1 minute after this reading"
+    assert "has already reached its expiry" not in text in text
+    assert 'expiry artifact, not a price comparable with the longer tenors' in text
+    assert 'neither sellers nor buyers an edge' in text and 'nothing near-dated priced as a fear premium' in text
+    # No second tenor left: say so rather than reaching back for the degenerate number.
+    only0=empty_blocks()
+    only0['surface']['term_0dte']=blocks['surface']['term_0dte']
+    only0['surface']['iv_vs_realized']=blocks['surface']['iv_vs_realized']
+    thin=section_meaning('surface',only0['surface'])
+    assert "There isn't enough of the curve left to call which end is richer." in thin and '89.3%' not in thin
 
 def test_surface_takeaway_says_so_plainly_when_fields_are_empty():
     text=section_meaning('surface',empty_blocks()['surface'])

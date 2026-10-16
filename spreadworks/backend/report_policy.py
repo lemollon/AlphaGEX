@@ -1537,7 +1537,8 @@ def _surface_takeaway(block):
         if _num(iv) and _num(rv) and rv > 0:
             ratio = iv / rv
             prem.append((sym, iv, rv, ratio, "sellers" if ratio >= 1.10 else "buyers" if ratio < 0.90 else None))
-        near = (near_v.get(sym) or {}).get("iv_0dte") if isinstance(near_v.get(sym), dict) else None
+        # The front leg of the curve is the 1-5 day tenor (atm_iv), never term_0dte: see below.
+        near = atm_row.get("atm_iv")
         far = (far_v.get(sym) or {}).get("iv_21_365dte") if isinstance(far_v.get(sym), dict) else None
         if _num(near) and _num(far) and far > 0:
             curve.append((sym, near, far, "front" if near > far * 1.15 else "back" if near < far * 0.9 else "flat"))
@@ -1558,18 +1559,48 @@ def _surface_takeaway(block):
         parts.append("The proof: " + "; ".join(f"{p[0]} ATM IV is {pct(p[1])} against {pct(p[2])} realized vol ({p[3]:.2f}x)" for p in prem) + ".")
     else:
         parts.append("The realized-vol comparison is unavailable, so whether front-dated premium is rich or cheap against the tape can't be called.")
+    # 2026-10-16: a 0DTE contract's implied vol blows up as its time to expiry collapses (89% on SPY
+    # minutes before the close), so it is an expiry artifact, not a price comparable with the other
+    # tenors. That is a fact about the contract's own clock -- it expires at today's 3:00 PM CT
+    # close and the reading was taken before that -- not a threshold, so term_0dte is never the
+    # front leg of the curve and the reason is stated instead of silently dropping it.
+    zero = [s for s in ("SPY", "QQQ") if isinstance(near_v.get(s), dict) and _num(near_v[s].get("iv_0dte"))]
+    if zero:
+        item = block.get("term_0dte") or {}
+        try:
+            seen = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
+            close = seen.replace(hour=15, minute=0, second=0, microsecond=0)
+            secs = (close - seen).total_seconds()
+            mins = int(secs // 60) if secs >= 60 else (0 if secs > 0 else -1)
+        except (ValueError, TypeError):
+            mins = None
+        if mins is None:
+            when = "its reading carries no usable clock"
+        elif mins >= 0:
+            when = ("the 0DTE contract expires at today's 3:00 PM CT close, "
+                    + ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120 else f"{mins // 60} hours") + " after this reading")
+        else:
+            when = "the 0DTE contract has already reached its expiry"
+        parts.append(f"The 0DTE reading is left out of the curve: {when}, so its implied vol is an expiry artifact, not a price comparable with the longer tenors.")
     if curve:
         shapes = {c[3] for c in curve}
-        nums = "; ".join(f"{c[0]}'s 0DTE IV is {pct(c[1])} against {pct(c[2])} for 21+ days out" for c in curve)
+        lead_side = ({p[4] for p in prem} or {"?"})
+        nums = "; ".join(f"{c[0]}'s 1-5 day ATM IV is {pct(c[1])} against {pct(c[2])} for 21+ days out" for c in curve)
         if shapes == {"front"}:
-            parts.append(f"Along the curve the front end is the expensive end ({nums}) — the premium is concentrated in the near-dated contracts, and the back of the curve is the cheaper place to own optionality.")
+            tail = ""
+            if lead_side == {"buyers"}:
+                tail = " Cheap against the tape, but still the pricey end of the curve."
+            parts.append(f"Along the curve the near-dated end is the expensive end ({nums}), so the premium is concentrated in the short tenors and the back is the cheaper place to own optionality.{tail}")
         elif shapes == {"back"}:
-            parts.append(f"Along the curve the back is pricier than the front ({nums}) — near-dated optionality is the cheaper end and the extra premium sits further out.")
+            tail = " The richness is against the tape, not against the back of the curve." if lead_side == {"sellers"} else ""
+            parts.append(f"Along the curve the back carries more premium than the near-dated end ({nums}) — an ordinary upward-sloping shape, with nothing near-dated priced as a fear premium.{tail}")
         elif shapes == {"flat"}:
             parts.append(f"Along the curve nothing stands out ({nums}) — no end of it is clearly richer than the other.")
         else:
             names = {"front": "inverted", "back": "upward-sloping", "flat": "flat"}
             parts.append("The curve is not telling one story: " + "; ".join(f"{c[0]}'s is {names[c[3]]}" for c in curve) + f" ({nums}).")
+    elif zero or prem:
+        parts.append("There isn't enough of the curve left to call which end is richer.")
     parts.append("Skew, just below, shows which side of the strike range is paying that premium.")
     return " ".join(parts)
 
