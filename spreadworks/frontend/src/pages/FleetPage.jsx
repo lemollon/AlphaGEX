@@ -108,7 +108,11 @@ export default function FleetPage() {
   const { isOpen } = useMarketHours();
   const [filter, setFilter] = useState('all');
   const [tickerFilter, setTickerFilter] = useState('all');
-  const [sort, setSort] = useState('balance');
+  // Default to Total P&L, highest to lowest -- most-profitable bot first
+  // after the pinned CINDER/MONARCH-A/MONARCH-B. `visible` below is a
+  // useMemo keyed on `rows`, which useFleet() repolls every 15s, so this
+  // reorders live as totals change, no extra wiring needed.
+  const [sort, setSort] = useState('total');
   const [query, setQuery] = useState('');
 
   // Derived per-bot numbers, computed once so the cards, the sort and the
