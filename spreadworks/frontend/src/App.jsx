@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
-import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, ActivitySquare, LocateFixed, Newspaper } from 'lucide-react';
+import { Layers, BarChart3, Activity, PanelLeftClose, PanelLeftOpen, ZoomIn, ZoomOut, Cpu, Zap, Crosshair, Ruler, Target, Newspaper } from 'lucide-react';
 import StrategyPanel from './components/StrategyPanel';
 import UpdateBanner from './components/UpdateBanner';
 import ChartArea from './components/ChartArea';
@@ -198,11 +198,12 @@ function NavBar() {
           <RouteBtn to="/bots"            icon={<Cpu size={14} />}  label="Bots" />
           <RouteBtn to="/squeeze"         icon={<Zap size={14} />} label="Squeeze" />
           <RouteBtn to="/squeeze-hunt"            icon={<Crosshair size={14} />} label="Squeeze Hunt" />
-          <RouteBtn to="/talon"           icon={<LocateFixed size={14} />} label="Talon" />
           <RouteBtn to="/wall-scanner"     icon={<Ruler size={14} />} label="Wall Scanner" />
           <RouteBtn to="/opportunity"      icon={<Target size={14} />} label="Opportunity" />
-          <RouteBtn to="/reflex"           icon={<ActivitySquare size={14} />} label="Reflex" />
           <RouteBtn to="/market-update"    icon={<Newspaper size={14} />} label="Market Update" />
+          {/* Talon/Reflex are reached via their Bot Fleet cards, not the top
+              nav (removed 2026-10-16 per Leron) -- /talon and /reflex routes
+              below still work, just unlisted here. */}
         </nav>
       </div>
 
