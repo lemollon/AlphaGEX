@@ -2157,26 +2157,37 @@ def test_surface_takeaway_curve_back_end_and_missing_realized():
 
 def test_surface_takeaway_never_uses_a_same_session_0dte_iv_as_the_front_of_the_curve():
     """2026-10-16: on the real 3:00 PM CT report SPY's 0DTE IV was 89.3% against 14.7% for 21+
-    days -- an expiry artifact -- and the section said "no edge" and "the front end is the
-    expensive end" in one paragraph. The 0DTE contract expires at today's close and the reading
-    was taken before it, so it must not drive the curve claim, the reason must be stated, and the
-    lead and curve sentences must agree."""
-    blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
-    late=(datetime(2026,10,6,19,59,tzinfo=timezone.utc)).isoformat()  # 2:59 PM CT, one minute before expiry
-    blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=late)
-    text=section_meaning('surface',blocks['surface'])
-    assert 'front end is the expensive end' not in text and 'near-dated end is the expensive end' not in text
-    assert '89.3%' not in text and '117.1%' not in text
-    assert "expires at today's 3:00 PM CT close, 1 minute after this reading"
-    assert "has already reached its expiry" not in text in text
-    assert 'expiry artifact, not a price comparable with the longer tenors' in text
-    assert 'neither sellers nor buyers an edge' in text and 'nothing near-dated priced as a fear premium' in text
-    # No second tenor left: say so rather than reaching back for the degenerate number.
+    days and the section said "no edge" and "the front end is the expensive end" in one paragraph.
+    0DTE IV is a real price at any hour, so it stays on the page as its own data point with its
+    time to the close attached, but it never drives the term-structure verdict, which is always
+    1-5 day vs 21+ day. Same shape at 2:59 PM and at 9:00 AM."""
+    def surface_text(ts):
+        blocks=_surface_blocks(spy=(.109,.121),qqq=(.185,.179),near=(.893,1.171),far=(.147,.228))
+        blocks['surface']['term_0dte']=dict(blocks['surface']['term_0dte'],source_timestamp=ts.isoformat())
+        return blocks,section_meaning('surface',blocks['surface'])
+    for ts,label in ((datetime(2026,10,6,19,59,tzinfo=timezone.utc),'1 minute to the close'),   # 2:59 PM CT
+                     (datetime(2026,10,6,14,0,tzinfo=timezone.utc),'6 hours to the close'),       # 9:00 AM CT
+                     (datetime(2026,10,6,19,59,50,tzinfo=timezone.utc),'under a minute to the close')):
+        blocks,text=surface_text(ts)
+        assert 'expensive end' not in text
+        assert 'SPY 0DTE IV is 89.3%' in text and 'QQQ 0DTE IV is 117.1%' in text
+        assert f'(with {label})' in text
+        assert 'separate data point, not a leg of the curve comparison' in text
+        assert 'neither sellers nor buyers an edge' in text and 'nothing near-dated priced as a fear premium' in text
+        assert "1-5 day ATM IV is 10.9% against 14.7% for 21+ days out" in text
+    # A reading carried over from the previous session (e.g. a morning report) says so by date.
+    blocks,text=surface_text(datetime(2026,10,5,20,0,tzinfo=timezone.utc))
+    assert '(a reading taken after the Oct 5 3:00 PM CT close)' in text and 'expensive end' not in text
+    # Unusable clock: the number still shows, labelled as lacking a time to expiry.
+    blocks,text=surface_text(datetime(2026,10,6,19,59,tzinfo=timezone.utc))
+    blocks['surface']['term_0dte']['source_timestamp']='not a time'
+    assert '(time to expiry unavailable)' in section_meaning('surface',blocks['surface'])
+    # No second tenor left: say so rather than letting 0DTE stand in for the curve.
     only0=empty_blocks()
     only0['surface']['term_0dte']=blocks['surface']['term_0dte']
     only0['surface']['iv_vs_realized']=blocks['surface']['iv_vs_realized']
     thin=section_meaning('surface',only0['surface'])
-    assert "There isn't enough of the curve left to call which end is richer." in thin and '89.3%' not in thin
+    assert "There isn't enough of the curve left to call which end is richer." in thin and 'expensive end' not in thin
 
 def test_surface_takeaway_says_so_plainly_when_fields_are_empty():
     text=section_meaning('surface',empty_blocks()['surface'])

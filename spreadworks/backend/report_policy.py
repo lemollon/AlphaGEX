@@ -1559,29 +1559,29 @@ def _surface_takeaway(block):
         parts.append("The proof: " + "; ".join(f"{p[0]} ATM IV is {pct(p[1])} against {pct(p[2])} realized vol ({p[3]:.2f}x)" for p in prem) + ".")
     else:
         parts.append("The realized-vol comparison is unavailable, so whether front-dated premium is rich or cheap against the tape can't be called.")
-    # 2026-10-16: a 0DTE contract's implied vol blows up as its time to expiry collapses (89% on SPY
-    # minutes before the close), so it is an expiry artifact, not a price comparable with the other
-    # tenors. That is a fact about the contract's own clock -- it expires at today's 3:00 PM CT
-    # close and the reading was taken before that -- not a threshold, so term_0dte is never the
-    # front leg of the curve and the reason is stated instead of silently dropping it.
+    # 2026-10-16: 0DTE IV is a real, tradeable price at any hour, so it stays on the page as its own
+    # data point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
+    # late-session number self-explanatory). It is never a leg of the term-structure comparison
+    # above/below -- the two legs span different horizons -- so it cannot drive the rich/cheap call.
     zero = [s for s in ("SPY", "QQQ") if isinstance(near_v.get(s), dict) and _num(near_v[s].get("iv_0dte"))]
     if zero:
         item = block.get("term_0dte") or {}
         try:
             seen = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
-            close = seen.replace(hour=15, minute=0, second=0, microsecond=0)
-            secs = (close - seen).total_seconds()
+            secs = (seen.replace(hour=15, minute=0, second=0, microsecond=0) - seen).total_seconds()
             mins = int(secs // 60) if secs >= 60 else (0 if secs > 0 else -1)
         except (ValueError, TypeError):
             mins = None
         if mins is None:
-            when = "its reading carries no usable clock"
-        elif mins >= 0:
-            when = ("the 0DTE contract expires at today's 3:00 PM CT close, "
-                    + ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120 else f"{mins // 60} hours") + " after this reading")
+            left = "time to expiry unavailable"
+        elif mins < 0:
+            left = f"a reading taken after the {seen.strftime('%b')} {seen.day} 3:00 PM CT close"
         else:
-            when = "the 0DTE contract has already reached its expiry"
-        parts.append(f"The 0DTE reading is left out of the curve: {when}, so its implied vol is an expiry artifact, not a price comparable with the longer tenors.")
+            left = ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120
+                    else f"{mins // 60} hours") + " to the close"
+            left = "with " + left
+        parts.append("On its own, " + "; ".join(f"{s} 0DTE IV is {pct(near_v[s]['iv_0dte'])}" for s in zero)
+                     + f" ({left}); that is a separate data point, not a leg of the curve comparison.")
     if curve:
         shapes = {c[3] for c in curve}
         lead_side = ({p[4] for p in prem} or {"?"})
