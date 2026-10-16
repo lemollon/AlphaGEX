@@ -1515,7 +1515,29 @@ def _entry_watches_takeaway(block):
         text += f" {_join_syms(dead)} {'is' if len(dead) == 1 else 'are'} already invalidated or expired — that plan is off."
     if unclear:
         text += f" Stage is unclear for {_join_syms(unclear)} this checkpoint."
+    stale = _last_known(block, "trigger")
+    if stale:
+        text = f"These are {stale}, not live ones. " + text
     return text + " The table shows the level that activates each one and the level that kills it."
+
+def _last_known(block, *fields):
+    """REPORT_REQUIREMENTS.md (refresh-first): dated last-known observations retain their clocks.
+    When any listed field is status 'historical', returns 'last-known readings from <date>' using
+    the dates already on those items (CT); None when every listed field is live/absent. A
+    historical item with no parseable clock says so rather than inventing a date."""
+    dates = []
+    for f in fields:
+        item = block.get(f) or {}
+        if item.get("status") != "historical":
+            continue
+        try:
+            d = datetime.fromisoformat(str(item.get("source_timestamp")).replace("Z", "+00:00")).astimezone(CT)
+            label = f"{d.strftime('%b')} {d.day}"
+        except (ValueError, TypeError):
+            label = "an unknown date"
+        if label not in dates:
+            dates.append(label)
+    return ("last-known readings from " + " and ".join(dates)) if dates else None
 
 def _surface_takeaway(block):
     """What the vol surface means today: is front-dated premium rich or cheap against what
@@ -1545,17 +1567,21 @@ def _surface_takeaway(block):
     if not prem and not curve:
         return "Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today."
     parts = []
+    stale_prem = _last_known(block, "atm_iv", "iv_vs_realized")
+    stale_curve = _last_known(block, "atm_iv", "term_21plus")
+    stale_zero = _last_known(block, "term_0dte")
     if prem:
         sides = {p[4] for p in prem}
         if sides == {"sellers"}:
-            parts.append("Front-dated premium is rich against what the tape is actually delivering, so today favours premium sellers over premium buyers.")
+            lead = "front-dated premium is rich against what the tape is actually delivering, so today favours premium sellers over premium buyers."
         elif sides == {"buyers"}:
-            parts.append("Front-dated premium is cheap against what the tape is actually delivering, so today favours premium buyers over premium sellers.")
+            lead = "front-dated premium is cheap against what the tape is actually delivering, so today favours premium buyers over premium sellers."
         elif sides == {None}:
-            parts.append("Front-dated premium is priced close to what the tape is actually delivering, so price alone gives neither sellers nor buyers an edge today.")
+            lead = "front-dated premium is priced close to what the tape is actually delivering, so price alone gives neither sellers nor buyers an edge today."
         else:
             label = {"sellers": "rich (sellers' edge)", "buyers": "cheap (buyers' edge)", None: "fairly priced (no edge)"}
-            parts.append("The indexes disagree on who has the edge: " + "; ".join(f"{p[0]} premium reads {label[p[4]]}" for p in prem) + ".")
+            lead = "the indexes disagree on who has the edge: " + "; ".join(f"{p[0]} premium reads {label[p[4]]}" for p in prem) + "."
+        parts.append((f"On {stale_prem}, " + lead) if stale_prem else lead[0].upper() + lead[1:])
         parts.append("The proof: " + "; ".join(f"{p[0]} ATM IV is {pct(p[1])} against {pct(p[2])} realized vol ({p[3]:.2f}x)" for p in prem) + ".")
     else:
         parts.append("The realized-vol comparison is unavailable, so whether front-dated premium is rich or cheap against the tape can't be called.")
@@ -1580,25 +1606,26 @@ def _surface_takeaway(block):
             left = ("under a minute" if mins == 0 else "1 minute" if mins == 1 else f"{mins} minutes" if mins < 120
                     else f"{mins // 60} hours") + " to the close"
             left = "with " + left
-        parts.append("On its own, " + "; ".join(f"{s} 0DTE IV is {pct(near_v[s]['iv_0dte'])}" for s in zero)
+        parts.append("On its own" + (f", on a {stale_zero.replace('readings', 'reading')}," if stale_zero else ",") + " " + "; ".join(f"{s} 0DTE IV is {pct(near_v[s]['iv_0dte'])}" for s in zero)
                      + f" ({left}); that is a separate data point, not a leg of the curve comparison.")
     if curve:
         shapes = {c[3] for c in curve}
         lead_side = ({p[4] for p in prem} or {"?"})
         nums = "; ".join(f"{c[0]}'s 1-5 day ATM IV is {pct(c[1])} against {pct(c[2])} for 21+ days out" for c in curve)
+        along = "Along the curve" + (f", on {stale_curve}," if stale_curve else "")
         if shapes == {"front"}:
             tail = ""
             if lead_side == {"buyers"}:
                 tail = " Cheap against the tape, but still the pricey end of the curve."
-            parts.append(f"Along the curve the near-dated end is the expensive end ({nums}), so the premium is concentrated in the short tenors and the back is the cheaper place to own optionality.{tail}")
+            parts.append(f"{along} the near-dated end is the expensive end ({nums}), so the premium is concentrated in the short tenors and the back is the cheaper place to own optionality.{tail}")
         elif shapes == {"back"}:
             tail = " The richness is against the tape, not against the back of the curve." if lead_side == {"sellers"} else ""
-            parts.append(f"Along the curve the back carries more premium than the near-dated end ({nums}) — an ordinary upward-sloping shape, with nothing near-dated priced as a fear premium.{tail}")
+            parts.append(f"{along} the back carries more premium than the near-dated end ({nums}) — an ordinary upward-sloping shape, with nothing near-dated priced as a fear premium.{tail}")
         elif shapes == {"flat"}:
-            parts.append(f"Along the curve nothing stands out ({nums}) — no end of it is clearly richer than the other.")
+            parts.append(f"{along} nothing stands out ({nums}) — no end of it is clearly richer than the other.")
         else:
             names = {"front": "inverted", "back": "upward-sloping", "flat": "flat"}
-            parts.append("The curve is not telling one story: " + "; ".join(f"{c[0]}'s is {names[c[3]]}" for c in curve) + f" ({nums}).")
+            parts.append("The curve is not telling one story" + (f", on {stale_curve}" if stale_curve else "") + ": " + "; ".join(f"{c[0]}'s is {names[c[3]]}" for c in curve) + f" ({nums}).")
     elif zero or prem:
         parts.append("There isn't enough of the curve left to call which end is richer.")
     parts.append("Skew, just below, shows which side of the strike range is paying that premium.")
@@ -1646,7 +1673,9 @@ def _breadth_takeaway(block, regime_label=None):
     implication = {"constructive": "A move in the index has the rest of the market behind it.",
                    "weak": "A move in the index has less of the market behind it.",
                    "mixed": "With no broad lean, index direction deserves less trust than usual today."}[lean]
-    return f"{tie} Behind that: {', '.join(bits)}. {implication}"
+    stale = _last_known(block, "advance_decline", "up_down_volume", "new_highs_lows")
+    prefix = f"These are {stale}, not live ones. " if stale else ""
+    return f"{prefix}{tie} Behind that: {', '.join(bits)}. {implication}"
 
 def section_meaning(name, block, mission_side=None, regime_label=None):
     """Deterministic "what it means for the day" line — a lookup on the section's own

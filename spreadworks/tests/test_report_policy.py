@@ -2189,6 +2189,29 @@ def test_surface_takeaway_never_uses_a_same_session_0dte_iv_as_the_front_of_the_
     thin=section_meaning('surface',only0['surface'])
     assert "There isn't enough of the curve left to call which end is richer." in thin and 'expensive end' not in thin
 
+def test_surface_breadth_and_entry_watch_takeaways_label_historical_fields_with_their_date():
+    """REPORT_REQUIREMENTS.md: dated last-known observations retain their clocks. A takeaway that
+    prints numbers from status 'historical' fields (e.g. a pre-open report carrying yesterday's
+    surface) must say so inline with the observation date; live fields must not carry the marker."""
+    stamp=datetime(2026,10,5,20,0,tzinfo=timezone.utc).isoformat()
+    def stale(block):
+        for f,v in block.items():
+            if v.get('status')!='unavailable':block[f]=dict(v,status='historical',source_timestamp=stamp)
+        return block
+    live=_surface_blocks()['surface']
+    assert 'last-known' not in section_meaning('surface',live)
+    old=section_meaning('surface',stale(_surface_blocks()['surface']))
+    assert old.startswith('On last-known readings from Oct 5, front-dated premium is priced close')
+    assert 'Along the curve, on last-known readings from Oct 5, the back carries more premium' in old
+    assert 'on a last-known reading from Oct 5, SPY 0DTE IV is' in old
+    blocks=_breadth_blocks(150,350,ratio=.5,highs=2,lows=40)['breadth']
+    assert 'last-known' not in section_meaning('breadth',blocks,None,'RISK-ON')
+    assert section_meaning('breadth',stale(blocks),None,'RISK-ON').startswith('These are last-known readings from Oct 5, not live ones.')
+    watch=empty_blocks()['entry_watches']
+    watch['trigger']=item(_watch_rows())
+    assert 'last-known' not in section_meaning('entry_watches',watch)
+    assert section_meaning('entry_watches',stale(watch)).startswith('These are last-known readings from Oct 5, not live ones.')
+
 def test_surface_takeaway_says_so_plainly_when_fields_are_empty():
     text=section_meaning('surface',empty_blocks()['surface'])
     assert text=='Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today.'
