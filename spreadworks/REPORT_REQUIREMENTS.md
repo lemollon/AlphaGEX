@@ -519,6 +519,13 @@ original markdown and is listed under `errors`; the run continues. Optional `?re
 `REPORT_RERENDER_TOKEN` environment variable; `GET` stays open and writes nothing. The row's own
 `report_policy` is left exactly as published; a separate `report_markdown_rendered_policy`
 (`version` + `sha256`) records the policy that produced the current markdown.
+`POST` also refuses unless the process identifies itself as the primary service: `IS_PULL_REQUEST` must
+not be truthy and `RENDER_SERVICE_ID` must equal the `REPORT_RERENDER_SERVICE_ID` env var (set that to the
+primary service id, `srv-d6mv30f5gffc73bog9a0` for `spreadworks-backend`). Unset, blank or mismatched means
+refuse, with a reason naming what failed; a refusal touches no rows and creates no columns. **This is
+defence in depth only.** PR previews inherit the production `DATABASE_URL` and service-level env vars
+(including the token), so this does not remove the need to decide the previews-and-shared-database
+question (previews off, previews on their own database, or accept the code guard alone).
 
 ## Surface near-leg corroboration (pre-registered 2026-10-16, before implementation)
 The Surface section's rich/cheap and curve-shape calls use `surface.atm_iv` (the nearest contract

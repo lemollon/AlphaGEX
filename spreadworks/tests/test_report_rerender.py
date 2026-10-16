@@ -153,7 +153,7 @@ def backup_column_absent(eng):
 
 
 def test_routes_dry_run_is_get_and_apply_is_post(db, monkeypatch):
-    monkeypatch.setenv('REPORT_RERENDER_TOKEN', 's3cret')
+    primary(monkeypatch)
     json_of = lambda r: json.loads(r.body)
     dry = json_of(report.rerender_archive_dry_run(report_id=None))
     assert dry['mode'] == 'dry_run' and dry['rows_would_rewrite'] == 2
@@ -162,6 +162,13 @@ def test_routes_dry_run_is_get_and_apply_is_post(db, monkeypatch):
     methods = {(r.path, tuple(sorted(r.methods))) for r in report.router.routes if r.path.endswith('/rerender-archive')}
     assert methods == {('/api/spreadworks/reports/rerender-archive', ('GET',)),
                        ('/api/spreadworks/reports/rerender-archive', ('POST',))}
+
+
+def primary(monkeypatch, token='s3cret'):
+    monkeypatch.setenv('REPORT_RERENDER_TOKEN', token)
+    monkeypatch.setenv('REPORT_RERENDER_SERVICE_ID', 'srv-primary')
+    monkeypatch.setenv('RENDER_SERVICE_ID', 'srv-primary')
+    monkeypatch.delenv('IS_PULL_REQUEST', raising=False)
 
 
 def test_single_report_scope(db):
@@ -173,6 +180,7 @@ def test_single_report_scope(db):
 @pytest.mark.parametrize('env,header', [('s3cret', None), ('s3cret', 'wrong'), ('s3cret', ''), ('', 'anything'), (None, None), (None, 'anything')])
 def test_post_without_the_token_is_refused_and_writes_nothing(db, monkeypatch, env, header):
     from fastapi import HTTPException
+    primary(monkeypatch)
     if env is None:
         monkeypatch.delenv('REPORT_RERENDER_TOKEN', raising=False)
     else:
@@ -188,3 +196,39 @@ def test_post_without_the_token_is_refused_and_writes_nothing(db, monkeypatch, e
 def test_get_dry_run_needs_no_token(db, monkeypatch):
     monkeypatch.delenv('REPORT_RERENDER_TOKEN', raising=False)
     assert json.loads(report.rerender_archive_dry_run(report_id=None).body)['mode'] == 'dry_run'
+
+
+@pytest.mark.parametrize('case,setup,fragment', [
+    ('preview with valid token', {'IS_PULL_REQUEST': 'true'}, 'pull-request preview'),
+    ('preview flag 1', {'IS_PULL_REQUEST': '1'}, 'pull-request preview'),
+    ('service id mismatch', {'RENDER_SERVICE_ID': 'srv-preview-123'}, 'does not match'),
+    ('own service id unset', {'RENDER_SERVICE_ID': None}, 'does not match'),
+    ('own service id blank', {'RENDER_SERVICE_ID': '  '}, 'does not match'),
+    ('expected service id unset', {'REPORT_RERENDER_SERVICE_ID': None}, 'REPORT_RERENDER_SERVICE_ID is not set'),
+    ('both unset', {'REPORT_RERENDER_SERVICE_ID': None, 'RENDER_SERVICE_ID': None}, 'REPORT_RERENDER_SERVICE_ID is not set'),
+])
+def test_post_refused_off_the_primary_service_even_with_a_valid_token(db, monkeypatch, case, setup, fragment):
+    from fastapi import HTTPException
+    primary(monkeypatch)
+    for name, value in setup.items():
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    before = rows(db)
+    with pytest.raises(HTTPException) as err:
+        report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret')
+    assert err.value.status_code == 403 and fragment in err.value.detail
+    assert rows(db) == before
+    assert backup_column_absent(db)
+    from sqlalchemy import inspect
+    assert rr.STAMP_COLUMN not in {c['name'] for c in inspect(db).get_columns('sw_full_reports')}
+
+
+def test_post_accepted_only_when_primary_and_token_both_pass(db, monkeypatch):
+    primary(monkeypatch)
+    out = json.loads(report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret').body)
+    assert out['mode'] == 'apply' and out['rows_rewritten'] == 2
+    monkeypatch.setenv('IS_PULL_REQUEST', 'false')  # Render sets false on non-preview; must not block
+    assert json.loads(report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret').body)['rows_rewritten'] == 0
+
