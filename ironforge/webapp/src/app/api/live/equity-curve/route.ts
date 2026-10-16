@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { dbQuery, botTable, num, escapeSql, dteMode } from '@/lib/db'
+import { dbQuery, botTable, livePositionsTable, num, escapeSql, dteMode } from '@/lib/db'
 import { resolveLiveViewer, scopeFilter, resolveAccountMode } from '@/lib/live/viewer'
 import { scopedStartingCapital } from '@/lib/account-basis'
 import {
@@ -42,9 +42,16 @@ export async function GET(req: NextRequest) {
     const [basis, curveRows, openPositions] = await Promise.all([
       scopedStartingCapital(bot, `${dteFilter} ${prodFilter}`),
       dbQuery(
+        // STOKE/FLINT closed trades (see livePositionsTable's own comment) must
+        // fold into this curve the same way PR #3363 fixed summary.ts/trades-
+        // history.ts/performance.ts/home.ts — otherwise a real STOKE/FLINT loss
+        // or gain is invisible on the customer's own Week/Month/Year/All-time
+        // chart even though the dashboard header figures (which DO use
+        // livePositionsTable) already include it, producing a chart that
+        // silently disagrees with the number printed above it.
         `SELECT close_time, realized_pnl,
                 SUM(realized_pnl) OVER (ORDER BY close_time) as cumulative_pnl
-         FROM ${botTable(bot, 'positions')}
+         FROM ${livePositionsTable(bot)}
          WHERE status IN ('closed', 'expired')
            AND realized_pnl IS NOT NULL
            AND close_time IS NOT NULL
