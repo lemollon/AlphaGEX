@@ -1015,6 +1015,49 @@ def _field_row(field,item,img_map=None,show_meta=True):
             f'<span class="pill {pill_cls}">{pill_label}</span></div>'
             f'<div class="fieldval">{content}</div>{meta_html}{reason_html}</div>')
 
+# Blocks whose narrative render_opening_html (report_policy.py) already prints as a curated
+# top-of-page section. report_view must NOT render a second card for them: both passes call
+# the same _narrative_* builders, so a second card is a verbatim reprint (live 2026-10-16: 25
+# of 34 cards were duplicates, 56% of the page). This set mirrors render_opening_html's
+# section list -- add a block here the moment render_opening_html starts narrating it.
+_PROMOTED_BLOCKS=frozenset({
+    'risk_on_defensive','market_control','gamma','flow','premium_selling',
+    'day_strategy','near_forward_strategy','forward_strategy','surface','smile',
+    'expected_move','breadth','sector_credit','macro','futures_context','range_stall',
+    'morning_comparison','trade_volatility_scan','contract_packages','entry_watches',
+    'candidate_analysis','position_management','trigger_accountability','event_calendar',
+    'adaptation_rules',
+})
+
+# Panels render_opening_html embeds itself (gamma_expiry, flow, surface, smile_term,
+# market_map, sector_credit, baseline_comparison). The remaining four are emitted once, on the
+# supporting-detail card that has no top-level home: event_risk and term_structure belong to
+# promoted blocks whose cards are gone, so they ride on 'visuals'.
+_SUPPORTING_CHARTS={'paper_scorecard':['paper_equity_drawdown'],'profile':['volume_profile'],
+                    'visuals':['event_risk','term_structure']}
+
+def _supporting_status_line(name,block):
+    """One-line status for visuals / data_integrity, counted from the block's own fields --
+    replaces the generic plain_value dump (sha256, width, height, per-field source clocks).
+    Full detail remains at the /data JSON endpoint."""
+    def _value(field):return (block.get(field) or {}).get('value')
+    if name=='visuals':
+        panels=[item for field,item in block.items() if field.endswith('_png') and isinstance(item,dict)]
+        # Every panel is decoded and checked at build time (image_inspection has one row each);
+        # a *_png field is 'unavailable' when the panel shows an integrity placeholder rather
+        # than observed data, which is still a delivered, verified image.
+        inspection=_value('image_inspection') or []
+        delivered=len(inspection)
+        plotted=sum(1 for row in inspection if isinstance(row,dict) and row.get('observed_data_plotted'))
+        return (f'{delivered} of {len(panels)} chart panels delivered and verified; '
+                f'{plotted} plot observed data, {len(inspection)-plotted} show an integrity panel instead.')
+    clocks=_value('source_clocks') or []
+    historical=_value('historical_fields') or []
+    unavailable=_value('unavailable_fields') or []
+    failures=_value('producer_failures') or {}
+    return (f'{len(clocks)} fields carry a source clock; {len(historical)} last-known, '
+            f'{len(unavailable)} unavailable, {len(failures)} producer failures.')
+
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
     from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning,_side_label
@@ -1029,10 +1072,6 @@ def report_view(report_id:str):
     # fields can embed the real image through the generic field renderer, same as every other
     # chart on the page — never a bare external https:// src.
     img_map={images[n]:inline[n] for n in images if n in inline}
-    groups={'expected_move':'market_map','smile':'smile_term','flow':'flow','gamma':'gamma_expiry',
-            'surface':'surface',
-            'sector_credit':'sector_credit','event_calendar':'event_risk','paper_scorecard':'paper_equity_drawdown',
-            'morning_comparison':'baseline_comparison','profile':'volume_profile'}
     # Leron, 2026-10-16: "nothing should be collapse." The prior collapsed-by-default split
     # (bookkeeping/audit sections closed, trade-relevant ones open) still hid real fields
     # behind a click the first time anyone loaded the page. <details> stays in the markup
@@ -1040,6 +1079,7 @@ def report_view(report_id:str):
     # renders open on load; collapsing is something the reader does, never the default.
     _CHART_DIV_OPEN = '<div class="chart">'
     for name,block in _ordered_blocks(payload['report_blocks']):
+        if name in _PROMOTED_BLOCKS:continue
         anchor='sec-'+name.replace('_','-')
         title=name.replace('_',' ').title()
         nav.append(f'<a href="#{anchor}">{html.escape(title)}</a>')
@@ -1047,15 +1087,17 @@ def report_view(report_id:str):
         # Leron, repeatedly: "a long boring ass scroll of data." Same fix as the markdown
         # renderer -- lead with the narrative, drop the raw per-field wall it used to sit under.
         # Full per-field detail remains at the /data JSON endpoint.
-        if name in SECTION_SUMMARY_SECTIONS:
+        if name in ('visuals','data_integrity'):
+            fields_html=(f'<div class="field decision"><div class="fieldname">Status</div>'
+                          f'<div class="fieldval">{html.escape(_supporting_status_line(name,block))}</div></div>')
+        elif name in SECTION_SUMMARY_SECTIONS:
             fields_html=(f'<div class="field decision"><div class="fieldname">Section summary</div>'
                           f'<div class="fieldval">{html.escape(section_summary(name,block))}</div></div>'
                           f'<div class="field decision"><div class="fieldname">What it means for the day</div>'
                           f'<div class="fieldval">{html.escape(section_meaning(name,block,mission_side,regime_label))}</div></div>')
         else:
             fields_html=''.join(_field_row(field,item,img_map,show_meta=(shared_meta is None)) for field,item in block.items())
-        chart_names=[groups.get(name)]
-        if name=='surface':chart_names+=['term_structure']
+        chart_names=_SUPPORTING_CHARTS.get(name,[])
         image=''.join(f'<img src="{inline[n]}" alt="{html.escape(n)} chart" decoding="async">' if n in inline
                       else f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n or "chart")}. {html.escape(failures.get(n,""))}</p>'
                       for n in chart_names if n in images)
@@ -1064,6 +1106,13 @@ def report_view(report_id:str):
         parts.append(f'<section class="card" id="{anchor}"><details{open_attr}><summary>{html.escape(title)}</summary>{section_meta_html}'
                      f'{_CHART_DIV_OPEN+image+"</div>" if image else ""}'
                      f'<div class="fields">{fields_html}</div></details></section>')
+    # render_opening_html silently skips a chart whose bytes are missing/corrupt (it only sees
+    # `inline`), and the cards that used to print a failure notice for those panels are gone,
+    # so a failed delivery for an opening-embedded panel must be surfaced here instead.
+    supporting_charts={n for names in _SUPPORTING_CHARTS.values() for n in names}
+    opening_failures=''.join(f'<p role="alert">VISUAL DELIVERY FAILED: {html.escape(n)}. {html.escape(failures.get(n,""))}</p>'
+                             for n in images if n not in inline and n not in supporting_charts)
+    if parts:parts.insert(0,'<h2 class="supporting-detail">Supporting detail</h2>')
     from .report_policy import display
     bottom=('<section class="card bottomline"><h2>Bottom line</h2>'
            +''.join('<p>'+html.escape(line)+'</p>' for line in [
@@ -1207,6 +1256,7 @@ h2{display:flex;align-items:center;gap:8px}
 .story{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:4px 20px 20px;margin:14px 0}
 .story h2{font-size:1.08rem;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .story h2:first-child{margin-top:16px;padding-top:0;border-top:none}
+h2.supporting-detail{font-size:1.08rem;margin:28px 0 10px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .story table{margin:8px 0 4px}
 .story ul{margin:6px 0;padding-left:20px}
 .story li{margin:4px 0;color:var(--muted)}
@@ -1251,7 +1301,7 @@ h2{display:flex;align-items:center;gap:8px}
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
                 '</div>')
     body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
-         f'<div class="story">{render_opening_html(payload,inline)}</div>{"".join(parts)}{bottom}</div>')
+         f'{opening_failures}<div class="story">{render_opening_html(payload,inline)}</div>{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):

@@ -210,7 +210,9 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     chart_id=result['chart_urls']['smile_term'].split('/')[-1][:-4]
     image=Image.open(io.BytesIO(report.get_chart(chart_id).body))
     assert image.size==(1440,780);assert image.convert('RGB').getpixel((0,0))==(11,18,32)
-    assert 'Observed IV provider' in report.report_view(result['report_id'])
+    from backend.report_policy import surface_smile_story
+    # The surface narrative now lives once, in the curated top-of-page section (no second card).
+    assert html.escape(surface_smile_story(result['report_blocks'])) in report.report_view(result['report_id'])
     assert report.latest_report()['report_id']==result['report_id']
     view=report.report_view(result['report_id'])
     assert 'src="data:image/png;base64,' in view
@@ -221,6 +223,7 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     assert '2026-10-02 10:00:00 AM CT' in view
     assert "2026-10-02T15:00:00" not in view
     assert all(x in view for x in ('Market story','Edge board','Biggest traps','If/then day plan'))
+    assert 'Supporting detail' in view
     assert 'Section summary' in view and 'What it means for the day' in view
     assert 'class="field decision"' in view
     assets=report.get_assets(result['report_id'])
@@ -772,34 +775,37 @@ def _store_report(payload):
 
 @freeze_time(NOW)
 def test_report_view_section_summary_sections_get_narrative_divs_not_raw_field_rows(db):
-    """2026-10-12 fix, same bug as the markdown renderer: 'surface' is in SECTION_SUMMARY_SECTIONS,
-    so its <section class="card"> block on the live /view page must carry the "Section summary" /
-    "What it means for the day" decision divs, not a raw `_field_row` <div class="field"> per
-    field. Also confirms the chart image slot (VISUAL DELIVERY FAILED, since no chart is actually
-    persisted here) renders the same regardless of which fields_html branch fired."""
+    """2026-10-12 fix, same bug as the markdown renderer: a block in SECTION_SUMMARY_SECTIONS
+    must carry the "Section summary" / "What it means for the day" decision divs on the live
+    /view page, not a raw `_field_row` <div class="field"> per field. Re-pointed 2026-10-16
+    from 'surface' (now narrated once, in the opening, with no card of its own) to 'profile',
+    a supporting-detail block that still renders as a card and owns the volume_profile chart.
+    Also confirms the chart image slot (VISUAL DELIVERY FAILED, since no chart is actually
+    persisted here) renders regardless of which fields_html branch fired."""
     from backend.report_policy import SECTION_SUMMARY_SECTIONS, section_summary, observed
-    assert 'surface' in SECTION_SUMMARY_SECTIONS
+    assert 'profile' in SECTION_SUMMARY_SECTIONS
     blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs} for n,fs in REQUIREMENTS.items()}
     blocks['risk_on_defensive']['verdict']=observed('Risk-on price confirmation','Observed provider feed',NOW,NOW)
-    blocks['surface']['atm_iv']=observed({'SPY':{'atm_iv':.088},'QQQ':{'atm_iv':.091}},'Observed IV provider',NOW,NOW)
-    blocks['surface']['term_0dte']=observed({'SPY':{'iv_0dte':.15},'QQQ':{'iv_0dte':.14}},'Observed IV provider',NOW,NOW)
-    blocks['surface']['term_21plus']=observed({'SPY':{'iv_21_365dte':.12},'QQQ':{'iv_21_365dte':.11}},'Observed IV provider',NOW,NOW)
+    first_field=next(iter(REQUIREMENTS['profile']))
+    blocks['profile'][first_field]=observed({'SPY':{'poc':100.5}},'Observed profile provider',NOW,NOW)
     report_id='a'*24
     chart_ref='https://example.test/api/spreadworks/reports/charts/'+'b'*32+'.png'
     payload={'report_id':report_id,'kind':'intraday','generated_at':NOW.isoformat(),
              'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
-             'report_blocks':blocks,'chart_urls':{'surface':chart_ref}}
+             'report_blocks':blocks,'chart_urls':{'volume_profile':chart_ref}}
     _store_report(payload)
     view=report.report_view(report_id)
-    surface_card=view.split('id="sec-surface"')[1].split('</section>')[0]
-    assert 'Section summary' in surface_card and 'What it means for the day' in surface_card
-    assert '<div class="field decision">' in surface_card
-    assert '<div class="field"><div class="fieldtop">' not in surface_card  # no raw _field_row div
-    assert html.escape(section_summary('surface',blocks['surface'])) in surface_card
+    profile_card=view.split('id="sec-profile"')[1].split('</section>')[0]
+    assert 'Section summary' in profile_card and 'What it means for the day' in profile_card
+    assert '<div class="field decision">' in profile_card
+    assert '<div class="field"><div class="fieldtop">' not in profile_card  # no raw _field_row div
+    assert html.escape(section_summary('profile',blocks['profile'])) in profile_card
     # Chart slot renders (as a failure notice, since no PNG bytes are actually persisted in this
-    # test) regardless of the fields_html branch -- it is built from chart_urls/groups, not from
-    # whether the section is narrative-only or raw-field.
-    assert 'VISUAL DELIVERY FAILED' in surface_card
+    # test) regardless of the fields_html branch -- it is built from chart_urls/_SUPPORTING_CHARTS,
+    # not from whether the section is narrative-only or raw-field.
+    assert 'VISUAL DELIVERY FAILED' in profile_card
+    # A promoted block has no card of its own -- its narrative lives in the opening, once.
+    assert 'id="sec-surface"' not in view
 
 def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
     """2026-10-14: report_view computes mission_side from risk_on_defensive.verdict but, before
@@ -818,9 +824,16 @@ def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
              'report_blocks':blocks,'chart_urls':{}}
     _store_report(payload)
     view=report.report_view(report_id)
-    tv_card=view.split('id="sec-trade-volatility-scan"')[1].split('</section>')[0]
-    assert 'flat DEFENSIVE regime call' in tv_card
-    assert 'defensive/risk-on' not in tv_card  # the old bug: both words, every time
+    # 2026-10-16: trade_volatility_scan is narrated in the opening ("TradingVolatility top
+    # setups") and no longer has a card, so /view no longer prints its "what it means" line.
+    # The regime_label threading that line depends on (report_view -> section_meaning) is
+    # still what the Markdown renderer uses, so assert it on section_meaning directly.
+    from backend.report_policy import section_meaning,_side_label
+    assert 'id="sec-trade-volatility-scan"' not in view
+    mission_side=_side_label(blocks['risk_on_defensive']['verdict']['value'])
+    meaning=section_meaning('trade_volatility_scan',blocks['trade_volatility_scan'],mission_side,'DEFENSIVE')
+    assert 'flat DEFENSIVE regime call' in meaning
+    assert 'defensive/risk-on' not in meaning  # the old bug: both words, every time
 
 @freeze_time(NOW)
 def test_report_view_sections_are_all_open_by_default_and_keep_every_field_in_the_dom(db):
@@ -839,11 +852,11 @@ def test_report_view_sections_are_all_open_by_default_and_keep_every_field_in_th
              'report_blocks':blocks,'chart_urls':{}}
     _store_report(payload)
     view=report.report_view(report_id)
-    mission_card=view.split('id="sec-risk-on-defensive"')[1].split('</section>')[0]
     scanner_card=view.split('id="sec-scanner"')[1].split('</section>')[0]
-    assert '<details open>' in mission_card  # decision-relevant section opens by default
-    assert '<details open>' in scanner_card  # bookkeeping section now opens by default too
-    assert 'Section summary' in mission_card and 'Section summary' in scanner_card
+    assert '<details open>' in scanner_card  # bookkeeping section opens by default
+    assert 'Section summary' in scanner_card
+    # Every surviving card is open on first paint -- no bare <details> anywhere.
+    assert view.count('<details>')==0 and view.count('<details open>')==9
 
 def test_report_view_raw_field_branch_still_used_for_a_section_outside_summary_sections(monkeypatch,db):
     """Defensive fallback check: if a section is NOT in SECTION_SUMMARY_SECTIONS (none are,
@@ -965,3 +978,62 @@ def test_claim_delivery_tick_blocks_a_second_claim_for_the_same_exact_minute():
     report.finish_delivery(first, 'report-id-1', True)
     fourth = report.claim_delivery_tick('morning', NOW)
     assert fourth is None, "a completed tick must not be re-claimed"
+
+@pytest.mark.asyncio
+@freeze_time(NOW)
+async def test_report_view_is_single_pass_no_narrative_or_chart_appears_twice(db,monkeypatch):
+    """Leron, 2026-10-16: "why does it have duplicate information." /view used to concatenate
+    render_opening_html's curated sections with one card per block, both built from the same
+    _narrative_* functions: 25 of 34 cards reprinted their narrative verbatim and 7 chart
+    panels were embedded twice. Asserts, on a fully assembled report with all 11 real PNGs:
+    no block's narrative appears twice, each chart is embedded once, and only the 9 blocks
+    with no top-level home get a card."""
+    import re
+    from backend.report_policy import section_summary,section_meaning,SECTION_SUMMARY_SECTIONS
+    monkeypatch.setattr(report,'cached_core',lambda now:core())
+    monkeypatch.setattr(report,'_plan_and_runtime',lambda now:({},{}))
+    monkeypatch.setattr(report,'scheduled_events',lambda now:([now.date()],[]))
+    result=await report.assemble_report(SimpleNamespace(),kind='morning')
+    view=report.report_view(result['report_id'])
+    # Narrative text: the cards add nothing a block already said in the opening. A promoted
+    # block's text occurs exactly as often as in render_opening_html alone (the opening itself
+    # re-quotes a few narratives by design, e.g. Market story + Dealer positioning on thin
+    # data); a supporting block's text occurs at most once more, in its own single card.
+    from backend.report_policy import render_opening_html
+    opening=render_opening_html(result)
+    checked=0
+    for name,block in result['report_blocks'].items():
+        if name not in SECTION_SUMMARY_SECTIONS:continue
+        for text_ in (section_summary(name,block),section_meaning(name,block)):
+            if len(text_)<60:continue  # short canned fallbacks legitimately repeat across blocks
+            checked+=1
+            seen=html.escape(text_)
+            allowed=opening.count(seen)+(0 if name in report._PROMOTED_BLOCKS else 1)
+            assert view.count(seen)<=allowed,f'{name} narrative printed again outside the opening: {text_[:80]}'
+    assert checked>0
+    # Charts: every panel embedded at most once (identical base64 payloads => identical image).
+    sources=re.findall(r'<img[^>]*\ssrc="([^"]+)"',view)
+    assert len(sources)==len(set(sources))==11
+    for url in result['chart_urls'].values():assert url not in view  # only data: URIs, never external
+    # Cards: only the 9 supporting blocks, each once, under one divider heading.
+    labels=re.findall(r'<summary[^>]*>(.*?)</summary>',view,re.S)
+    assert len(labels)==len(set(labels))==9
+    assert sorted(labels)==sorted(n.replace('_',' ').title() for n in
+        ('forward_strikes','profile','paper_scorecard','scanner','event_study','engine_consensus',
+         'horizon_comparison','visuals','data_integrity'))
+    assert view.count('Supporting detail')==1
+    assert not (report._PROMOTED_BLOCKS & {l.lower().replace(' ','_') for l in labels})
+    # visuals / data_integrity show a short counted status, never the machine dump.
+    assert 'sha256' not in view.lower() and 'size bytes' not in view.lower()
+    assert re.search(r'11 of 11 chart panels delivered and verified',view)
+    assert re.search(r'\d+ fields carry a source clock; \d+ last-known, \d+ unavailable, \d+ producer failures\.',view)
+
+def test_promoted_blocks_and_supporting_cards_partition_the_contract():
+    """_PROMOTED_BLOCKS mirrors render_opening_html's section list; it plus the supporting
+    cards must cover every contract block exactly once so the two cannot silently drift."""
+    from backend.report_policy import SECTION_SUMMARY_SECTIONS
+    supporting={'forward_strikes','profile','paper_scorecard','scanner','event_study','engine_consensus',
+                'horizon_comparison','visuals','data_integrity'}
+    assert len(report._PROMOTED_BLOCKS)==25
+    assert not report._PROMOTED_BLOCKS & supporting
+    assert report._PROMOTED_BLOCKS|supporting==set(REQUIREMENTS)==set(SECTION_SUMMARY_SECTIONS)
