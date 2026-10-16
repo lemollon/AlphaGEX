@@ -15,6 +15,7 @@ from sqlalchemy import text, inspect
 
 BACKUP_COLUMN = 'report_markdown_pre_rerender'
 STAMP_COLUMN = 'report_rerendered_at'
+RENDER_POLICY_FIELD = 'report_markdown_rendered_policy'
 
 # Input only: a re-render must leave every one of these byte-identical.
 PROTECTED_FIELDS = ('report_blocks', 'chart_urls', 'generated_at', 'report_id', 'kind',
@@ -93,10 +94,14 @@ def rerender_payload(raw):
             raise ValueError('renderer mutated protected evidence')
     except Exception as exc:
         return 'error', type(exc).__name__ + ': ' + str(exc)[:300], None
-    if markdown == payload.get('report_markdown'):
+    from .report_policy import policy_identity
+    identity = policy_identity()
+    if markdown == payload.get('report_markdown') and payload.get(RENDER_POLICY_FIELD) == identity:
         return 'skip', 'already current', None
     updated = dict(payload)
     updated['report_markdown'] = markdown
+    # The row's own report_policy stays as published; this records which policy produced the markdown now.
+    updated[RENDER_POLICY_FIELD] = identity
     if protected_hash(updated) != before:
         return 'error', 'protected fields changed while assembling the payload', None
     return 'rewrite', {'old_markdown': payload.get('report_markdown') or '', 'new_markdown': markdown, 'sections_shown_unavailable': filled}, encoded(updated)

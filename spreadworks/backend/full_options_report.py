@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio, base64, hashlib, html, json, logging, re
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from .db import engine, SessionLocal
@@ -783,10 +783,17 @@ def rerender_archive_dry_run(report_id: str | None = Query(None, pattern='^[a-f0
     return JSONResponse(run(engine, apply=False, report_id=report_id), headers={'Cache-Control': 'no-store'})
 
 @router.post('/rerender-archive')
-def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$')):
-    """Operator-triggered, never scheduled. Backs up each report_markdown to
-    report_markdown_pre_rerender, then rewrites ONLY report_markdown. Idempotent; a failing row
-    keeps its original markdown and does not stop the run."""
+def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$'),
+                           x_rerender_token: str | None = Header(None)):
+    """Operator-triggered, never scheduled. Requires the X-Rerender-Token header to equal the
+    REPORT_RERENDER_TOKEN env var; refuses (fail closed) when the var is unset. Backs up each
+    report_markdown to report_markdown_pre_rerender, then rewrites ONLY report_markdown (plus the
+    report_markdown_rendered_policy record). Idempotent; a failing row keeps its original markdown
+    and does not stop the run."""
+    import hmac, os
+    expected = os.environ.get('REPORT_RERENDER_TOKEN') or ''
+    if not expected or not x_rerender_token or not hmac.compare_digest(x_rerender_token.encode(), expected.encode()):
+        raise HTTPException(403, detail='Re-render requires a valid X-Rerender-Token')
     from .report_rerender import run
     ensure_tables()
     return JSONResponse(run(engine, apply=True, report_id=report_id), headers={'Cache-Control': 'no-store'})

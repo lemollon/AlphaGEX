@@ -78,8 +78,14 @@ def test_blocks_clocks_and_every_other_field_are_preserved(db):
         assert after[rid][0] == before[rid][0]
         assert protected(after[rid][1]) == protected(before[rid][1])
         old, new = json.loads(before[rid][1]), json.loads(after[rid][1])
-        assert list(old) == list(new)
-        assert {k: v for k, v in old.items() if k != 'report_markdown'} == {k: v for k, v in new.items() if k != 'report_markdown'}
+        assert list(new)[:len(old)] == list(old)
+        added = {rr.RENDER_POLICY_FIELD}
+        assert set(new) - set(old) == added
+        assert {k: v for k, v in old.items() if k != 'report_markdown'} == {k: v for k, v in new.items() if k not in ('report_markdown', *added)}
+        # The row's own published policy is untouched; the render record is separate and current.
+        assert new.get('report_policy') == old.get('report_policy')
+        from backend.report_policy import policy_identity
+        assert new[rr.RENDER_POLICY_FIELD] == policy_identity()
 
 
 def test_rerender_makes_no_market_data_call(db, monkeypatch):
@@ -146,11 +152,12 @@ def backup_column_absent(eng):
     return rr.BACKUP_COLUMN not in {c['name'] for c in inspect(eng).get_columns('sw_full_reports')}
 
 
-def test_routes_dry_run_is_get_and_apply_is_post(db):
+def test_routes_dry_run_is_get_and_apply_is_post(db, monkeypatch):
+    monkeypatch.setenv('REPORT_RERENDER_TOKEN', 's3cret')
     json_of = lambda r: json.loads(r.body)
     dry = json_of(report.rerender_archive_dry_run(report_id=None))
     assert dry['mode'] == 'dry_run' and dry['rows_would_rewrite'] == 2
-    applied = json_of(report.rerender_archive_apply(report_id=None))
+    applied = json_of(report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret'))
     assert applied['mode'] == 'apply' and applied['rows_rewritten'] == 2
     methods = {(r.path, tuple(sorted(r.methods))) for r in report.router.routes if r.path.endswith('/rerender-archive')}
     assert methods == {('/api/spreadworks/reports/rerender-archive', ('GET',)),
@@ -161,3 +168,23 @@ def test_single_report_scope(db):
     summary = rr.run(db, apply=True, report_id=GOOD_ID)
     assert summary['rows_read'] == 1 and summary['rows_rewritten'] == 1
     assert json.loads(rows(db)[BAD_ID][1])['report_markdown'].startswith('# Old')
+
+
+@pytest.mark.parametrize('env,header', [('s3cret', None), ('s3cret', 'wrong'), ('s3cret', ''), ('', 'anything'), (None, None), (None, 'anything')])
+def test_post_without_the_token_is_refused_and_writes_nothing(db, monkeypatch, env, header):
+    from fastapi import HTTPException
+    if env is None:
+        monkeypatch.delenv('REPORT_RERENDER_TOKEN', raising=False)
+    else:
+        monkeypatch.setenv('REPORT_RERENDER_TOKEN', env)
+    before = rows(db)
+    with pytest.raises(HTTPException) as err:
+        report.rerender_archive_apply(report_id=None, x_rerender_token=header)
+    assert err.value.status_code == 403
+    assert rows(db) == before
+    assert backup_column_absent(db)
+
+
+def test_get_dry_run_needs_no_token(db, monkeypatch):
+    monkeypatch.delenv('REPORT_RERENDER_TOKEN', raising=False)
+    assert json.loads(report.rerender_archive_dry_run(report_id=None).body)['mode'] == 'dry_run'

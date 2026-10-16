@@ -515,3 +515,7 @@ input only and are checked by digest before and after. The original markdown is 
 `report_rerendered_at` is stamped. A contract field absent from an older report's stored blocks
 is shown as unavailable on the render copy only, as publication does. A failing row keeps its
 original markdown and is listed under `errors`; the run continues. Optional `?report_id=` scopes a run.
+`POST` is refused (403, fail closed) unless the `X-Rerender-Token` header equals the
+`REPORT_RERENDER_TOKEN` environment variable; `GET` stays open and writes nothing. The row's own
+`report_policy` is left exactly as published; a separate `report_markdown_rendered_policy`
+(`version` + `sha256`) records the policy that produced the current markdown.
