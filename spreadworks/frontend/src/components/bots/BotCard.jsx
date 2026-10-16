@@ -443,9 +443,18 @@ export default function BotCard({
           </div>
 
           {statsLine ? (
-            <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: MUTED, marginTop: 4 }}>
-              {statsLine}
-            </div>
+            <>
+              {/* Same h=28 footprint as Sparkline, so a bot with no live
+                  series (REFLEX) still reserves the row height every
+                  botStats-backed card gets — dashed/muted so it never reads
+                  as a real (if flat) equity line. */}
+              <svg viewBox="0 0 100 28" preserveAspectRatio="none" style={{ width: '100%', height: 28, display: 'block' }}>
+                <line x1="0" y1="14" x2="100" y2="14" stroke={MUTED} strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+              </svg>
+              <div style={{ fontFamily: 'JetBrains Mono', fontSize: 10, color: MUTED, marginTop: 4 }}>
+                {statsLine}
+              </div>
+            </>
           ) : (
             botStats && !botStats.error && (
               <>
