@@ -2058,6 +2058,17 @@ except Exception as _talon_exc:  # noqa: BLE001
     logging.getLogger(__name__).exception(
         "[SpreadWorks] TALON routes failed to load: %r", _talon_exc)
 
+# REFLEX (REAL-MONEY $600 reactive-momentum stock bot) -- same one-way
+# Postgres-mirror pattern as TALON above, but this account is real money,
+# not paper. Import-guarded so a missing mirror table cannot take down the
+# whole API. This route never places a real order -- read-only mirror.
+try:
+    from .routes_reflex import router as reflex_router
+    app.include_router(reflex_router)
+except Exception as _reflex_exc:  # noqa: BLE001
+    logging.getLogger(__name__).exception(
+        "[SpreadWorks] REFLEX routes failed to load: %r", _reflex_exc)
+
 # Call history — the append-only record of what Session / Squeeze / Risk
 # actually said, with SPY outcomes attached. Read-only; import-guarded.
 try:
