@@ -225,7 +225,7 @@ def test_iv_only_surface_builds_term_skew_and_expected_move(monkeypatch):
         ("2026-10-16", 14, 0.18),
         ("2026-11-02", 31, 0.20),
     ):
-        for strike in range(735, 767, 2):
+        for strike in range(701, 800, 2):
             for right in ("call", "put"):
                 payload.append({
                     "expiration": expiry, "strike": str(strike), "right": right,
@@ -444,3 +444,70 @@ def test_theta_rows_raises_on_second_429_no_infinite_retry(monkeypatch):
     with pytest.raises(requests.HTTPError):
         market_structure._theta_rows("/v3/option/list/strikes", {"symbol": "SPY"})
     assert len(calls) == 2
+
+
+def _stub_surface(monkeypatch, rows, now):
+    monkeypatch.setattr(market_structure, "fetch_spot", lambda symbol, current: {
+        "price": 777.22, "fresh": True, "source_timestamp": now, "source": "Tradier ETF quote"})
+    monkeypatch.setattr(market_structure, "_surface_rows", lambda *a, **k: (rows, None))
+    monkeypatch.setattr(market_structure, "fetch_intraday_realized_volatility",
+                        lambda symbol, current: {"available": True, "realized_vol_60m": 0.048, "bars": 60,
+                                                 "source_timestamp": current.isoformat(), "bar_timestamp": current.isoformat(),
+                                                 "method": "test", "source": "test"})
+
+
+def _row(strike, right, iv, dte, now):
+    return {"strike": float(strike), "right": right, "iv": iv, "dte": dte, "expiration": "2026-10-08",
+            "timestamp": now - timedelta(seconds=5)}
+
+
+@freeze_time("2026-10-07T20:00:00Z")
+def test_far_from_spot_legs_do_not_become_the_atm_iv_or_the_expected_move(monkeypatch):
+    """2026-10-07 e1a60ef7: only deep-ITM calls (nearest $127 away, ~136%) and ITM puts (nearest $15.8 away,
+    16.5%) survived, and the median of the two (76.1%) was published as ATM IV and drove a +/-4.8% expected move."""
+    now = datetime(2026, 10, 7, 20, 0, tzinfo=timezone.utc)
+    rows = [_row(k, "call", iv, 1, now) for k, iv in ((650, 1.358), (640, 1.457), (600, 1.68))]
+    rows += [_row(k, "put", iv, 1, now) for k, iv in ((793, 0.165), (820, 0.443), (822, 0.334))]
+    rows += [_row(k, r, 0.126, 30, now) for k in (760, 777, 790) for r in ("call", "put")]
+    _stub_surface(monkeypatch, rows, now)
+    result = market_structure.build_volatility_surface("SPY", now)
+    assert result["atm_iv"] is None and result["confidence"] == "LOW" and result["available"] is False
+    assert "no call and put at one strike within 0.15% of spot 777.22" in result["reason"]
+    assert "nearest call strike 650 ($127.2 away)" in result["reason"] and "nearest put strike 793 ($15.8 away)" in result["reason"]
+    assert result["expected_move_pct_1d"] is None and result["expected_move_dollars_1d"] is None
+    assert result["expected_move_low"] is None and result["expected_move_high"] is None
+    assert result["iv_minus_realized_vol"] is None and result["surface_read"]["available"] is False
+    assert result["atm_reference_dte"] == 1  # no silent fallback to the 30DTE expiry that does have a clean pair
+
+
+def test_atm_pair_must_share_a_strike_near_spot_and_agree():
+    rows = [_row(777, "call", 0.12, 1, NOW_UTC), _row(777, "put", 0.13, 1, NOW_UTC)]
+    assert market_structure._atm_ivs_by_dte(rows, 777.2) == {1: pytest.approx(0.125)}
+    why = {}
+    # Same strike but the legs disagree 3.4x.
+    bad = [_row(777, "call", 0.45, 1, NOW_UTC), _row(777, "put", 0.13, 1, NOW_UTC)]
+    assert market_structure._atm_ivs_by_dte(bad, 777.2, why) == {}
+    assert "call 45.0% and put 13.0% at strike 777 disagree by 3.46x" in why[1]
+    # Different strikes, each near spot: not a pair.
+    why = {}
+    split = [_row(776, "call", 0.12, 1, NOW_UTC), _row(778, "put", 0.12, 1, NOW_UTC)]
+    assert market_structure._atm_ivs_by_dte(split, 777.2, why) == {} and "no call and put at one strike" in why[1]
+    # Boundary: 0.15% of 777.2 is $1.166; a strike $1.2 away is out, $1.1 is in.
+    assert market_structure._atm_ivs_by_dte([_row(778.4, "call", .12, 1, NOW_UTC), _row(778.4, "put", .12, 1, NOW_UTC)], 777.2) == {}
+    assert 1 in market_structure._atm_ivs_by_dte([_row(778.3, "call", .12, 1, NOW_UTC), _row(778.3, "put", .12, 1, NOW_UTC)], 777.2)
+    why = {}
+    assert market_structure._atm_ivs_by_dte([_row(777, "call", .12, 1, NOW_UTC)], 777.2, why) == {} and "no put quotes" in why[1]
+
+
+NOW_UTC = datetime(2026, 10, 7, 20, 0, tzinfo=timezone.utc)
+
+
+def test_25_delta_wings_far_from_25_delta_are_unavailable_not_a_skew():
+    """2026-10-08 05a96eeb: wings at |delta| 0.97 and 0.98 were printed as 24.3% put vs 74.4% call."""
+    spot = 772.1
+    rows = [_row(k, "call", 0.744, 1, NOW_UTC) for k in (715, 720)] + [_row(k, "put", 0.243, 1, NOW_UTC) for k in (791, 795)]
+    smile = market_structure._surface_smile(rows, spot)
+    assert smile["available"] is False
+    assert "25-delta wings unavailable" in smile["reason"] and "|delta| 0.9" in smile["reason"]
+    assert market_structure._surface_skew(rows, spot)[0] is None
+

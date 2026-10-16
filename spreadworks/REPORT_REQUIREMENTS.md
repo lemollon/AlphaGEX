@@ -404,7 +404,7 @@ python -m pytest spreadworks/tests/test_report_policy.py \
   spreadworks/tests/test_report_evidence_integrity.py \
   spreadworks/tests/test_morning_options_report.py \
   spreadworks/tests/test_market_structure.py spreadworks/tests/test_report_refresh.py spreadworks/tests/test_tradier_report_source.py spreadworks/tests/test_intraday_watch.py spreadworks/tests/test_theta_flow.py spreadworks/tests/test_thetadata_proxy.py spreadworks/tests/test_report_email.py \
-  spreadworks/tests/test_report_trading_volatility_scan.py spreadworks/tests/test_trading_volatility_context.py -q
+  spreadworks/tests/test_report_trading_volatility_scan.py spreadworks/tests/test_trading_volatility_context.py \n  spreadworks/tests/test_report_rerender.py -q
 ```
 
 The independent strict report-policy CI job must pass without `|| true`.
@@ -503,3 +503,114 @@ Stored UTC database clocks must regain their explicit UTC offset on reads; resto
 2026-10-16: Surface, Breadth and Entry watches now read today's values instead of printing a fixed role sentence. Leron, 2026-10-13: "the surface doesnt tell me what actions to take or what it means the samething with options flow, breadth tell me nothing" and, on entry watch, "a wall of words"; restated 2026-10-16: "make it fun and exciting to read it needs to read like a story". Surface and Breadth were promoted to top-level sections on 2026-10-14 but still emitted `_SECTION_ROLE` text (what the section is for). `section_meaning` now returns, for `surface`: whether front-dated premium is rich, cheap or fairly priced against realized vol (atm_iv vs iv_vs_realized, the market_structure 1.10x / 0.90x bands), which side that favours (premium sellers vs premium buyers, never a structure), the real IV / realized numbers, and which end of the curve (1-5 day atm_iv vs term_21plus) carries the premium. term_0dte is never a leg of the curve comparison (the legs span different horizons; live report 031c51b0ca214b8caec06ae9 read 89.3% on SPY against 14.7% for 21+ days at 3:00 PM CT), but it is never withheld either: 0DTE IV is a real tradeable price at any hour, so it is reported as its own data point with its time to the 3:00 PM CT close attached ("with under a minute to the close", "with 6 hours to the close", or the date of the close it was taken after). The same rule applies at 9 AM and 2:59 PM; no threshold. When no second tenor remains the section says there is not enough of the curve to call. Any printed number backed by a `historical` field is labelled inline with that field's own observation date ("on last-known readings from Oct 15"), per the last-known evidence rule below; the same applies to the breadth and entry-watch takeaways. The term-structure read is shared by every renderer (`_curve_shape`, 1-5 day ATM IV vs 21+ day) and so is the 0DTE data point (`_zero_dte_sentence`): the per-field `_narrative_surface` that feeds the markdown, PDF, email and the promoted "Surface, smile & term structure" paragraph no longer calls the curve "inverted ... classic event/fear pattern" off a 0DTE expiry artifact, and the producer's 0DTE-derived "front-day premium is elevated/discounted versus 1-5DTE" clause in `premium_selling.forward_implications` is not repeated by the renderer (the 6-20DTE / 21+D clauses stay); for `breadth`: whether participation (advance_decline, up_down_volume, new_highs_lows) confirms or contradicts the flat `risk_on_defensive.regime_label`, using the same agree/conflict callback as `market_control`, with the numbers behind it; for `entry_watches`: how many registered setups have triggered, which is closest, which are invalidated. Entry watches also stop printing prose: each registered setup is one table row (symbol, lifecycle stage, activating level, invalidating level), same trigger/invalidation shape as the Edge board Trigger cell, and the contract-packages story is packages only. The real watcher state `WAIT` was previously unrecognised (every live report said "status is unclear"); it now reads as waiting. When the underlying fields are unavailable each of the three says so plainly ("coverage is too thin ...") rather than inventing a reading. Deterministic and templated; no new producer fields, no contract version change.
 
 2026-10-16: GET /{report_id}/report.pdf and /{report_id}/portable.zip returned HTTP 500 on the live Market Update report (`031c51b0ca214b8caec06ae9`) while /charts.pdf, /assets, /view and /history stayed 200. Cause: markdown_report_pdf() (shared by both routes -- the ZIP embeds the same report.pdf) gave every markdown table equal-width columns, so a 5-column setup table whose Trigger cell held a multi-KB setup dump became a ~5300pt-tall row and reportlab raised LayoutError (a table row must fit the page frame). Fixed in report_assets.markdown_report_pdf: table columns are now sized by their longest cell text (clamped), and rows may split across pages (splitInRow). Documented behaviour is unchanged -- the 503-on-partial-or-corrupt-image-batch contract is untouched; a LayoutError was an unhandled render bug, not an image-batch failure, and is not converted to 503. Regression tests: test_report_assets.py (page-tall table row) and test_full_options_report.py (report.pdf and portable.zip route handlers). No producer fields or contract version change.
+
+## Archive re-render (operator-triggered, never scheduled)
+Stored reports are immutable evidence. `GET /api/spreadworks/reports/rerender-archive` is a
+read-only dry run; `POST` applies it. For each row in `sw_full_reports` it regenerates only
+`report_markdown` (the source of `report.pdf` and `portable.zip`) with the current renderer
+from that row's own stored `report_blocks`. No market data call is made. `report_blocks`,
+`chart_urls`, `generated_at`, `report_id`, `kind`, `report_completeness` and `evidence` are
+input only and are checked by digest before and after. The original markdown is copied to
+`report_markdown_pre_rerender` on the first rewrite (never overwritten), and
+`report_rerendered_at` is stamped. A contract field absent from an older report's stored blocks
+is shown as unavailable on the render copy only, as publication does. A failing row keeps its
+original markdown and is listed under `errors`; the run continues. Optional `?report_id=` scopes a run.
+`POST` is refused (403, fail closed) unless the `X-Rerender-Token` header equals the
+`REPORT_RERENDER_TOKEN` environment variable; `GET` stays open and writes nothing. The row's own
+`report_policy` is left exactly as published; a separate `report_markdown_rendered_policy`
+(`version` + `sha256`) records the policy that produced the current markdown.
+`POST` also refuses unless the process identifies itself as the primary service: `IS_PULL_REQUEST` must
+not be truthy and `RENDER_SERVICE_ID` must equal the `REPORT_RERENDER_SERVICE_ID` env var (set that to the
+primary service id, `srv-d6mv30f5gffc73bog9a0` for `spreadworks-backend`). Unset, blank or mismatched means
+refuse, with a reason naming what failed; a refusal touches no rows and creates no columns. **This is
+defence in depth only.** PR previews inherit the production `DATABASE_URL` and service-level env vars
+(including the token), so this does not remove the need to decide the previews-and-shared-database
+question (previews off, previews on their own database, or accept the code guard alone).
+
+## Surface near-leg corroboration (pre-registered 2026-10-16, before implementation)
+The Surface section's rich/cheap and curve-shape calls use `surface.atm_iv` (the nearest contract
+with at least 1 day to expiry) as the near leg. A stored 2026-10-07 to 10-15 sample of 18 archived
+reports showed that leg printing SPY 76.1%, 46.1% and 42.6% against a same-payload VIX of about 15,
+and one of them (76.1%) read 10.3% on the next capture ten minutes later. A call made on such a
+number is a false call, so the near leg must be corroborated before a call is made.
+
+**Rule.** For SPY, with `r = SPY near-leg ATM IV / (VIX9D / 100)` using the same payload's
+`surface.vix_family` VIX9D: the near leg is *corroborated* when `0.5 <= r <= 2.0`. Outside that
+band the Surface section makes no curve-shape call and no IV-versus-realized premium call for that
+symbol, and states both numbers and the ratio instead. Nothing is hidden: the ATM IV itself still
+prints. VIX9D is the comparator because its horizon (9 days) is the closest index-vol horizon to
+the 1 to 5 day near leg.
+
+**Why 2.0, from the distribution already measured (not chosen afterwards).** Of the 18 reports, the
+15 SPY readings that were plausible sat at r = 0.87 to 1.49 (max 17.8% vs VIX9D 11.96). The three
+bad SPY readings sat at r = 3.29, 3.78 and 6.47. 2.0 is a round number inside that empty gap
+(geometric midpoint 2.21), 1.34x above the highest sound reading and 1.64x below the lowest bad one.
+The lower bound 0.5 is the reciprocal; no measured reading is below 0.87, so it is untested and
+exists only for symmetry.
+
+**Limits, stated plainly.**
+- QQQ has no index-vol comparator of its own in the payload (no VXN is collected). QQQ is NOT
+  covered by this rule. Its curve and premium calls are still made but are labelled
+  "uncorroborated". A single-payload persistence check is not possible (the stored payload holds one
+  capture), so none is built.
+- SPY with no VIX9D in the payload is likewise labelled uncorroborated, not corroborated.
+- The comparator is the payload's own VIX9D clock; on a last-known (historical) near leg the two
+  clocks can differ by hours. The band is wide enough for that, and the section already dates
+  last-known readings.
+- Other sections that read the same near-leg value (expected move, premium selling suitability)
+  are not changed by this rule. That is a producer-level issue.
+
+## Surface producer guards: ATM pair and 25-delta wings (pre-registered 2026-10-16, before implementation)
+The renderer rule above only discloses a bad near leg; the number was already published into the
+expected move. These guards sit in `market_structure.py`, where `atm_iv` and the smile are produced.
+Full evidence and file:line references: `docs/surface-near-leg-quote-quality.md`. All bands below were
+fixed from the 138 stored payloads' own persisted `surface_points` and `smile` (272 SPY/QQQ readings)
+before any producer code was written.
+
+**ATM pair.** For each DTE, `atm_iv` is published only from a call and a put at the SAME strike K with
+`|K - spot| <= 0.15% of spot` (about one $1 strike step on SPY and QQQ: $1.17 and $1.11 at current
+prices), taking the common strike nearest spot, and only when `max(callIV, putIV) / min(callIV, putIV) <= 1.5`.
+The published value is the mean of the two, as the old median-of-two was. Otherwise `atm_iv` for that
+DTE is unavailable with a specific reason (strikes, distances, IVs); there is no fallback to another
+strike or another expiry.
+- Distance, measured: in 230 of 259 readings with both sides present, the nearest call and the nearest
+  put were each within $0.50 of spot. The other 29 are a continuous tail from $0.6 to $127.2. The two
+  famous bad readings: SPY 76.1% had its nearest call $127.2 and put $15.8 from spot (6 calls, all at
+  600 to 650); SPY 42.6% had $49.1 and $18.9.
+- Pair ratio, measured: across 243 readings with a common strike, call/put IV max/min was 1.0006 to
+  1.2833 (median 1.06 SPY, 1.04 QQQ). **The ratio is not what separates good from bad**: the bad readings
+  have no common strike at all, so the distance and same-strike tests do the work. 1.5 is a round number
+  above the largest measured pair (1.28); it has never been tested against a bad pair because none exists
+  in the sample. Say so; do not oversell it.
+- Applied offline to the 272 stored readings: all 4 known-bad SPY readings and all 3 QQQ 10-08 readings
+  (32.4%) are rejected. 39 of 272 (14.3%) readings are rejected in total, so 32 sound-looking readings
+  also become unavailable. That availability cost is the price of the same-strike rule; the band was not
+  widened to recover them.
+- Readings that pass move by at most 0.52 vol points versus the old value.
+
+**Confidence and downstream.** A DTE with no valid pair is dropped from the per-DTE map. If the reference
+DTE (nearest with at least 1 day) is the one that fails, `atm_iv` is None, confidence is LOW and the reason
+names the failure (not the old generic `missing_atm_iv`). Expected move, IV-versus-realized and the surface
+read are then None / unavailable by their existing None handling; nothing substitutes another expiry. The
+term buckets (`iv_0dte`, `iv_1_5dte`, ...) are medians over the DTEs that passed, so a bucket can still
+come from a different DTE than the failed reference; it is labelled by bucket, not as the reference leg.
+
+**25-delta wings (skew and smile).** Each wing's local Black-Scholes |delta| must be within 0.10 of 0.25
+(|delta| 0.15 to 0.35). Otherwise the smile is unavailable with the reason and `skew` is None.
+- Measured over 270 smile readings: 245 had both wings within 0.05, 246 within 0.10; the next values
+  are 0.136, 0.162, 0.162, 0.162, 0.195 and the maximum is 0.74. 0.10 is a round number inside the empty
+  gap 0.054 to 0.136; 24 readings (9%) fail. The bad 05a96eeb smile (24.3% put against 74.4% call) had
+  wing deltas 0.97 and 0.98.
+- Put/call wing IV ratio is NOT used: normal skew is 1.3 to 1.5x (median 1.34, 95th percentile 1.53), so it
+  does not separate good from bad.
+
+**Limits, stated plainly.**
+- The lower VIX9D bound (0.5x) in the renderer rule above remains untested, and the three SPY readings
+  at 0.53x of VIX9D (f4a02419, d916c592, b4910bdd, 10-09) were deliberately left alone; nothing here moves
+  a boundary to catch something that was not measured.
+- `smile.atm_iv` / `smile.atm_strike` (the 30DTE reference smile) still use the nearest surviving strike; not measured, unchanged.
+- Archived reports keep their stored (bad) numbers; the producer guards apply to new captures only.
+- Stored `surface` rows in the database written before this guard are not re-validated (their per-leg data
+  is not in the table). `cached_core` can still serve one of them as a dated last-known reading when the
+  latest capture is LOW. It is labelled historical with its own clock, never presented as live.
+

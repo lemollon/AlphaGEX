@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio, base64, hashlib, html, json, logging, re
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import Response, HTMLResponse, JSONResponse
 from sqlalchemy import text
 from .db import engine, SessionLocal
@@ -773,6 +773,44 @@ def latest_report():
     payload['report_age_seconds']=(datetime.now(UTC)-clock).total_seconds() if clock else None
     payload['snapshot_notice']='Immutable stored report. Re-reading it does not refresh any observation; source clocks must be rechecked.'
     return payload
+
+@router.get('/rerender-archive')
+def rerender_archive_dry_run(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$')):
+    """Operator diagnostic: what re-rendering the stored archive WOULD change. Writes nothing,
+    fetches no market data; markdown is regenerated only from each report's own stored blocks."""
+    from .report_rerender import run
+    ensure_tables()
+    return JSONResponse(run(engine, apply=False, report_id=report_id), headers={'Cache-Control': 'no-store'})
+
+@router.post('/rerender-archive')
+def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$'),
+                           x_rerender_token: str | None = Header(None)):
+    """Operator-triggered, never scheduled. Requires the process to identify itself as the primary service (RENDER_SERVICE_ID equal to
+    REPORT_RERENDER_SERVICE_ID, IS_PULL_REQUEST not set) and the X-Rerender-Token header to equal the
+    REPORT_RERENDER_TOKEN env var; refuses (fail closed) when either check cannot be passed. Backs up each
+    report_markdown to report_markdown_pre_rerender, then rewrites ONLY report_markdown (plus the
+    report_markdown_rendered_policy record). Idempotent; a failing row keeps its original markdown
+    and does not stop the run."""
+    import hmac, os
+    # Defence in depth, not a substitute for deciding the previews/shared-database question: PR previews
+    # inherit the production DATABASE_URL and service-level env vars (including the token below), so the
+    # process must also positively identify itself as the primary service. Fail closed on anything unset,
+    # blank or mismatched.
+    expected_service = (os.environ.get('REPORT_RERENDER_SERVICE_ID') or '').strip()
+    own_service = (os.environ.get('RENDER_SERVICE_ID') or '').strip()
+    is_preview = (os.environ.get('IS_PULL_REQUEST') or '').strip().lower() in ('1', 'true', 'yes')
+    if is_preview:
+        raise HTTPException(403, detail='Re-render refused: this is a pull-request preview instance (IS_PULL_REQUEST is set). Run it on the primary service only.')
+    if not expected_service:
+        raise HTTPException(403, detail='Re-render refused: REPORT_RERENDER_SERVICE_ID is not set, so the primary service cannot be identified. Set it to the primary service id.')
+    if not own_service or own_service != expected_service:
+        raise HTTPException(403, detail='Re-render refused: RENDER_SERVICE_ID does not match REPORT_RERENDER_SERVICE_ID, so this is not the primary service (or it cannot be determined).')
+    expected = os.environ.get('REPORT_RERENDER_TOKEN') or ''
+    if not expected or not x_rerender_token or not hmac.compare_digest(x_rerender_token.encode(), expected.encode()):
+        raise HTTPException(403, detail='Re-render requires a valid X-Rerender-Token')
+    from .report_rerender import run
+    ensure_tables()
+    return JSONResponse(run(engine, apply=True, report_id=report_id), headers={'Cache-Control': 'no-store'})
 
 @router.get('/producer-status')
 def producer_status():

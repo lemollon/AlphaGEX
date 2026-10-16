@@ -919,11 +919,17 @@ def _narrative_surface(block):
         # reading is reported separately below by _zero_dte_sentence.
         far = ((term_far.get(sym) or {}) if isinstance(term_far, dict) else {}).get("iv_21_365dte")
         sentence = f"{sym}'s vol surface: ATM IV {atm*100:.1f}%"
+        state, note = _near_leg_check(block, sym, atm)
+        if state == "gap":
+            bits.append(sentence + "; " + note + ".")
+            continue
         if _num(far) and far > 0:
             shape = {"front": "inverted — the near-dated (1-5 day) end is pricing above the back of the curve",
                      "back": "upward-sloping — the back carries more premium than the near-dated end",
                      "flat": "flat across expiries"}[_curve_shape(atm, far)]
             sentence += f"; the term structure is {shape}"
+        if state == "no_comparator":
+            sentence += f" ({note})"
         row = ivrv_val.get(sym) if isinstance(ivrv_val, dict) else None
         iv, rv = (row or {}).get("atm_iv"), (row or {}).get("realized_vol_60m")
         if _num(iv) and _num(rv) and rv > 0:
@@ -1571,6 +1577,27 @@ def _curve_shape(near, far):
     curve. Bands match market_structure's 1.15x / 0.85-0.90x conventions."""
     return "front" if near > far * 1.15 else "back" if near < far * 0.9 else "flat"
 
+NEAR_LEG_BAND = (0.5, 2.0)  # pre-registered in REPORT_REQUIREMENTS.md "Surface near-leg corroboration"
+
+def _near_leg_check(block, sym, near):
+    """Is the 1-5 day near-leg ATM IV corroborated by the payload's own VIX family? SPY is compared
+    with VIX9D; any other symbol (QQQ has no index-vol comparator) or a payload without VIX9D is
+    'no_comparator', never 'corroborated'. Returns (state, note): state is 'corroborated', 'gap' or
+    'no_comparator'; note is the disclosure sentence for 'gap' / the label for 'no_comparator'."""
+    if sym != "SPY":
+        return "no_comparator", f"uncorroborated: {sym} has no index-vol comparator of its own"
+    fam = block.get("vix_family") or {}
+    vals = fam.get("value") if fam.get("status") != "unavailable" else None
+    p9 = ((vals or {}).get("VIX9D") or {}).get("price") if isinstance(vals, dict) else None
+    if not _num(p9) or p9 <= 0 or not _num(near):
+        return "no_comparator", "uncorroborated: no VIX9D in this report"
+    ratio = near / (p9 / 100)
+    if NEAR_LEG_BAND[0] <= ratio <= NEAR_LEG_BAND[1]:
+        return "corroborated", ""
+    return "gap", (f"the near-dated {sym} quote reads {near*100:.1f}% against VIX9D at {p9:.1f}, a {ratio:.1f}x gap "
+                   f"outside the {NEAR_LEG_BAND[0]:g}x-{NEAR_LEG_BAND[1]:g}x band this report's own VIX family corroborates, "
+                   f"so the curve shape and the premium-versus-realized call for {sym} are not made this checkpoint")
+
 def _zero_dte_sentence(block):
     """0DTE IV is a real, tradeable price at any hour, so it is always reported -- as its own data
     point with its time to the 3:00 PM CT expiry attached (that label is what makes a huge
@@ -1611,21 +1638,26 @@ def _surface_takeaway(block):
         return v if isinstance(v, dict) else {}
     atm_v, near_v, far_v, ivrv = val("atm_iv"), val("term_0dte"), val("term_21plus"), val("iv_vs_realized")
     def pct(x): return f"{x*100:.1f}%"
-    prem, curve = [], []
+    prem, curve, gaps, unc = [], [], [], []
     for sym in ("SPY", "QQQ"):
         row = ivrv.get(sym) if isinstance(ivrv.get(sym), dict) else {}
         atm_row = atm_v.get(sym) if isinstance(atm_v.get(sym), dict) else {}
         iv = row.get("atm_iv") if _num(row.get("atm_iv")) else atm_row.get("atm_iv")
         rv = row.get("realized_vol_60m")
-        if _num(iv) and _num(rv) and rv > 0:
+        near_state, near_note = _near_leg_check(block, sym, atm_row.get("atm_iv"))
+        if near_state == "gap":
+            gaps.append(near_note)
+        elif near_state == "no_comparator" and _num(atm_row.get("atm_iv")):
+            unc.append(sym)
+        if near_state != "gap" and _num(iv) and _num(rv) and rv > 0:
             ratio = iv / rv
             prem.append((sym, iv, rv, ratio, "sellers" if ratio >= 1.10 else "buyers" if ratio < 0.90 else None))
         # The front leg of the curve is the 1-5 day tenor (atm_iv), never term_0dte: see below.
         near = atm_row.get("atm_iv")
         far = (far_v.get(sym) or {}).get("iv_21_365dte") if isinstance(far_v.get(sym), dict) else None
-        if _num(near) and _num(far) and far > 0:
+        if near_state != "gap" and _num(near) and _num(far) and far > 0:
             curve.append((sym, near, far, _curve_shape(near, far)))
-    if not prem and not curve:
+    if not prem and not curve and not gaps:
         return "Vol surface coverage is too thin to say whether front-dated premium is rich or cheap today."
     parts = []
     stale_prem = _last_known(block, "atm_iv", "iv_vs_realized")
@@ -1652,6 +1684,10 @@ def _surface_takeaway(block):
     zero = _zero_dte_sentence(block)
     if zero:
         parts.append(zero)
+    for g in gaps:
+        parts.append(g[0].upper() + g[1:] + ".")
+    if unc and (curve or prem):
+        parts.append(f"The {' and '.join(unc)} near-dated reading is shown uncorroborated: there is no index-vol comparator for it in this report.")
     if curve:
         shapes = {c[3] for c in curve}
         lead_side = ({p[4] for p in prem} or {"?"})
@@ -1670,7 +1706,7 @@ def _surface_takeaway(block):
         else:
             names = {"front": "inverted", "back": "upward-sloping", "flat": "flat"}
             parts.append("The curve is not telling one story" + (f", on {stale_curve}" if stale_curve else "") + ": " + "; ".join(f"{c[0]}'s is {names[c[3]]}" for c in curve) + f" ({nums}).")
-    elif zero or prem:
+    elif zero or prem or gaps:
         parts.append("There isn't enough of the curve left to call which end is richer.")
     parts.append("Skew, just below, shows which side of the strike range is paying that premium.")
     return " ".join(parts)
