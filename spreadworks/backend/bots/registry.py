@@ -160,7 +160,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 30,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,
+            "enabled": True,
             # Deploy 50% of the account, uncapped (max_contracts=0), matching
             # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
             "max_contracts": 0,
@@ -204,7 +204,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 14,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,
+            "enabled": True,
             # Deploy 50% of the account, uncapped (max_contracts=0), matching
             # FLOW. Sizing = floor((equity * bp_pct) / max_loss_per_contract).
             "max_contracts": 0,
@@ -237,7 +237,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": None,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,
+            "enabled": True,
             "max_contracts": 0,
             "bp_pct": 0.50,
             "sd_mult": 1.2,
@@ -279,7 +279,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 25000.0,
-            "enabled": False,
+            "enabled": True,
             "max_contracts": 10,
             "bp_pct": 0.05,
             "sd_mult": 1.0,
@@ -318,7 +318,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             "earnings_exclude_days": 3, "hold_days": 2,
         },
         "defaults": {
-            "starting_capital": 25000.0, "enabled": False, "max_contracts": 10,
+            "starting_capital": 25000.0, "enabled": True, "max_contracts": 10,
             "bp_pct": 0.05, "sd_mult": 1.0, "pt_pct": 0.50, "sl_pct": 1.5,
             "entry_start_ct": "08:35", "entry_end_ct": "14:30", "eod_close_ct": "14:45",
             "discord_alerts": False, "delta_skew": 0, "use_gex_walls": False,
@@ -386,7 +386,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 3000.0,
-            "enabled": False,   # paper-only fleet; no bot ships armed
+            "enabled": True,   # paper-only fleet, enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # Sizing headroom on a $3k account: a $5-wide 0DTE put spread 2
             # points OTM runs max_loss ~$350-480/lot; 0.20 x $3000 = $600
@@ -490,7 +490,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         },
         "defaults": {
             "starting_capital": 3000.0,
-            "enabled": False,   # ships disabled; enable via API after deploy
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # Same sizing headroom as EBB: a $5-wide 0DTE put spread 2 points
             # OTM runs max_loss ~$350-480/lot; 0.20 x $3000 = $600 comfortably
@@ -591,7 +591,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "defaults": {
             "starting_capital": 500.0,
-            "enabled": False,          # paper-only; explicitly enable after deploy
+            "enabled": True,          # paper-only, enabled 2026-10-16 per Leron
             "max_contracts": 3,
             # Exact staged-compound rule: floor(25% of current realized equity
             # / (ask*100 + $0.70)), capped at three whole contracts.
@@ -658,7 +658,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,                  # single expiration, no back leg
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.02,
             # Required by the bot_config schema (db.py seeds every column
@@ -727,7 +727,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             # $1k paper framing (FLASHPOINT precedent)
             "starting_capital": 1000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # ATM calls ~$100-350; 50% of $1k covers $500 so sizing never
             # floors to zero (the AFTERBURN lesson)
@@ -781,7 +781,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "defaults": {
             "starting_capital": 1000.0,
-            "enabled": False,   # no bot ships armed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.50,
             "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
@@ -820,7 +820,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.02,
             # schema-required, unused here — see UPDRAFT. The put wall IS
@@ -870,7 +870,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "defaults": {
             # $1k paper framing (FLASHPOINT/THERMAL precedent)
             "starting_capital": 1000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # ATM calls ~$100-350; 50% of $1k never floors to zero contracts
             "bp_pct": 0.50,
@@ -925,7 +925,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.02,
             # schema-required, unused here — see UPDRAFT.
@@ -979,7 +979,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "one_entry_per_day": True,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.02,
             # schema-required, unused here — see UPDRAFT.
@@ -1024,7 +1024,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "one_entry_per_day": True,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # QQQ ATM 0DTE puts at breach times run ~$1.50-3.00 ($150-300 a
             # contract). bp 2% of $10k = $200 can floor to ZERO contracts —
@@ -1075,7 +1075,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # Leron's framing: run this one on a $1,000 paper account so the
             # reported P&L reads directly as "what $1k does".
             "starting_capital": 1000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # ATM 0DTE calls on wide-range days run ~$100-350; 50% of $1k
             # covers up to a $500 premium -> 1 contract, never 0 (the
@@ -1119,7 +1119,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "back_dte": 0,
         "defaults": {
             "starting_capital": 1000.0,
-            "enabled": False,   # no bot ships armed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.50,
             "sd_mult": 1.0, "delta_skew": 0, "use_gex_walls": False,
@@ -1163,7 +1163,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
             # no Friday entries: a Fri close + 2880m timer would exit Sunday
             # and slip to Monday's first scan — a different (untested) hold.
             "entry_days": "mon,tue,wed,thu",
-            "enabled": False,   # no bot ships armed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # SPY weekly ATM ~$250-450; 50% of $1k never floors to zero
             "bp_pct": 0.50,
@@ -1203,7 +1203,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "one_entry_per_day": True,
         "defaults": {
             "starting_capital": 1000.0,
-            "enabled": False,   # no bot ships armed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             "bp_pct": 0.50,
             "entry_days": "mon,tue,wed,thu",
@@ -1254,7 +1254,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "one_entry_per_day": True,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # schema-required, unused here — see UPDRAFT.
             "sd_mult": 1.0,
@@ -1311,7 +1311,7 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "one_entry_per_day": True,
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # UNCONFIRMED — paper only, ships disarmed
+            "enabled": True,   # enabled 2026-10-16 per Leron
             "max_contracts": 1,
             # schema-required, unused here — see UPDRAFT.
             "sd_mult": 1.0,
@@ -1397,9 +1397,8 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "compare_with": "monarch_b",
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
-                                 # flip to True without re-reading the caveat
-                                 # above; this flag never touches a broker.
+            "enabled": True,   # PAPER ONLY — this flag never touches a broker.
+                                 # Enabled 2026-10-16 per Leron.
             "max_contracts": 1,
             "bp_pct": 0.20,
             "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
@@ -1429,9 +1428,8 @@ BOT_REGISTRY: dict[str, dict[str, Any]] = {
         "compare_with": "monarch_a",
         "defaults": {
             "starting_capital": 10000.0,
-            "enabled": False,   # PAPER ONLY — explicitly disarmed. Do not
-                                 # flip to True without re-reading the caveat
-                                 # above; this flag never touches a broker.
+            "enabled": True,   # PAPER ONLY — this flag never touches a broker.
+                                 # Enabled 2026-10-16 per Leron.
             "max_contracts": 1,
             "bp_pct": 0.20,
             "sd_mult": 1.0,      # schema-required, unused by delta_butterfly
