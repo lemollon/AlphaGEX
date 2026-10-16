@@ -95,6 +95,9 @@ const moreLinks: NavLink[] = [
   { href: '/accounts', label: 'Accounts', className: 'text-gray-300 hover:text-gray-100' },
   // '/pricing' removed: customer marketing route, 404s on the operator surface.
   { href: '/ember', label: 'EMBER', className: 'text-amber-400 hover:text-amber-300' },
+  // The Robinhood "EMBER" fleet (account 570892331) — different product
+  // from the backtester above, see surface.ts's OPERATOR_PAGES comment.
+  { href: '/ember-fleet', label: 'EMBER Fleet P&L', className: 'text-amber-400 hover:text-amber-300' },
 ]
 
 function NavLinkItem({
