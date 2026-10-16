@@ -10,18 +10,32 @@
 // trades — it's waiting on the account to clear a $500 capital floor — and
 // there is no live P&L API for it anywhere in this backend. Every value
 // mapped in here is either a real backtest number (2,702 trades, 605
-// symbols, 3.5y, +95.18u total / +75.13u with the best trade removed) or a
-// plainly-labeled "no live data" fact. None of it is fabricated, and nothing
-// here is presented as live P&L.
+// symbols, 3.5y, +95.18u total / +75.13u with the best trade removed — see
+// backend/squeeze_reactive_alerts.py's module docstring) or a plainly-labeled
+// "no live data" fact. None of it is fabricated.
+//
+// `botStats.equity_series` below is the two REAL endpoints of that backtest
+// — [0, +95.18] units, start and final total return — not a fabricated
+// day-by-day curve (the per-trade series behind those numbers was never
+// persisted to a table; confirmed 2026-10-16, no squeeze.duckdb table named
+// in that docstring exists). Passing it as `botStats` (not the `statsLine`
+// text stand-in) routes this card through BotCard's DEFAULT Sparkline +
+// TradesLine path — the exact same code every live bot uses — so REFLEX is
+// structurally identical to the rest of the fleet, not a lookalike.
 import BotCard, { GREEN } from './BotCard';
 
 const ROW = { bot: 'reflex' };
+
+const BOT_STATS = {
+  trades: { n: 2702, win_rate: null, pnl_7d: null, pnl_30d: null },
+  equity_series: [{ equity: 0 }, { equity: 95.18 }],
+};
 
 export default function ReflexSpotlightCard() {
   return (
     <BotCard
       row={ROW}
-      botStats={null}
+      botStats={BOT_STATS}
       linkTo="/reflex"
       statusOverride={{ label: 'Backtest', color: '#06b6d4' }}
       accountOverride={{ label: 'Free', color: GREEN }}
@@ -29,8 +43,8 @@ export default function ReflexSpotlightCard() {
         label: 'Backtest avg/trade',
         value: '+3.52%',
         color: GREEN,
+        sub: '605 symbols · 3.5y backtest',
       }}
-      statsLine="2,702 trades · 605 symbols · 3.5y backtest"
       footer={[
         {
           label: 'Total',
