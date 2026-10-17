@@ -209,7 +209,17 @@ async def test_full_assembly_all_fields_dark_png_embed_and_durable_view(db,monke
     for url in result['chart_urls'].values():assert f']({url})' in result['report_markdown']
     chart_id=result['chart_urls']['smile_term'].split('/')[-1][:-4]
     image=Image.open(io.BytesIO(report.get_chart(chart_id).body))
-    assert image.size==(1440,780);assert image.convert('RGB').getpixel((0,0))==(11,18,32)
+    # 2026-10-17 (UX review #33): charts were drawn 1440x780 and displayed at ~317px on a
+    # phone -- 22% of native, axis text around 3px. They are drawn near display width now.
+    # Pin the property that matters rather than one chart's exact size: every persisted chart
+    # must be phone-scale, above the truncation floor the three verification gates enforce,
+    # and still dark-themed.
+    assert image.convert('RGB').getpixel((0,0))==(11,18,32)
+    for name,url in result['chart_urls'].items():
+        with Image.open(io.BytesIO(report.get_chart(url.split('/')[-1][:-4]).body)) as chart:
+            assert chart.width==800,f'{name} is {chart.width}px wide, not phone-scale'
+            assert 400<=chart.height<=1000,f'{name} is {chart.height}px tall'
+            assert chart.convert('RGB').getpixel((0,0))==(11,18,32),name
     from backend.report_policy import surface_smile_story
     # The surface narrative now lives once, in the curated top-of-page section (no second card).
     assert html.escape(surface_smile_story(result['report_blocks'])) in report.report_view(result['report_id'])

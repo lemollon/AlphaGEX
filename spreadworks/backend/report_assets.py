@@ -130,7 +130,11 @@ def inspect_png(data: bytes, chart_id: str | None = None) -> dict:
         raise ValueError("Report chart checksum mismatch")
     with Image.open(io.BytesIO(data)) as image:
         image.load()
-        if image.format != "PNG" or image.width < 1000 or image.height < 600:
+        # The same floor as the pre-persist check in full_options_report (UX review #33):
+        # charts are drawn near phone display width now (800px) instead of 1440px, and several
+        # are legitimately shorter than the old 600px (sector_credit 484, event_risk 501).
+        # The floor still catches a truncated or blank render; it does not mandate a size.
+        if image.format != "PNG" or image.width < 700 or image.height < 400:
             raise ValueError("Report chart dimensions/format invalid")
         if image.convert("RGB").getpixel((0, 0)) != (11, 18, 32):
             raise ValueError("Report chart dark palette invalid")
