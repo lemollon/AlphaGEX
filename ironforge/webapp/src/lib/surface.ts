@@ -98,6 +98,11 @@ export const OPERATOR_PAGES: readonly string[] = [
   '/flare',
   '/kindle',
   '/ember',
+  // The Robinhood "EMBER" fleet (call_diag/night_shift/divhike/xsp_flow/
+  // astra3_live/tv_book/spike on account 570892331, spreadworks-backend) --
+  // a completely different product from the backtester at '/ember' above.
+  // Operator-only: Leron's own live-money account, not a customer surface.
+  '/ember-fleet',
   '/compare',
   '/accounts',
   '/gex',
@@ -116,6 +121,7 @@ export const OPERATOR_PAGE_PREFIXES: readonly string[] = ['/briefings', '/calend
 export const OPERATOR_API_PREFIXES: readonly string[] = [
   '/api/accounts/',
   '/api/ember/',
+  '/api/ember-fleet/',
   '/api/briefings/',
   '/api/calendar/',
   // Security audit 7/31: flat operator namespaces that don't start with /api/{bot}/
