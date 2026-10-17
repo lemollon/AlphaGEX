@@ -700,7 +700,13 @@ async def assemble_report(app,*,kind='intraday',plan=None,now=None):
         import io
         with Image.open(io.BytesIO(png)) as im:
             im.load();width,height=im.size;dark=im.convert('RGB').getpixel((0,0))==(11,18,32)
-        if width<1000 or height<600 or not dark:raise ValueError('Chart image verification failed')
+        # Leron, 2026-10-16 UX review #33: every chart was drawn 1440x780 and displayed at
+        # ~317px on a phone -- 22% of native, axis text around 3px, unusable. They are now
+        # drawn near display width (800px) with correspondingly larger type, and several are
+        # legitimately shorter than the old 600px floor (sector_credit 484, event_risk 501,
+        # term_structure 523). The floor drops to the smallest real chart rather than being
+        # removed: it exists to catch a truncated or blank render, not to mandate a size.
+        if width<700 or height<400 or not dark:raise ValueError('Chart image verification failed')
         chart_id=hashlib.sha256(png).hexdigest()[:32]
         with engine.begin() as c:
             c.execute(text('INSERT INTO sw_report_charts (chart_id,png_base64,created_at) VALUES (:id,:png,:now) ON CONFLICT(chart_id) DO NOTHING'),

@@ -589,7 +589,11 @@ def validate_rendered_report(payload):
             if (asset.get('validated') is not True or asset.get('content_type')!='image/png'
                     or not re.fullmatch(r'[a-f0-9]{64}',str(asset.get('sha256') or ''))
                     or str(asset.get('sha256',''))[:32]!=asset.get('chart_id')
-                    or asset.get('width',0)<1000 or asset.get('height',0)<600
+                    # Third and last copy of the chart size floor (UX review #33) -- the others
+                    # are the pre-persist check in full_options_report and inspect_png in
+                    # report_assets. Charts are drawn near phone display width (800px) now,
+                    # and several are legitimately under the old 600px height.
+                    or asset.get('width',0)<700 or asset.get('height',0)<400
                     or asset.get('size_bytes',0)<=0):
                 errors.append('visuals.delivery_manifest: invalid persisted image proof')
     check["errors"] = errors
