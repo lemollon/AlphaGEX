@@ -803,6 +803,34 @@ def test_contract_packages_and_entry_watches_story_falls_back_when_both_builders
     story=contract_packages_and_entry_watches_story(blocks)
     assert story=='No qualified contract packages right now.'
 
+def test_generic_summary_counts_a_collection_instead_of_dumping_it():
+    """Leron, 2026-10-16 UX review item #9: the sections falling back to the generic summary
+    still printed raw field dumps wearing a narrative label -- Forward Strikes read
+    "expiration 2026-10-19; expiration 2026-10-19; expiration 2026-10-19 (+35 more)", Engine
+    Consensus ran ~25 lines of "ticker INSG, trade bias Fade extensions, opportunity score
+    8.30...". A reader wants the count and an example, not the list. Small values must be
+    untouched, and every number must still be a real count of real data."""
+    from backend.report_policy import _generic_narrative_summary, _narrative_scale
+    def it(v):
+        return {'status':'live','value':v,'source':'s',
+                'source_timestamp':'2026-10-05T12:00:00+00:00','age_seconds':1.0,'confidence':'HIGH'}
+    strikes=_generic_narrative_summary({'legs':it([{'expiration':'2026-10-19','strike':770}]*38)})
+    assert strikes=='Legs is 38 entries, the first expiration 2026-10-19.'
+    assert '+35 more' not in strikes
+    consensus=_generic_narrative_summary({'rows':it([{'ticker':'INSG','trade_bias':'Fade extensions'}]*25)})
+    assert consensus=='Rows is 25 entries, the first ticker INSG.'
+    assert 'trade bias' not in consensus, 'must not enumerate the fields of each row'
+    # A long flat list (breadth holdings carries 503 tickers) is counted, not listed.
+    assert _generic_narrative_summary({'symbols':it(['SPY','QQQ','IWM']*168)}) ==         'Symbols is 504 values, the first SPY.'
+    # Small values fall through to plain_value exactly as before.
+    assert _narrative_scale([770.0,771.0]) is None
+    assert _generic_narrative_summary({'levels':it([770.0,771.0])})=='Levels is 770.00, 771.00.'
+    # A per-symbol dict is already readable prose and stays that way.
+    assert _narrative_scale({'SPY':1,'QQQ':2}) is None
+    # And a top-level IV field is shown as a percentage (UX review #7), not a fraction.
+    assert _generic_narrative_summary({'median_iv':it(0.2202)})=='Median IV is 22.0%.'
+
+
 def test_the_trade_block_leads_with_the_call_and_the_trigger():
     """Leron, 2026-10-16 UX review item #1: the top of the page never said what to do, what he
     was waiting for, or at what price -- the answer sat ~6,000px down in Edge Board row 1. The
