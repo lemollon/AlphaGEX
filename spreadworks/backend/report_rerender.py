@@ -107,8 +107,17 @@ def rerender_payload(raw):
     return 'rewrite', {'old_markdown': payload.get('report_markdown') or '', 'new_markdown': markdown, 'sections_shown_unavailable': filled}, encoded(updated)
 
 
-def run(engine, apply=False, report_id=None):
-    """Re-render every row of sw_full_reports (or one). apply=False is a read-only dry run."""
+def run(engine, apply=False, report_id=None, published_only=True):
+    """Re-render the stored report archive. apply=False is a read-only dry run.
+
+    `published_only` (the default) restricts the run to the kinds the archive actually
+    publishes -- the same `kind IN ('morning','market_open','intraday')` filter
+    `report_archive.load_archive` uses, so the rows re-rendered are exactly the rows a
+    reader can open. The table also holds diagnostic/verification runs, which carry empty
+    blocks by design and are never served; re-rendering those changes nothing a reader
+    sees while inflating every count in this summary. Naming one `report_id` addresses
+    that row whatever its kind.
+    """
     if apply:
         ensure_columns(engine)
     have_backup = BACKUP_COLUMN in {c['name'] for c in inspect(engine).get_columns('sw_full_reports')}
@@ -117,8 +126,14 @@ def run(engine, apply=False, report_id=None):
         params = {}
         if report_id:
             sql += ' WHERE report_id=:id';params = {'id': report_id}
+        elif published_only:
+            from .report_archive import PUBLISHED_KINDS
+            sql += ' WHERE kind IN (' + ','.join(':k%d' % i for i in range(len(PUBLISHED_KINDS))) + ')'
+            params = {'k%d' % i: k for i, k in enumerate(PUBLISHED_KINDS)}
         ids = [r[0] for r in c.execute(text(sql + ' ORDER BY generated_at'), params).fetchall()]
-    summary = {'mode': 'apply' if apply else 'dry_run', 'rows_read': 0, 'rows_would_rewrite': 0, 'rows_rewritten': 0,
+    summary = {'mode': 'apply' if apply else 'dry_run',
+               'scope': 'one report' if report_id else ('published kinds only' if published_only else 'every row including diagnostics'),
+               'rows_read': 0, 'rows_would_rewrite': 0, 'rows_rewritten': 0,
                'rows_skipped': 0, 'rows_errored': 0, 'skipped_reasons': {}, 'errors': {},
                'stale_phrase_rows_before': {p: 0 for p in STALE_PHRASES},
                'stale_phrase_rows_after': {p: 0 for p in STALE_PHRASES},

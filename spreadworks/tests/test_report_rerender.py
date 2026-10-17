@@ -225,6 +225,52 @@ def test_post_refused_off_the_primary_service_even_with_a_valid_token(db, monkey
     assert rr.STAMP_COLUMN not in {c['name'] for c in inspect(db).get_columns('sw_full_reports')}
 
 
+VERIFY_ID = 'e' * 24
+
+
+@pytest.fixture
+def db_with_diagnostic(db):
+    """The real table also holds diagnostic runs the archive never serves."""
+    with db.begin() as c:
+        c.execute(text('INSERT INTO sw_full_reports VALUES (:i,:g,:k,:p)'),
+                  dict(i=VERIFY_ID, g='2026-10-03 12:16:32', k='verification',
+                       p=rr.encoded(stored_payload(VERIFY_ID, kind='verification'))))
+    return db
+
+
+def test_default_scope_leaves_diagnostic_rows_untouched(db_with_diagnostic):
+    """A re-render must only rewrite what a reader can open. 277 of production's 415 rows on
+    2026-10-17 were diagnostic runs; rewriting them changes nothing visible and inflates every count."""
+    before = rows(db_with_diagnostic)[VERIFY_ID]
+    summary = rr.run(db_with_diagnostic, apply=True)
+    assert summary['scope'] == 'published kinds only'
+    assert summary['rows_read'] == 4 and summary['rows_rewritten'] == 2
+    assert rows(db_with_diagnostic)[VERIFY_ID] == before
+
+
+def test_scope_all_opts_into_the_diagnostic_rows(db_with_diagnostic):
+    summary = rr.run(db_with_diagnostic, apply=False, published_only=False)
+    assert summary['scope'] == 'every row including diagnostics'
+    assert summary['rows_read'] == 5 and summary['rows_would_rewrite'] == 3
+
+
+def test_named_report_id_reaches_a_diagnostic_row(db_with_diagnostic):
+    summary = rr.run(db_with_diagnostic, apply=True, report_id=VERIFY_ID)
+    assert summary['scope'] == 'one report' and summary['rows_rewritten'] == 1
+
+
+def test_routes_default_to_published_scope(db_with_diagnostic, monkeypatch):
+    """Called with scope left at its default, both routes must stay inside the published kinds."""
+    primary(monkeypatch)
+    dry = json.loads(report.rerender_archive_dry_run(report_id=None).body)
+    assert dry['scope'] == 'published kinds only' and dry['rows_would_rewrite'] == 2
+    applied = json.loads(report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret').body)
+    assert applied['scope'] == 'published kinds only' and applied['rows_rewritten'] == 2
+    assert json.loads(rows(db_with_diagnostic)[VERIFY_ID][1])['report_markdown'].startswith('# Old')
+    opted_in = json.loads(report.rerender_archive_dry_run(report_id=None, scope='all').body)
+    assert opted_in['scope'] == 'every row including diagnostics' and opted_in['rows_would_rewrite'] == 1
+
+
 def test_post_accepted_only_when_primary_and_token_both_pass(db, monkeypatch):
     primary(monkeypatch)
     out = json.loads(report.rerender_archive_apply(report_id=None, x_rerender_token='s3cret').body)
