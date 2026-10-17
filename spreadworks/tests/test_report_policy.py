@@ -386,7 +386,10 @@ def test_field_label_formats_dte_buckets_not_blind_underscore_replace():
     assert field_label('1_5dte')=='1-5 DTE'
     assert field_label('6_20dte')=='6-20 DTE'
     assert field_label('21_365dte')=='21-365 DTE'
-    assert field_label('net_gex')=='net gex'  # ordinary fields unaffected
+    # 2026-10-17 (UX review #6): acronym tokens are upper-cased -- "net gex" read as a typo.
+    assert field_label('net_gex')=='net GEX'
+    assert field_label('net_gex_b')=='net GEX ($B)'   # explicit label, units spelled out
+    assert field_label('some_other_field')=='some other field'  # ordinary fields unaffected
     # Prefixed buckets (Surface section's real field names) — the first version of this fix
     # only handled the bare bucket; re-checked live 2026-10-09 and every "term "/"iv " prefixed
     # field on the actual Surface section still read "term 1 5dte" / "iv 6 20dte".
@@ -1392,7 +1395,11 @@ def test_fmt_number_rounds_raw_float_precision():
 
 def test_plain_value_rounds_float_not_raw_repr():
     assert plain_value(0.15139485927028395) == '0.1514'
-    assert plain_value({'median_iv': 0.15139485927028395}) == 'median iv 0.1514'
+    # 2026-10-17 (UX review #7): an IV field stored as a fraction is shown as a percentage --
+    # a trader reads 0.2202 as a typo, not as 22%.
+    assert plain_value({'median_iv': 0.15139485927028395}) == 'median IV 15.1%'
+    # A field with no unit convention keeps the rounded number it always had.
+    assert plain_value({'some_other_field': 0.15139485927028395}) == 'some other field 0.1514'
 
 def test_narrative_html_rounds_float_not_raw_repr():
     """Same bug, opening-summary path: thesis.volatility_context.SPY.median_iv showed full

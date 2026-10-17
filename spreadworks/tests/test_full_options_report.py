@@ -566,7 +566,8 @@ def test_fmt_value_single_key_dict_inlines_not_boxed():
     organize. A single-key dict with a scalar value now inlines as plain "label: value"; a
     real multi-key dict still gets the kvblock."""
     assert 'kvblock' not in report._fmt_value({'net_gex_b': -0.04})
-    assert 'net gex b:' in report._fmt_value({'net_gex_b': -0.04})
+    # 2026-10-17 (UX review #6): the stray lower-cased "b" for billions is now spelled out.
+    assert 'net GEX ($B):' in report._fmt_value({'net_gex_b': -0.04})
     assert 'kvblock' in report._fmt_value({'a': 1, 'b': 2})
     # A single key whose value is itself a dict/list still needs real structure, not inlining.
     assert 'kvblock' in report._fmt_value({'walls': {'put': 700.0, 'call': 710.0}})
