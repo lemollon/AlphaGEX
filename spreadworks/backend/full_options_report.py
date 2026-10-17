@@ -775,22 +775,28 @@ def latest_report():
     return payload
 
 @router.get('/rerender-archive')
-def rerender_archive_dry_run(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$')):
+def rerender_archive_dry_run(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$'),
+                             scope: str = Query('published', pattern='^(published|all)$')):
     """Operator diagnostic: what re-rendering the stored archive WOULD change. Writes nothing,
-    fetches no market data; markdown is regenerated only from each report's own stored blocks."""
+    fetches no market data; markdown is regenerated only from each report's own stored blocks.
+    scope=published (default) covers only the kinds the archive serves; scope=all also walks the
+    diagnostic/verification rows, which are never served and carry empty blocks by design."""
     from .report_rerender import run
     ensure_tables()
-    return JSONResponse(run(engine, apply=False, report_id=report_id), headers={'Cache-Control': 'no-store'})
+    return JSONResponse(run(engine, apply=False, report_id=report_id, published_only=scope != 'all'),
+                        headers={'Cache-Control': 'no-store'})
 
 @router.post('/rerender-archive')
 def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9]{24}$'),
+                           scope: str = Query('published', pattern='^(published|all)$'),
                            x_rerender_token: str | None = Header(None)):
     """Operator-triggered, never scheduled. Requires the process to identify itself as the primary service (RENDER_SERVICE_ID equal to
     REPORT_RERENDER_SERVICE_ID, IS_PULL_REQUEST not set) and the X-Rerender-Token header to equal the
     REPORT_RERENDER_TOKEN env var; refuses (fail closed) when either check cannot be passed. Backs up each
     report_markdown to report_markdown_pre_rerender, then rewrites ONLY report_markdown (plus the
     report_markdown_rendered_policy record). Idempotent; a failing row keeps its original markdown
-    and does not stop the run."""
+    and does not stop the run. scope=published (the default) rewrites only the kinds the archive
+    serves, so no diagnostic row is touched; scope=all opts into the whole table."""
     import hmac, os
     # Defence in depth, not a substitute for deciding the previews/shared-database question: PR previews
     # inherit the production DATABASE_URL and service-level env vars (including the token below), so the
@@ -810,7 +816,8 @@ def rerender_archive_apply(report_id: str | None = Query(None, pattern='^[a-f0-9
         raise HTTPException(403, detail='Re-render requires a valid X-Rerender-Token')
     from .report_rerender import run
     ensure_tables()
-    return JSONResponse(run(engine, apply=True, report_id=report_id), headers={'Cache-Control': 'no-store'})
+    return JSONResponse(run(engine, apply=True, report_id=report_id, published_only=scope != 'all'),
+                        headers={'Cache-Control': 'no-store'})
 
 @router.get('/producer-status')
 def producer_status():
