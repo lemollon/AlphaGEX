@@ -1,5 +1,5 @@
 /**
- * CALLDIAG — IWM 10d/20d call diagonal, PAPER sleeve on FLAME accounts,
+ * ANVIL (internally CALLDIAG — env keys, tables and symbols keep that spelling) — IWM 10d/20d call diagonal, PAPER sleeve on FLAME accounts,
  * unlocked automatically once an account's equity clears CALLDIAG_MIN_EQUITY
  * (Leron, 2026-09-27: "Yes do that" to the profits-only CD1 spec in
  * dev/meltup/RESULT_calldiag_profits_only.md; unlock threshold raised to
@@ -93,6 +93,8 @@ export const CALLDIAG_MIN_PARITY_STRIKES = 2
  *         only. Fails CLOSED: any unrecognized value resolves to 'off'.
  */
 export function getCallDiagMode(): CallDiagMode {
+  // Sleeve is named ANVIL; this env key deliberately keeps the CALLDIAG spelling — it is already set in the
+  // Render dashboard and a rename would read as unset (off).
   const raw = (process.env.CALLDIAG_MODE ?? '').trim().toLowerCase()
   if (raw === 'paper' || raw === 'live') return raw
   return 'off'
@@ -105,6 +107,8 @@ export function getCallDiagMode(): CallDiagMode {
  * than silently unlocking at $0.
  */
 export function getCallDiagMinEquity(): number {
+  // Sleeve is named ANVIL; this env key deliberately keeps the CALLDIAG spelling — it is already set in the
+  // Render dashboard and a rename would read as unset (off).
   const raw = Number(process.env.CALLDIAG_MIN_EQUITY)
   if (!Number.isFinite(raw) || raw <= 0) return CALLDIAG_MIN_EQUITY_DEFAULT
   return raw

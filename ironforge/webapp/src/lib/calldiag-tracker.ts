@@ -1,5 +1,5 @@
 /**
- * CALLDIAG — DB + Tradier orchestration for the IWM 10d/20d call diagonal
+ * ANVIL (internally CALLDIAG — env keys, tables and symbols keep that spelling) — DB + Tradier orchestration for the IWM 10d/20d call diagonal
  * PAPER sleeve. See lib/calldiag.ts for the pure construction/gate math this
  * drives, and its header for the research this replicates.
  *
@@ -127,7 +127,7 @@ async function logDecision(
       [logDate, opts?.person ?? null, opts?.accountType ?? null, reason, opts?.rv5Pct ?? null, opts?.spot ?? null],
     )
   } catch (e) {
-    console.warn(`[calldiag] decision log failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[ANVIL] decision log failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
   }
 }
 
@@ -194,7 +194,7 @@ async function getCallDiagMarketState(tradeDate: string): Promise<CallDiagMarket
       rv5Pct = computeTrailing5dRealizedVolPct(returns)
     }
   } catch (e) {
-    console.warn(`[calldiag] rv5 history read failed (non-fatal, stands down): ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[ANVIL] rv5 history read failed (non-fatal, stands down): ${e instanceof Error ? e.message : String(e)}`)
   }
   const standDown = isCallDiagStandDown(rv5Pct)
 
@@ -269,7 +269,7 @@ export async function runCallDiagEntryTick(ct: Date): Promise<string> {
       return 'calldiag:paused(edge_decay)'
     }
   } catch (e) {
-    console.warn(`[edge-decay] CallDiag pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[edge-decay] ANVIL pause check failed (non-fatal, trading continues): ${e instanceof Error ? e.message : String(e)}`)
   }
 
   const accounts = await resolveEligibleAccounts('flame')
@@ -321,7 +321,7 @@ export async function runCallDiagEntryTick(ct: Date): Promise<string> {
     out.push(`${acct.name}:opened@${trade.shortStrike}/${trade.longStrike}`)
   }
 
-  return out.length ? `calldiag[${out.join(' ')}]` : ''
+  return out.length ? `ANVIL[${out.join(' ')}]` : ''
 }
 
 /**
@@ -399,7 +399,7 @@ export async function runCallDiagExitTick(ct: Date): Promise<string> {
       const { recordEdgeDecayClose } = await import('./edge-decay')
       await recordEdgeDecayClose('calldiag', pnl / Math.max(1, CALLDIAG_MAX_CONTRACTS))
     } catch (e) {
-      console.warn(`[edge-decay] CallDiag exit hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+      console.warn(`[edge-decay] ANVIL exit hook failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
     }
     out.push(`${p.person}:closed@${pnl.toFixed(2)}`)
   }
@@ -439,7 +439,7 @@ async function settleCallDiagEdgeDecayShadow(today: string): Promise<void> {
       })
     }
   } catch (e) {
-    console.warn(`[edge-decay] CallDiag shadow settlement failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(`[edge-decay] ANVIL shadow settlement failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`)
   }
 }
 

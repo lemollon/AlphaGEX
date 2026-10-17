@@ -1,5 +1,5 @@
 /**
- * PAPER-ONLY RESEARCH TRACKER — "dynamic hedge V2" (Leron, 2026-09-26: "Put on
+ * QUENCH (internally afternoon-spread — env keys, tables, route path and symbols keep that spelling) — PAPER-ONLY RESEARCH TRACKER — "dynamic hedge V2" (Leron, 2026-09-26: "Put on
  * paper to track it"). Independently re-derived and placebo-tested in
  * C:\Users\lemol\dev\meltup\VERIFY_dynamic_hedge_v2v3.md and
  * RESULT_profit_protection_h1_h5.md — read those before touching this file.

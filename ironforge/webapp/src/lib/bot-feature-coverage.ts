@@ -291,19 +291,19 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     flag: 'EDGE_DECAY_MODE',
     envVars: ['EDGE_DECAY_MODE'],
     description:
-      "One-sided CUSUM edge-decay alarm (edge-decay.ts). off|notify|enforce; enforce auto-pauses new FLINT/CallDiag " +
+      "One-sided CUSUM edge-decay alarm (edge-decay.ts). off|notify|enforce; enforce auto-pauses new FLINT/ANVIL " +
       "entries (never EBB) after a Page's-test alarm, resuming after a 10-trade shadow block averages > 0.",
     coverage: {
       production: {
         status: 'covered',
-        note: "enforce pauses tryOpenFlint/CallDiag's paper unlock for every account this scan cycle touches, including FLAME's production leg.",
+        note: "enforce pauses tryOpenFlint/ANVIL's paper unlock for every account this scan cycle touches, including FLAME's production leg.",
       },
-      sandbox: { status: 'covered', note: "Same pause applies to every sandbox account's FLINT/CallDiag entries." },
+      sandbox: { status: 'covered', note: "Same pause applies to every sandbox account's FLINT/ANVIL entries." },
       customer: {
         status: 'n/a',
         note:
-          "Governs FLINT and CallDiag pause state only, and NEITHER strategy is ever mirrored to app customers today " +
-          "(FLINT: see FLINT_MODE's customer exclusion; CallDiag: paper-only, no customer mirroring exists at all). " +
+          "Governs FLINT and ANVIL pause state only, and NEITHER strategy is ever mirrored to app customers today " +
+          "(FLINT: see FLINT_MODE's customer exclusion; ANVIL: paper-only, no customer mirroring exists at all). " +
           "There is no customer-facing effect to cover or exclude. Revisit if either strategy ever ships to customers.",
       },
     },
@@ -312,7 +312,7 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     flag: 'CALLDIAG_MODE',
     envVars: ['CALLDIAG_MODE', 'CALLDIAG_MIN_EQUITY'],
     description:
-      "CallDiag — IWM 10d/20d call diagonal, PAPER-ONLY sleeve on FLAME accounts, unlocked automatically once an " +
+      "ANVIL — IWM 10d/20d call diagonal, PAPER-ONLY sleeve on FLAME accounts, unlocked automatically once an " +
       "account's equity clears CALLDIAG_MIN_EQUITY (calldiag.ts).",
     coverage: {
       production: {
@@ -323,7 +323,7 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
       customer: {
         status: 'excluded',
         reason:
-          "CallDiag is an internal paper-only research sleeve on FLAME's own accounts; the spec was paper-only from " +
+          "ANVIL is an internal paper-only research sleeve on FLAME's own accounts; the spec was paper-only from " +
           "approval, and it is never referenced under customer-executor/. Deliberate scope, not an oversight.",
         approvedBy: "Leron, 2026-09-27 ('Yes do that' to the profits-only CD1 spec) — paper-only was the explicit ask.",
       },
@@ -333,7 +333,7 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     flag: 'AFTERNOON_SPREAD_PAPER',
     envVars: ['AFTERNOON_SPREAD_PAPER'],
     description:
-      "Paper-only research tracker for the 'dynamic hedge V2' lead (afternoon-spread.ts / afternoon-spread-tracker.ts). " +
+      "QUENCH, a paper-only research tracker for the 'dynamic hedge V2' lead (afternoon-spread.ts / afternoon-spread-tracker.ts). " +
       "Logs gate_pass/gate_skip; never places an order.",
     coverage: {
       production: {

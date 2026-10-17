@@ -10207,7 +10207,7 @@ async function scanBot(bot: BotDef): Promise<void> {
         const spreadTick = await runAfternoonSpreadTick(ct)
         if (spreadTick) console.log(`[scanner] ${spreadTick}`)
       } catch (e) {
-        console.error('[scanner] afternoon-spread paper tracker failed:', e)
+        console.error('[scanner] QUENCH paper tracker failed:', e)
       }
     }
 
@@ -10228,7 +10228,7 @@ async function scanBot(bot: BotDef): Promise<void> {
         const cdEntry = await runCallDiagEntryTick(ct)
         if (cdEntry) console.log(`[scanner] ${cdEntry}`)
       } catch (e) {
-        console.error('[scanner] CALLDIAG paper tracker failed:', e)
+        console.error('[scanner] ANVIL paper tracker failed:', e)
       }
     }
 

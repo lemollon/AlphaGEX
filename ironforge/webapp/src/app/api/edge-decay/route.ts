@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/edge-decay — operator surface for the edge-decay CUSUM alarm
- * (FLINT, CallDiag, EBB). Read-only: current EDGE_DECAY_MODE, each
+ * (FLINT, ANVIL, EBB). Read-only: current EDGE_DECAY_MODE, each
  * strategy's live CUSUM statistic / status / calibrated (mu0, k, h), and the
  * most recent alarm/resume log rows. See lib/edge-decay.ts for the state
  * machine this reads.
