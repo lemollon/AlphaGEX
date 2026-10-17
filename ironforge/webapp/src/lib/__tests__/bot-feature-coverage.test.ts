@@ -44,7 +44,7 @@ import { BOT_FEATURE_COVERAGE, type AccountKind, type FeatureCoverage } from '..
 const LIB_DIR = path.resolve(__dirname, '..')
 
 const FLAG_TOKEN_RE =
-  /\b(FLAME_[A-Z][A-Z0-9_]*|SPARK_[A-Z][A-Z0-9_]*|FLINT_[A-Z][A-Z0-9_]*|EBB_[A-Z][A-Z0-9_]*|CUSTOMER_[A-Z][A-Z0-9_]*|CALLDIAG_[A-Z][A-Z0-9_]*|IRONFORGE_ASSIGNMENT[A-Z0-9_]*)\b/g
+  /\b(FLAME_[A-Z][A-Z0-9_]*|SPARK_[A-Z][A-Z0-9_]*|FLINT_[A-Z][A-Z0-9_]*|EBB_[A-Z][A-Z0-9_]*|CUSTOMER_[A-Z][A-Z0-9_]*|CALLDIAG_[A-Z][A-Z0-9_]*|STOKE_[A-Z][A-Z0-9_]*|AFTERNOON_SPREAD_[A-Z][A-Z0-9_]*|IRONFORGE_ASSIGNMENT[A-Z0-9_]*)\b/g
 
 /**
  * SCREAMING_SNAKE_CASE tokens matching the flag prefixes that are NOT env
@@ -57,6 +57,8 @@ const KNOWN_NON_FLAG_TOKENS = new Set<string>([
   'CUSTOMER_FLINT_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
   'CUSTOMER_ORDER_CLOSED', // audit_events event_type string literal (executor.ts)
   'CUSTOMER_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
+  'CUSTOMER_QUENCH_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
+  'CUSTOMER_STOKE_ORDER_PLACED', // audit_events event_type string literal (executor.ts)
   'CUSTOMER_PROFIT_FLOOR', // NOT an env var — referenced only in a docstring ("CUSTOMER_DEPOSIT_FLOOR
                             // (CUSTOMER_PROFIT_FLOOR in spirit...)", contracts.ts) explaining the flag's
                             // real name is CUSTOMER_DEPOSIT_FLOOR; no process.env read anywhere uses this string
@@ -74,9 +76,25 @@ const KNOWN_NON_FLAG_TOKENS = new Set<string>([
   'FLINT_BP_FLOOR_PER_', // regex artifact of FLINT_BP_FLOOR_PER_CONTRACT (word-boundary split); see next entry
   'FLINT_BP_FLOOR_PER_CONTRACT', // numeric constant (flint.ts/scanner.ts)
   'FLINT_COMMISSION_PER_CONTRACT', // numeric constant
+  'FLAME_MIN_EQUITY_DEFAULT', // numeric default = 2000 for FLAME_MIN_EQUITY (tradier.ts), not an env var
+  'SPARK_MIN_EQUITY_DEFAULT', // numeric default = 5000 for SPARK_MIN_EQUITY (tradier.ts), not an env var
+  'FLINT_FLOOR_', // regex artifact: word-boundary split of FLINT_FLOOR_AMOUNT in a line-wrapped comment (scanner.ts)
+  'FLAME_V2_CALL_SPREAD', // log/label string in tradier.ts and scanner.ts; the env var is FLAME_V2_CALL_SPREAD_MODE
+  'FLAME_HEADLINE_VIX_CEILING', // numeric constant = 0.925 (scanner.ts), not an env var
+  'FLAME_HEADLINE_MIN_CREDIT', // numeric constant = 0.20 (scanner.ts), not an env var
+  'SPARK_V2_RELAXED_VIX_CEILING', // numeric constant = 0.975 (scanner.ts), not an env var
+  'FLINT_PRIOR_SPY_UP_FILTER', // name appears only in a scanner.ts comment; the filter is unconditional code in tryOpenFlint, no process.env read
   'FLINT_CONTEXT_TABLE', // DB table name string (flint.ts)
   'FLINT_GAMMA_UPSIZE_MIN_SESSIONS', // numeric constant (scanner.ts)
   'FLINT_TABLE', // DB table name string (flint.ts)
+  'STOKE_BP_FLOOR_PER_CONTRACT', // numeric constant = 200 (stoke.ts)
+  'STOKE_COMMISSION_PER_CONTRACT', // numeric constant (stoke.ts)
+  'STOKE_FLOOR_AMOUNT_DEFAULT', // numeric default for STOKE_FLOOR_AMOUNT (stoke.ts), not an env var
+  'STOKE_GUARD_BUFFER_DEFAULT', // numeric default for STOKE_GUARD_BUFFER (stoke.ts), not an env var
+  'STOKE_MAX_CONTRACTS_DEFAULT', // numeric default for STOKE_MAX_CONTRACTS (stoke.ts), not an env var
+  'STOKE_MIN_CREDIT_DEFAULT', // numeric default for STOKE_MIN_CREDIT (stoke.ts), not an env var
+  'STOKE_OTM_OFFSET_DEFAULT', // numeric default for STOKE_OTM_OFFSET (stoke.ts), not an env var
+  'STOKE_TABLE', // DB table name string = 'flame_stoke_positions' (scanner.ts)
   'SPARK_BP_CAP_NEG', // numeric constant (tradier.ts)
   'SPARK_BP_CAP_POS', // numeric constant (tradier.ts)
   'SPARK_FAST_MONITOR_INTERVAL_MS', // numeric constant (tradier.ts)
@@ -129,7 +147,14 @@ const CUSTOMER_EXECUTOR_FILES = listTsFilesRecursive(CUSTOMER_EXECUTOR_DIR)
 const TRADIER_PATH = path.join(LIB_DIR, 'tradier.ts')
 const SCANNER_PATH = path.join(LIB_DIR, 'scanner.ts')
 
-const SCAN_TARGET_FILES = [TRADIER_PATH, SCANNER_PATH, ...CUSTOMER_EXECUTOR_FILES, ...SIZING_FILES]
+const SCAN_TARGET_FILES = [
+  TRADIER_PATH,
+  SCANNER_PATH,
+  ...CUSTOMER_EXECUTOR_FILES,
+  ...SIZING_FILES,
+  path.join(LIB_DIR, 'stoke.ts'),
+  path.join(LIB_DIR, 'afternoon-spread-live.ts'),
+]
 
 function discoverFlagTokens(files: string[]): Set<string> {
   const found = new Set<string>()
@@ -208,6 +233,8 @@ const internalReachingFiles = [
   path.join(LIB_DIR, 'spark-favorable-upsize.ts'),
   path.join(LIB_DIR, 'edge-decay.ts'),
   path.join(LIB_DIR, 'afternoon-spread.ts'),
+  path.join(LIB_DIR, 'stoke.ts'),
+  path.join(LIB_DIR, 'afternoon-spread-live.ts'),
 ]
 const internalReachingText = internalReachingFiles.map(readIfExists).join('\n')
 

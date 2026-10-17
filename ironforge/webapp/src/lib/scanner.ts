@@ -91,7 +91,7 @@ import { forgeBriefingsTick } from './forgeBriefings/tick'
 import { isCustomersDbConfigured, customerQuery } from './customers-db'
 import { getCTNow } from './pt-tiers'
 import { runTrialDayClose, marketDateKey, isAfterTrialCloseTime } from './enrollment/trial-close'
-import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
+import { mirrorOpenToCustomers, mirrorFlintOpenToCustomers, mirrorStokeOpenToCustomers, mirrorCloseToCustomers, retryFailedCustomerCloses } from './customer-executor/executor'
 import { buildTradeOpenedEvent, buildTradeClosedEvent } from './push/trade-events'
 import { buildBigMoveEvent, buildDailySummaryEvent, bigMoveTier, positionRangePct } from './push/alert-events'
 import { dispatchToCustomers } from './push/dispatch'
@@ -5757,6 +5757,17 @@ async function tryOpenStoke(bot: BotDef, ct: Date): Promise<string> {
         `@ $${credit.callCredit.toFixed(2)} (spot ${spot.toFixed(2)}, cushion=$${gate.cushion?.toFixed(2) ?? 'n/a'}) mode=${mode}`,
       )
       paperDecision = 'traded'
+
+      // CUSTOMER_STOKE: mirror to activated FLAME customers. Fire-and-forget, never throws
+      // into the trading path — mirrorStokeOpenToCustomers catches everything internally.
+      // No-ops with zero DB/broker calls unless BOTH CUSTOMER_EXECUTOR_ENABLED and
+      // CUSTOMER_STOKE are set. width/positionId reuse the exact values just written to
+      // the paper ledger above (same trade, same day).
+      void mirrorStokeOpenToCustomers({
+        botName: 'flame', positionId, ticker: 'SPY', expiration,
+        callShort, callLong, spreadWidth: width, credit: credit.callCredit,
+        tradeDate: asofDate,
+      })
     }
   }
 
@@ -5866,6 +5877,86 @@ async function closeStokeAtRiskBeforeBell(ct: Date): Promise<string> {
 
     const realizedPnl = Math.round((entryCredit - costToClose) * 100 * contracts * 100) / 100
 
+    // ───────────────────────────────────────────────────────────────────────
+    // BROKER FIRST, LEDGER SECOND (fixed 2026-10-17).
+    //
+    // This block used to write `status='closed'` BEFORE asking the broker. On
+    // 2026-10-15 the buy-back was rejected on all four accounts while the
+    // ledger had already booked a loss at `costToClose`. SPY then settled with
+    // the short call $0.21 OTM, so every account actually KEPT its credit —
+    // production Flame's true result was +$15 against a booked −$26, a $41
+    // real-money error, ~$205 across five rows.
+    //
+    // It was unrecoverable because `settleStokeExpired` selects
+    // `WHERE status = 'open'`: the premature 'closed' write put those rows
+    // permanently out of settlement's reach. A rejected order must therefore
+    // leave the row OPEN so settlement can book the real outcome at expiry.
+    // ───────────────────────────────────────────────────────────────────────
+    const isLiveBrokerRow =
+      (p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live'
+
+    // Paper rows have no broker to ask, so they book straight through — the
+    // behaviour for them is byte-for-byte what it was before this fix.
+    let brokerAccepted = !isLiveBrokerRow
+
+    if (isLiveBrokerRow) {
+      if (!p.person) {
+        console.error(
+          `[scanner] STOKE LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
+          `refusing to guess which account to close. Row left OPEN for settlement.`,
+        )
+      } else {
+        try {
+          const placed = await placeStokeOrderAllAccounts(
+            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
+            { close: true, targetPerson: p.person },
+          )
+          // An empty map means every account was skipped or rejected —
+          // placeStokeOrderAllAccounts logs each one and never throws. That is
+          // NOT a close, and treating it as one is the original bug.
+          brokerAccepted = Object.keys(placed).length > 0
+          if (!brokerAccepted) {
+            console.error(
+              `[scanner] STOKE LIVE GUARD CLOSE placed NO order for ${p.position_id} ` +
+              `(${p.person}, ${p.account_type}) — zero accounts accepted. Row left OPEN so ` +
+              `settleStokeExpired books the real expiry outcome.`,
+            )
+            void sendOpsPush({
+              title: `STOKE guard placed NO close order for ${p.position_id}`,
+              body: `${p.person} ${p.account_type} short ${shortStrike}C — zero accounts accepted the ` +
+                `buy-back. The position is still open at the broker AND still open in the ledger, so ` +
+                `settlement will book the true outcome. Reconcile the broker account directly.`,
+              severity: 'critical',
+            }).catch(() => { /* an alert must never take a scan cycle down */ })
+          }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          console.error(`[scanner] STOKE LIVE GUARD CLOSE FAILED ${p.position_id}: ${msg}`)
+          void sendOpsPush({
+            title: `STOKE assignment guard FAILED to close ${p.position_id}`,
+            body: `${p.person} ${p.account_type} short ${shortStrike}C — broker buy-back failed (${msg}). ` +
+              `The ledger row is left OPEN on purpose so settlement books the real outcome; the real ` +
+              `position may still be open. Reconcile the broker account directly.`,
+            severity: 'critical',
+          }).catch(() => { /* an alert must never take a scan cycle down */ })
+          void postOpsAlert({
+            botName: 'flame',
+            title: 'STOKE assignment guard could NOT close at-risk position',
+            body: `${p.position_id} (${p.person}, ${p.account_type}) short ${shortStrike}C buy-back failed: ${msg}`,
+            severity: 'critical',
+          }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
+        }
+      }
+    }
+
+    if (!brokerAccepted) {
+      // Left open deliberately. settleStokeExpired (WHERE status='open') will
+      // book intrinsic against SPY's official close, which is the outcome that
+      // actually happened.
+      out.push(`${p.position_id}=broker_close_failed_left_open`)
+      continue
+    }
+
     const claimed = await dbExecute(
       `UPDATE ${STOKE_TABLE}
          SET status = 'closed', close_reason = 'assignment_guard', close_price = $1,
@@ -5881,38 +5972,6 @@ async function closeStokeAtRiskBeforeBell(ct: Date): Promise<string> {
       `[scanner] STOKE GUARD CLOSED ${p.position_id} spot=${spot.toFixed(2)} ` +
       `short ${shortStrike}C buffer=$${buffer.toFixed(2)} cost=$${costToClose.toFixed(2)} pnl=$${realizedPnl.toFixed(2)}`,
     )
-
-    if ((p.account_type === 'production' || p.account_type === 'sandbox') && p.mode === 'live') {
-      if (!p.person) {
-        console.error(
-          `[scanner] STOKE LIVE GUARD CLOSE SKIPPED ${p.position_id}: no person on a ${p.account_type} row — ` +
-          `refusing to guess which account to close.`,
-        )
-      } else {
-        try {
-          await placeStokeOrderAllAccounts(
-            'SPY', expiration, shortStrike, longStrike, contracts, costToClose, String(p.position_id),
-            { close: true, targetPerson: p.person },
-          )
-        } catch (e: unknown) {
-          const msg = e instanceof Error ? e.message : String(e)
-          console.error(`[scanner] STOKE LIVE GUARD CLOSE FAILED ${p.position_id}: ${msg}`)
-          void sendOpsPush({
-            title: `STOKE assignment guard FAILED to close ${p.position_id}`,
-            body: `${p.person} ${p.account_type} short ${shortStrike}C — broker buy-back failed (${msg}). ` +
-              `IronForge's own ledger already shows this closed; the real position may still be open. ` +
-              `Reconcile the broker account directly.`,
-            severity: 'critical',
-          }).catch(() => { /* an alert must never take a scan cycle down */ })
-          void postOpsAlert({
-            botName: 'flame',
-            title: 'STOKE assignment guard could NOT close at-risk position',
-            body: `${p.position_id} (${p.person}, ${p.account_type}) short ${shortStrike}C buy-back failed: ${msg}`,
-            severity: 'critical',
-          }).catch(() => { /* a Discord outage must never take a scan cycle down */ })
-        }
-      }
-    }
     out.push(`${p.position_id}=guarded@${spot.toFixed(2)}`)
   }
   return out.length ? `STOKE guard[${out.join(' ')}]` : ''
@@ -10208,6 +10267,28 @@ async function scanBot(bot: BotDef): Promise<void> {
         if (spreadTick) console.log(`[scanner] ${spreadTick}`)
       } catch (e) {
         console.error('[scanner] QUENCH paper tracker failed:', e)
+      }
+
+      // QUENCH LIVE — real orders, separate switch (AFTERNOON_SPREAD_MODE=live),
+      // separate module (lib/afternoon-spread-executor.ts) so the paper tracker
+      // above keeps its "imports no order function" guarantee. Both calls no-op
+      // with zero DB and zero broker calls under any other value, so this block
+      // is inert until the switch is set.
+      //
+      // The guard runs BEFORE the entry tick on purpose: within the final three
+      // minutes, buying back an at-risk short matters more than opening a new
+      // one, and a cycle that did both would be racing itself. SPY options
+      // assign rather than cash-settle, so an in-the-money short leg left to
+      // expire becomes 100 short shares per contract — a defined-risk spread
+      // with an undefined overnight equity position attached.
+      try {
+        const { runQuenchLiveTick, closeQuenchAtRiskBeforeBell } = await import('./afternoon-spread-executor')
+        const quenchGuard = await closeQuenchAtRiskBeforeBell(ct, assignmentGuardWindow(ct).endHHMM)
+        if (quenchGuard) console.log(`[scanner] ${quenchGuard}`)
+        const quenchLive = await runQuenchLiveTick(ct)
+        if (quenchLive) console.log(`[scanner] ${quenchLive}`)
+      } catch (e) {
+        console.error('[scanner] QUENCH live executor failed:', e)
       }
     }
 

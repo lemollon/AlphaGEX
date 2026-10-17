@@ -42,6 +42,9 @@ import { decryptSecret } from '@/lib/crypto/secret-box'
 import { getProductionPauseState, canPlaceLiveOrders, isSparkCustomerEligible, isFlameCustomerEligible } from '@/lib/tradier'
 import { normalizeInstitutionSlug } from '@/lib/enrollment/eligibility'
 import { flintMaxLoss } from '@/lib/flint'
+import { decideStokeContractsForCushion, STOKE_BP_FLOOR_PER_CONTRACT, getStokeFloorAmount, stokeMaxLoss } from '../stoke'
+import { clampQuenchContracts } from '../afternoon-spread-live'
+import type { AfternoonSpreadSide } from '../afternoon-spread'
 import {
   canOpenForCustomer,
   condorCloseLegs,
@@ -53,6 +56,7 @@ import {
   evaluateFlintCushion,
   estimatePlannedHostRiskCents,
   sizeContracts,
+  sizeDiagonalContracts,
   spreadCloseLegs,
   spreadOpenLegs,
   type MlegLegSpec,
@@ -86,7 +90,18 @@ export interface MasterOpen {
    * 'call_spread' explicitly — inferring it from strikes alone would be ambiguous/wrong,
    * since a call spread also has callShort > 0 but putShort/putLong are 0 (not a condor).
    */
-  legKind?: 'condor' | 'put_spread' | 'call_spread'
+  legKind?: 'condor' | 'put_spread' | 'call_spread' | 'diagonal' | 'double_diagonal'
+  /**
+   * The LONG legs' expiration, for the two diagonal leg kinds only (ANVIL's
+   * single diagonal, HEARTH's double diagonal). `expiration` above stays the
+   * SHORT legs' date, so every existing single-expiry call site is untouched.
+   *
+   * Required whenever legKind is 'diagonal' or 'double_diagonal' — the leg
+   * builders throw without it rather than defaulting to `expiration`, because
+   * a diagonal silently collapsed onto one expiry is a different position with
+   * different margin, not a degraded version of the same one.
+   */
+  backExpiration?: string // YYYY-MM-DD
   /**
    * Today's VIX-decay ratio (same signal FLINT's day-eligibility reads), for
    * CUSTOMER_FAST_START (B1) and CUSTOMER_CALM_UPSIZE. Optional/null-safe: every
@@ -106,8 +121,15 @@ export interface MasterOpen {
   xspSwap?: { eligible: boolean; xspCreditPerContract: number | null }
 }
 
-export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): 'condor' | 'put_spread' | 'call_spread' {
+export type CustomerLegKind = 'condor' | 'put_spread' | 'call_spread' | 'diagonal' | 'double_diagonal'
+
+export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): CustomerLegKind {
   if (m.legKind) return m.legKind
+  // The inference stays SINGLE-EXPIRY ONLY. A diagonal is never inferred from
+  // strikes — its strikes are indistinguishable from a vertical's, and the
+  // thing that makes it a diagonal (two expirations) is not in this input. Both
+  // diagonal kinds must be set explicitly by their sleeve, same rule FLINT's
+  // 'call_spread' follows.
   return m.callShort > 0 ? 'condor' : 'put_spread'
 }
 
@@ -627,6 +649,18 @@ async function mirrorOneOpen(
     return
   }
 
+  // 🚨 The diagonal kinds are REJECTED here, not fallen through. This chain's
+  // final branch is a single-expiry put vertical, so an unhandled 'diagonal' or
+  // 'double_diagonal' would place a vertical on the SHORT expiry — a different
+  // position with different margin, silently. `customer_positions` has one
+  // `expiration` column and no back-expiry, so the close path could not unwind
+  // it either. Lands when that column does.
+  if (legKind === 'diagonal' || legKind === 'double_diagonal') {
+    throw new Error(
+      `customer mirror cannot place '${legKind}' yet: customer_positions carries a single ` +
+      `expiration, so the back leg could neither be recorded nor closed. Refusing to place.`,
+    )
+  }
   const legs = legKind === 'call_spread'
     ? spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, mainContracts)
     : legKind === 'condor'
@@ -1051,6 +1085,409 @@ export async function mirrorFlintOpenToCustomers(m: FlintMasterOpen): Promise<vo
   }
 }
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────
+ * STOKE / QUENCH / ANVIL customer mirroring (CUSTOMER_STOKE, CUSTOMER_QUENCH,
+ * CUSTOMER_ANVIL) — same shape as the FLINT block above: each sleeve has its
+ * own default-OFF switch ('on' exact, fails closed) layered on TOP of
+ * isExecutorArmed(); off = zero DB/broker calls. Each entry point is
+ * `void`-called, catches everything, and marks a customer's claimed row
+ * status='error' (plus an urgent notifyOps) on a per-customer failure.
+ *
+ * The shared helpers below (prepareSleeveCustomer / claimAndPlaceSleeveSpread)
+ * are the FLINT gate chain and claim-then-place tail, factored once because
+ * STOKE and QUENCH differ only in sizing and leg shape.
+ * ─────────────────────────────────────────────────────────────────────────
+ */
+
+/** CUSTOMER_STOKE switch. Default OFF; only the exact string 'on' arms it — same form as isCustomerFlintEnabled(). */
+export function isCustomerStokeEnabled(): boolean {
+  return String(process.env.CUSTOMER_STOKE ?? '').trim().toLowerCase() === 'on'
+}
+
+/** CUSTOMER_QUENCH switch. Default OFF; only the exact string 'on' arms it — same form as isCustomerFlintEnabled(). */
+export function isCustomerQuenchEnabled(): boolean {
+  return String(process.env.CUSTOMER_QUENCH ?? '').trim().toLowerCase() === 'on'
+}
+
+/** CUSTOMER_ANVIL switch. Default OFF; only the exact string 'on' arms it — same form as isCustomerFlintEnabled(). */
+export function isCustomerAnvilEnabled(): boolean {
+  return String(process.env.CUSTOMER_ANVIL ?? '').trim().toLowerCase() === 'on'
+}
+
+interface SleeveCustomerContext {
+  creds: { snaptradeUserId: string; userSecret: string }
+  accountId: string
+  snaptrade: ReturnType<typeof getSnapTrade>
+  /** LIVE buying power in cents — never the stale connect-time snapshot. */
+  bpCents: number
+}
+
+/**
+ * The gate chain every sleeve mirror shares, in FLINT's order: bot-account guard
+ * FIRST, then canOpenForCustomer, provider/account-ref/credentials, then a fresh
+ * live buying-power read. Returns null (after logging why) for any skip — FAILS CLOSED.
+ */
+async function prepareSleeveCustomer(
+  c: EligibleRow, label: string, agent: string, positionId: string, killSwitchEngaged: boolean,
+): Promise<SleeveCustomerContext | null> {
+  const botGuard = checkCustomerAgainstBotAccounts(c)
+  if (botGuard.blocked) {
+    const detail = describeBotAccountBlock(botGuard)
+    console.error(`[customer-executor] ${label} OPEN BLOCKED for user ${c.user_id.slice(0, 8)}: ${detail}`)
+    void notifyOps(
+      `IronForge: customer ${label} OPEN blocked (bot account guard)`,
+      `${agent.toUpperCase()} ${positionId} → user ${c.user_id.slice(0, 8)}: ${detail}`,
+      true,
+    )
+    return null
+  }
+
+  const gate = canOpenForCustomer({
+    executorArmed: isExecutorArmed(),
+    killSwitchEngaged,
+    subscriptionStatus: c.subscription_status,
+    customerPaused: c.activation_status === 'paused',
+    activationActive: c.activation_status === 'active' || c.activation_status === 'paused',
+    connectionActive: c.connection_status === 'active',
+  })
+  if (!gate.allow) { console.log(`[customer-executor] ${label} skip user ${c.user_id.slice(0, 8)}: ${gate.reason}`); return null }
+  if (c.provider !== 'snaptrade') { console.log(`[customer-executor] ${label} skip user ${c.user_id.slice(0, 8)}: unsupported_provider`); return null }
+  if (!c.external_account_ref_ciphertext) { console.log(`[customer-executor] ${label} skip user ${c.user_id.slice(0, 8)}: no_account_ref`); return null }
+
+  const creds = await loadSnapTradeCreds(c.user_id)
+  if (!creds) { console.log(`[customer-executor] ${label} skip user ${c.user_id.slice(0, 8)}: no_broker_credentials`); return null }
+  const accountId = decryptSecret(c.external_account_ref_ciphertext)
+  const snaptrade = getSnapTrade()
+
+  // Live buying power (fresh, same call the main leg sizes from). Unreadable = skip.
+  let bpCents: number | null = null
+  try {
+    const bal = await snaptrade.accountInformation.getUserAccountBalance({
+      userId: creds.snaptradeUserId, userSecret: creds.userSecret, accountId,
+    })
+    const balRows = Array.isArray(bal.data) ? (bal.data as Array<{ buying_power?: number | null; cash?: number | null }>) : []
+    const live = balRows[0]?.buying_power ?? balRows[0]?.cash ?? null
+    if (live != null && Number.isFinite(Number(live))) bpCents = Math.floor(Number(live) * 100)
+  } catch (e) {
+    console.error(`[customer-executor] ${label}: live buying-power fetch failed for user ${c.user_id} — skipping:`, e instanceof Error ? e.message : e)
+    return null
+  }
+  if (bpCents == null) { console.log(`[customer-executor] ${label} skip user ${c.user_id.slice(0, 8)}: buying_power_unavailable`); return null }
+
+  return { creds, accountId, snaptrade, bpCents }
+}
+
+interface SleeveSpreadOrder {
+  strategy: 'stoke' | 'quench'
+  label: string
+  auditEvent: string
+  legKind: 'call_spread' | 'put_spread'
+  agent: string
+  positionId: string
+  ticker: string
+  expiration: string
+  shortStrike: number
+  longStrike: number
+  contracts: number
+  collateralCents: number
+  detail: Record<string, unknown>
+}
+
+/** Claim (restart-proof idempotency) -> place a single-expiry vertical -> record. Leg kind is explicit, never inferred from strikes. */
+async function claimAndPlaceSleeveSpread(c: EligibleRow, ctx: SleeveCustomerContext, o: SleeveSpreadOrder): Promise<void> {
+  const isCall = o.legKind === 'call_spread'
+  const claimed = await customerExecute(
+    `INSERT INTO customer_positions
+       (user_id, activation_id, config_id, agent_code, source_position_id, broker_account_id,
+        ticker, expiration, put_short, put_long, call_short, call_long, status, leg_kind, strategy)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'claimed',$13,$14)
+     ON CONFLICT (source_position_id, user_id) DO NOTHING`,
+    [c.user_id, c.activation_id, c.config_id, o.agent, o.positionId, c.broker_account_id,
+     o.ticker, o.expiration,
+     isCall ? 0 : o.shortStrike, isCall ? 0 : o.longStrike,
+     isCall ? o.shortStrike : 0, isCall ? o.longStrike : 0,
+     o.legKind, o.strategy],
+  )
+  if (claimed === 0) return // another cycle already placed/claimed this exact (position, customer) pair
+
+  const rows = await customerQuery<{ id: string }>(
+    `SELECT id FROM customer_positions WHERE source_position_id = $1 AND user_id = $2 LIMIT 1`,
+    [o.positionId, c.user_id],
+  )
+  const rowId = rows[0]?.id
+  if (!rowId) return
+
+  const legs = spreadOpenLegs(
+    { ticker: o.ticker, expiration: o.expiration, short: o.shortStrike, long: o.longStrike, right: isCall ? 'C' : 'P' },
+    o.contracts,
+  )
+  const placed = await ctx.snaptrade.trading.placeMlegOrder({
+    userId: ctx.creds.snaptradeUserId,
+    userSecret: ctx.creds.userSecret,
+    accountId: ctx.accountId,
+    order_type: 'MARKET',
+    time_in_force: 'Day',
+    legs: toSdkLegs(legs),
+  })
+  const orderId = (placed.data as { brokerage_order_id?: string })?.brokerage_order_id ?? null
+
+  await customerExecute(
+    `UPDATE customer_positions
+        SET status = 'open', contracts = $2, collateral_cents = $3, open_order_id = $4,
+            opened_at = now(), updated_at = now(), detail_json = $5
+      WHERE id = $1`,
+    [rowId, o.contracts, o.collateralCents, orderId, JSON.stringify(o.detail)],
+  )
+  await customerExecute(
+    `INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, $2, $3)`,
+    [c.user_id, o.auditEvent, JSON.stringify({ source_position_id: o.positionId, agent: o.agent, contracts: o.contracts, order_id: orderId })],
+  ).catch(() => {})
+  void notifyOps(
+    `IronForge: ${o.agent.toUpperCase()} ${o.label} mirrored`,
+    `${o.contracts}x ${o.ticker} ${isCall ? 'call' : 'put'} spread for customer ${c.user_id.slice(0, 8)} (order ${orderId ?? 'n/a'})`,
+  )
+}
+
+/** Per-customer failure handling shared by all three sweeps: mark the claimed row 'error' and page ops. */
+async function recordSleeveOpenError(c: EligibleRow, label: string, agent: string, positionId: string, e: unknown): Promise<void> {
+  const msg = e instanceof Error ? e.message : String(e)
+  console.error(`[customer-executor] ${label} open mirror failed for user ${c.user_id}: ${msg}`)
+  await customerExecute(
+    `UPDATE customer_positions SET status = 'error', error = $3, updated_at = now()
+      WHERE source_position_id = $1 AND user_id = $2 AND status = 'claimed'`,
+    [positionId, c.user_id, msg.slice(0, 500)],
+  ).catch(() => {})
+  void notifyOps(`IronForge: customer ${label} OPEN failed`, `${agent.toUpperCase()} ${positionId} → user ${c.user_id.slice(0, 8)}: ${msg.slice(0, 180)}`, true)
+}
+
+/** STOKE (FLAME-only SPY 0DTE CALL credit spread) master open, as just written to flame_stoke_positions. */
+export interface StokeMasterOpen {
+  botName: string // 'flame' only — STOKE is FLAME-only
+  positionId: string
+  ticker: string
+  expiration: string // YYYY-MM-DD
+  callShort: number
+  callLong: number
+  spreadWidth: number
+  credit: number
+  /** YYYY-MM-DD trading day this decision belongs to. */
+  tradeDate: string
+}
+
+async function mirrorOneStokeOpen(c: EligibleRow, m: StokeMasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
+  const ctx = await prepareSleeveCustomer(c, 'STOKE', agent, m.positionId, killSwitchEngaged)
+  if (!ctx) return
+
+  // 1 contract, hard. STOKE's OWN cushion rule (stoke.ts; floor = STOKE_FLOOR_AMOUNT), never a re-derived max-loss
+  // formula. There is no per-customer STOKE realized-P&L ledger, so realized P&L is
+  // passed as 0 — the customer may risk exactly STOKE's standing floor, never more
+  // (conservative: it can only ever under-grant, same direction as every other gate here).
+  const decision = decideStokeContractsForCushion(1, 1, getStokeFloorAmount(), 0, m.callShort, m.callLong, m.credit)
+  if (decision.contracts < 1) {
+    console.log(`[customer-executor] STOKE skip user ${c.user_id.slice(0, 8)}: ${decision.gate.reason ?? 'skip:stoke_profit_cushion(unreadable)'}`)
+    return
+  }
+  // Option buying power must clear STOKE's per-contract floor (same number placeStokeOrderAllAccounts uses).
+  const requiredBpCents = STOKE_BP_FLOOR_PER_CONTRACT * 100 * decision.contracts
+  if (ctx.bpCents < requiredBpCents) {
+    console.log(`[customer-executor] STOKE skip user ${c.user_id.slice(0, 8)}: stoke_insufficient_bp(bp=${ctx.bpCents}<need=${requiredBpCents} cents)`)
+    return
+  }
+  const maxLossCents = Math.round(stokeMaxLoss(m.callShort, m.callLong, m.credit, decision.contracts) * 100)
+
+  await claimAndPlaceSleeveSpread(c, ctx, {
+    strategy: 'stoke', label: 'STOKE', auditEvent: 'CUSTOMER_STOKE_ORDER_PLACED', legKind: 'call_spread',
+    agent, positionId: m.positionId, ticker: m.ticker, expiration: m.expiration,
+    shortStrike: m.callShort, longStrike: m.callLong,
+    contracts: decision.contracts, collateralCents: maxLossCents,
+    detail: { bp_cents: ctx.bpCents, cushion: decision.gate.cushion, master_credit: m.credit },
+  })
+}
+
+/**
+ * Mirror a just-opened STOKE master position to every eligible FLAME customer. Fire-and-forget
+ * from tryOpenStoke (`void mirrorStokeOpenToCustomers(...)`); never throws.
+ */
+export async function mirrorStokeOpenToCustomers(m: StokeMasterOpen): Promise<void> {
+  try {
+    if (!isExecutorArmed() || !isCustomerStokeEnabled()) return
+    if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
+    const agent = m.botName.toLowerCase()
+    if (!CUSTOMER_AGENTS.has(agent) || agent !== 'flame') return // STOKE is FLAME-only
+
+    let killSwitchEngaged = true
+    try { killSwitchEngaged = (await getProductionPauseState(agent)).paused } catch { killSwitchEngaged = true }
+
+    const customers = await eligibleCustomers(agent)
+    for (const c of customers) {
+      try {
+        await mirrorOneStokeOpen(c, m, agent, killSwitchEngaged)
+      } catch (e) {
+        await recordSleeveOpenError(c, 'STOKE', agent, m.positionId, e)
+      }
+    }
+  } catch (e) {
+    console.error('[customer-executor] mirrorStokeOpenToCustomers sweep failed:', e instanceof Error ? e.message : e)
+  }
+}
+
+/** QUENCH master open. `side` picks the vertical: down_call -> CALL spread, up_put -> PUT spread. */
+export interface QuenchMasterOpen {
+  botName: string // 'flame'
+  positionId: string
+  ticker: string
+  expiration: string // YYYY-MM-DD
+  /** Which of QUENCH's two daily shapes fired. Carried explicitly — the leg kind is never inferred from strikes. */
+  side: AfternoonSpreadSide
+  shortStrike: number
+  longStrike: number
+  spreadWidth: number // $1
+  credit: number
+  tradeDate: string
+}
+
+async function mirrorOneQuenchOpen(c: EligibleRow, m: QuenchMasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
+  const legKind: 'call_spread' | 'put_spread' = m.side === 'down_call' ? 'call_spread' : 'put_spread'
+
+  const ctx = await prepareSleeveCustomer(c, 'QUENCH', agent, m.positionId, killSwitchEngaged)
+  if (!ctx) return
+
+  const cfg = (c.config_json ?? {}) as { max_deployment_pct?: number }
+  const pct = Number(cfg.max_deployment_pct)
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) { console.log(`[customer-executor] QUENCH skip user ${c.user_id.slice(0, 8)}: bad_config`); return }
+  const maxDeploymentCents = Math.floor((ctx.bpCents * pct) / 100)
+
+  // Collateral = (width - credit) * 100 per contract via the shared sizeContracts; the size
+  // it returns is then ALWAYS run through clampQuenchContracts (hard 1-lot cap, a constant —
+  // never read from env or config).
+  const sizing = sizeContracts({
+    buyingPowerCents: ctx.bpCents, maxDeploymentCents, spreadWidth: m.spreadWidth, creditPerSpread: m.credit,
+  })
+  const clamp = clampQuenchContracts(sizing.contracts)
+  if (clamp.contracts < 1) {
+    console.log(`[customer-executor] QUENCH skip user ${c.user_id.slice(0, 8)}: ${sizing.reason ?? clamp.reason ?? 'below_one_contract'}`)
+    return
+  }
+
+  await claimAndPlaceSleeveSpread(c, ctx, {
+    strategy: 'quench', label: 'QUENCH', auditEvent: 'CUSTOMER_QUENCH_ORDER_PLACED', legKind,
+    agent, positionId: m.positionId, ticker: m.ticker, expiration: m.expiration,
+    shortStrike: m.shortStrike, longStrike: m.longStrike,
+    contracts: clamp.contracts, collateralCents: sizing.collateralPerSpreadCents * clamp.contracts,
+    detail: { bp_cents: ctx.bpCents, max_deployment_pct: pct, side: m.side, master_credit: m.credit, clamp_reason: clamp.reason ?? null },
+  })
+}
+
+/**
+ * Mirror a just-opened QUENCH master position to every eligible customer.
+ *
+ * NOT CALLED FROM ANYWHERE YET, on purpose: QUENCH has no internal order path
+ * (afternoon-spread-live.ts holds the switch + 1-lot cap only; the order function is
+ * unbuilt), so there is no master open to mirror from. When that order path exists, wire
+ * `void mirrorQuenchOpenToCustomers(...)` immediately after its ledger row is written.
+ * Never throws.
+ */
+export async function mirrorQuenchOpenToCustomers(m: QuenchMasterOpen): Promise<void> {
+  try {
+    if (!isExecutorArmed() || !isCustomerQuenchEnabled()) return
+    if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
+    const agent = m.botName.toLowerCase()
+    if (!CUSTOMER_AGENTS.has(agent)) return
+
+    let killSwitchEngaged = true
+    try { killSwitchEngaged = (await getProductionPauseState(agent)).paused } catch { killSwitchEngaged = true }
+
+    const customers = await eligibleCustomers(agent)
+    for (const c of customers) {
+      try {
+        await mirrorOneQuenchOpen(c, m, agent, killSwitchEngaged)
+      } catch (e) {
+        await recordSleeveOpenError(c, 'QUENCH', agent, m.positionId, e)
+      }
+    }
+  } catch (e) {
+    console.error('[customer-executor] mirrorQuenchOpenToCustomers sweep failed:', e instanceof Error ? e.message : e)
+  }
+}
+
+/** ANVIL (IWM call diagonal) master open. `expiration` is the SHORT leg's date; `backExpiration` the long leg's. */
+export interface AnvilMasterOpen {
+  botName: string // 'flame'
+  positionId: string
+  ticker: string
+  expiration: string // front (short) YYYY-MM-DD
+  backExpiration: string // back (long) YYYY-MM-DD
+  callShort: number
+  callLong: number
+  /** Net DEBIT paid per 1-lot, in dollars. */
+  debit: number
+  tradeDate: string
+}
+
+async function mirrorOneAnvilOpen(c: EligibleRow, m: AnvilMasterOpen, agent: string, killSwitchEngaged: boolean): Promise<void> {
+  const ctx = await prepareSleeveCustomer(c, 'ANVIL', agent, m.positionId, killSwitchEngaged)
+  if (!ctx) return
+
+  const cfg = (c.config_json ?? {}) as { max_deployment_pct?: number }
+  const pct = Number(cfg.max_deployment_pct)
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 100) { console.log(`[customer-executor] ANVIL skip user ${c.user_id.slice(0, 8)}: bad_config`); return }
+  const maxDeploymentCents = Math.floor((ctx.bpCents * pct) / 100)
+
+  // A DEBIT structure: sizeDiagonalContracts charges the debit, not width-minus-credit.
+  const sizing = sizeDiagonalContracts({ buyingPowerCents: ctx.bpCents, maxDeploymentCents, debitPerSpread: m.debit })
+  if (sizing.contracts < 1) {
+    console.log(`[customer-executor] ANVIL skip user ${c.user_id.slice(0, 8)}: ${sizing.reason ?? 'below_one_contract'}`)
+    return
+  }
+
+  // FAIL-CLOSED until customer_positions can record the back leg. The table has ONE
+  // `expiration` column, so a diagonal's long leg could neither be recorded nor closed.
+  // Required migration (NOT applied here — a production customer-DB change):
+  //   ALTER TABLE customer_positions ADD COLUMN back_expiration DATE NULL
+  // Once that column exists: claim the row with back_expiration + leg_kind='diagonal' +
+  // strategy='anvil' (ON CONFLICT (source_position_id, user_id) DO NOTHING), place
+  // diagonalOpenLegs, and lift the matching guards at the two dispatch sites
+  // (mirrorOneOpen / closeOne). This throws BEFORE any claim or order, so nothing is
+  // written and no broker order call is made.
+  throw new Error(
+    `customer mirror cannot place 'diagonal' yet: customer_positions carries a single ` +
+    `expiration, so the back leg could neither be recorded nor closed. Refusing to place.`,
+  )
+}
+
+/**
+ * Mirror a just-opened ANVIL master position to every eligible customer.
+ *
+ * NOT CALLED FROM ANYWHERE, on purpose: ANVIL is a paper tracker (calldiag-tracker.ts) with
+ * no internal order path, and the mirror itself refuses every customer until
+ * customer_positions has a back_expiration column (see mirrorOneAnvilOpen). With the
+ * switch armed it fails closed loudly — per-customer error + urgent notifyOps — never
+ * by placing a mis-shaped order. Never throws.
+ */
+export async function mirrorAnvilOpenToCustomers(m: AnvilMasterOpen): Promise<void> {
+  try {
+    if (!isExecutorArmed() || !isCustomerAnvilEnabled()) return
+    if (!isCustomersDbConfigured() || !isSnapTradeConfigured()) return
+    const agent = m.botName.toLowerCase()
+    if (!CUSTOMER_AGENTS.has(agent)) return
+
+    let killSwitchEngaged = true
+    try { killSwitchEngaged = (await getProductionPauseState(agent)).paused } catch { killSwitchEngaged = true }
+
+    const customers = await eligibleCustomers(agent)
+    for (const c of customers) {
+      try {
+        await mirrorOneAnvilOpen(c, m, agent, killSwitchEngaged)
+      } catch (e) {
+        await recordSleeveOpenError(c, 'ANVIL', agent, m.positionId, e)
+      }
+    }
+  } catch (e) {
+    console.error('[customer-executor] mirrorAnvilOpenToCustomers sweep failed:', e instanceof Error ? e.message : e)
+  }
+}
+
 interface OpenCustomerPosition {
   id: string
   user_id: string
@@ -1138,6 +1575,15 @@ async function closeOne(p: OpenCustomerPosition, reason: string): Promise<void> 
   const exp = typeof p.expiration === 'string' ? p.expiration.slice(0, 10) : String(p.expiration).slice(0, 10)
   const callShort = Number(p.call_short)
   const legKind = p.leg_kind ?? (callShort > 0 ? 'condor' : 'put_spread') // pre-leg_kind rows: old inference is safe (see OpenCustomerPosition doc)
+  // Same fail-closed rule as the open path: this chain also ends in a put
+  // vertical, and a diagonal row cannot be closed from one expiration column.
+  // Unreachable while the open path refuses to create such a row — kept so the
+  // two sides can never disagree if one is wired before the other.
+  if (legKind === 'diagonal' || legKind === 'double_diagonal') {
+    throw new Error(
+      `customer mirror cannot close '${legKind}': no back expiration on customer_positions.`,
+    )
+  }
   const legs = legKind === 'call_spread'
     ? spreadCloseLegs({ ticker: p.ticker, expiration: exp, short: callShort, long: Number(p.call_long), right: 'C' }, p.contracts)
     : legKind === 'condor'
