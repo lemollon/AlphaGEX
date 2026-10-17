@@ -71,19 +71,71 @@ _SYM_KEY_RE = re.compile(r"^[A-Z]{1,5}$")
 # first fix only handled the bare form; every "term "/"iv " prefixed field still read "1 5dte".
 _DTE_BUCKET_RE = re.compile(r"(\d+)(?:_(\d+))?dte$", re.IGNORECASE)
 
+# Leron, 2026-10-16 UX review items #5, #6, #7 and #35: the page printed its own field names
+# at the reader. "SPY: Net gex b: -11.05" is a lower-cased identifier with a stray "b" for
+# billions; "median iv 0.2202" is a fraction where a trader reads a percentage; "flow / gamma
+# 0.5524" never says what the number is. These are the labels and units for the fields that
+# actually surface in prose and kv rows -- anything not listed keeps the generic underscore
+# replace below, so this is additive and no field can lose its label by being missed.
+_FIELD_LABELS = {
+    "net_gex_b": "net GEX ($B)", "gex_b": "GEX ($B)", "median_iv": "median IV",
+    "atm_iv": "ATM IV", "iv": "IV", "em_pct": "expected move", "expected_move_pct": "expected move",
+    "put_call_ratio": "put/call ratio", "pc_ratio": "put/call ratio",
+    "call_wall": "call wall", "put_wall": "put wall", "flip": "gamma flip",
+    "poc": "point of control", "vwap": "VWAP", "oi": "open interest",
+    "dte": "DTE", "vix": "VIX", "annualized_yield": "annualized yield",
+    "price_change_pct": "price change", "age_seconds": "age",
+    "flow_ratio": "bought/sold flow ratio", "gamma_ratio": "call/put gamma ratio",
+}
+# Tokens that are acronyms or units, not words, so they are never title-cased into "Iv"/"Gex".
+_LABEL_ACRONYMS = {"iv": "IV", "gex": "GEX", "vix": "VIX", "atm": "ATM", "dte": "DTE",
+                   "oi": "OI", "poc": "POC", "vwap": "VWAP", "em": "EM", "spy": "SPY",
+                   "qqq": "QQQ", "iwm": "IWM", "hyg": "HYG", "lqd": "LQD", "tlt": "TLT",
+                   "pct": "%", "usd": "USD", "pnl": "P&L", "rr": "R:R"}
+# Fields stored as a fraction (0.2202) that a trader reads as a percentage (22.0%).
+_FRACTION_FIELDS = ("_iv", "iv", "_ratio", "ratio")
+_PERCENT_FIELDS = ("_pct", "pct", "_yield", "yield")
+
+
+def format_field_value(key, value):
+    """Render one scalar in the unit its field is actually quoted in.
+
+    A fraction stored as 0.2202 is shown as 22.0% for an IV field, and a field already stored
+    in percent keeps its own scale with the sign and a % sign attached. Anything that is not a
+    finite number, or whose field is not unit-bearing, is returned untouched -- this never
+    rescales a number it cannot identify.
+    """
+    name = str(key).lower()
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    if not math.isfinite(value):
+        return None
+    if any(name == f or name.endswith(f) for f in _PERCENT_FIELDS):
+        return f"{value:+.2f}%" if name.startswith("price_change") else f"{value:.2f}%"
+    if any(name == f or name.endswith(f) for f in _FRACTION_FIELDS):
+        if "ratio" in name:          # a ratio is a ratio, not a percentage
+            return fmt_number(value)
+        return f"{value * 100:.1f}%"
+    return None
+
+
 def field_label(key):
     """Human label for a field/bucket name. A blind `_` -> ` ` replace turns a DTE bucket
     key like "1_5dte" (or prefixed, "term_1_5dte") into the typo-looking "1 5dte" / "term 1
     5dte" instead of "1-5 DTE" / "term 1-5 DTE" — special-case that shape (shared by kv rows,
     field headers, chart tick labels) before the generic underscore replace."""
     key = str(key)
+    if key.lower() in _FIELD_LABELS:
+        return _FIELD_LABELS[key.lower()]
     m = _DTE_BUCKET_RE.search(key)
     if m and (m.start() == 0 or key[m.start() - 1] == "_"):
         lo, hi = m.groups()
         bucket = f"{lo}-{hi} DTE" if hi else f"{lo} DTE"
         prefix = key[:m.start()].rstrip("_").replace("_", " ")
         return f"{prefix} {bucket}" if prefix else bucket
-    return key.replace("_", " ")
+    # "net gex b" / "median iv" read as typos. Upper-case the tokens that are acronyms or
+    # units; leave every other word alone so ordinary field names are unchanged.
+    return " ".join(_LABEL_ACRONYMS.get(t.lower(), t) for t in key.split("_") if t)
 
 def plain_value(v, depth=0):
     """Plain-text (markdown/Discord-safe, no HTML) rendering of a field value for display().
@@ -113,7 +165,8 @@ def plain_value(v, depth=0):
         # "[1 items]" placeholder several levels in. The real protection against an actually
         # unbounded structure (breadth's 503-symbol holdings list) is the per-list item cap
         # below, not depth.
-        return ", ".join(f"{field_label(k)} {plain_value(vv, depth + 1)}" for k, vv in v.items())
+        return ", ".join(f"{field_label(k)} {format_field_value(k, vv) or plain_value(vv, depth + 1)}"
+                         for k, vv in v.items())
     if isinstance(v, list):
         if not v:
             return "none"
