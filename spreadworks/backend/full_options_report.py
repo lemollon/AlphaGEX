@@ -1107,6 +1107,7 @@ def _supporting_status_line(name,block):
 def report_view(report_id:str):
     from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning,_side_label
     from .report_contract import fill_absent_fields
+    from .report_policy import the_trade_html as report_the_trade_html
     payload=stored_report(report_id);parts=[];nav=[]
     # A report stored before a section existed has no block for it, and the narrative builders
     # reach for sections directly (blocks["market_control"] and friends). Re-apply publication's
@@ -1232,6 +1233,10 @@ border-radius:999px;padding:4px 12px;font-family:Inter,sans-serif}
 .downloads a{color:var(--muted);text-decoration:none;font-size:.78rem;font-weight:600;border:1px solid var(--border);border-radius:7px;padding:5px 11px;transition:color .15s,border-color .15s}
 .downloads a:hover{color:var(--accent);border-color:var(--accent)}
 nav.jump{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:6px;padding:10px 0;margin-bottom:4px;background:var(--bg);border-bottom:1px solid var(--border)}
+/* UX review #38: sticky + wrapping, this nav took four rows and ~12% of a phone screen
+   the whole way down the page. On a phone it stops being sticky and scrolls away with
+   the rest of the content; on desktop, where there is room, it still follows the reader. */
+@media (max-width:600px){nav.jump{position:static;max-height:none;padding:8px 0}}
 nav.jump a{color:var(--muted);text-decoration:none;font-size:.76rem;font-weight:600;border:1px solid var(--border);border-radius:999px;padding:4px 11px;white-space:nowrap}
 nav.jump a:hover{color:var(--fg);border-color:var(--accent);background:var(--accent-dim)}
 .toggle-all{display:flex;gap:8px;margin:10px 0 6px}
@@ -1330,6 +1335,55 @@ h2.supporting-detail{font-size:1.08rem;margin:28px 0 10px;padding-top:16px;borde
   th{padding-bottom:2px;font-size:.78rem;text-transform:uppercase;letter-spacing:.02em}
   td{padding-top:0;padding-bottom:10px}
 }
+
+/* ---- What to do: the call, the trigger, what kills it (UX review #1) ----
+   The answer used to be ~6,000px down in the Edge Board, behind the one table column that
+   clipped on a phone. Labelled rows, never a table, so nothing can be cut off at any width;
+   the trigger line is the largest type on the page after the call itself. */
+.thetrade{border:1px solid var(--border);border-left:4px solid var(--edge,var(--accent));
+  border-radius:14px;background:linear-gradient(165deg,var(--surface2),var(--surface) 70%);
+  padding:18px 20px 14px;margin:0 0 18px}
+.thetrade.bull{--edge:var(--call)}
+.thetrade.bear{--edge:var(--put)}
+.thetrade.warn{--edge:var(--warn)}
+.thetrade.flat{--edge:var(--muted)}
+.tt-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.tt-eyebrow{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.tt-status{font-size:.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  border:1px solid var(--edge,var(--accent));color:var(--edge,var(--accent));
+  border-radius:999px;padding:3px 11px;white-space:nowrap}
+.tt-call{font-size:1.6rem;line-height:1.2;margin:2px 0 14px;color:var(--fg)}
+.tt-row{display:grid;grid-template-columns:minmax(150px,210px) 1fr;gap:4px 18px;
+  padding:9px 0;border-top:1px solid var(--border-soft);align-items:baseline}
+.tt-label{font-size:.72rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.tt-value{font-size:1rem;line-height:1.5;color:var(--fg);overflow-wrap:anywhere}
+.tt-row:nth-of-type(1) .tt-value{font-size:1.1rem;font-weight:600}
+@media (max-width:600px){
+  .thetrade{padding:16px 14px 10px;border-radius:12px}
+  .tt-call{font-size:1.3rem}
+  .tt-row{grid-template-columns:1fr;gap:2px;padding:8px 0}
+  .tt-value{font-size:.97rem}
+}
+
+/* ---- Edge board: every column readable on a phone (UX review #37) ----
+   Was 1,811px wide in a 317px container inside a horizontally-scrolling .tablewrap, and the
+   column that got cut was Trigger. Restacks to label/value rows, so no column is ever lost.
+   The header row is redundant once each cell carries its own label, so it is hidden. */
+table.stack{width:100%;border-collapse:collapse;table-layout:fixed}
+table.stack td,table.stack th{overflow-wrap:anywhere;vertical-align:top}
+@media (max-width:760px){
+  table.stack tr:first-child{display:none}
+  table.stack tr{display:block;border:1px solid var(--border);border-radius:10px;
+    padding:4px 2px;margin-bottom:10px;background:var(--surface)}
+  table.stack tr:not(:last-child){border-bottom:1px solid var(--border)}
+  table.stack th,table.stack td{display:block;width:100%!important;padding:6px 12px}
+  table.stack th[data-label],table.stack td[data-label]{text-align:left}
+  table.stack th[data-label]::before,table.stack td[data-label]::before{
+    content:attr(data-label);display:block;font-size:.66rem;font-weight:700;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+  table.stack th[data-label="Rank"]{font-size:.78rem;color:var(--accent)}
+  table.stack td[data-label="Trigger"]{font-weight:600}
+}
 '''
     head=(f'<!doctype html><html><head><meta charset="utf-8">'
           f'<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -1354,8 +1408,13 @@ h2.supporting-detail{font-size:1.08rem;margin:28px 0 10px;padding-top:16px;borde
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=true)">Expand all</button>'
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
                 '</div>')
-    body=(f'<div class="wrap"><nav class="jump">{"".join(nav)}</nav>{toggle_all}'
-         f'{opening_failures}<div class="story">{render_opening_html(payload,inline)}</div>{"".join(parts)}{bottom}</div>')
+    # UX review #1/#40: the call has to be on the first screen. Measured at 390px, rendering it
+    # inside .story put it 799px down -- behind the hero, the download row, the chip nav and the
+    # expand/collapse row. It now sits immediately under the header, above all of that, and
+    # render_opening_html is told not to repeat it.
+    the_trade=report_the_trade_html(payload['report_blocks'])
+    body=(f'<div class="wrap">{the_trade}<nav class="jump">{"".join(nav)}</nav>{toggle_all}'
+         f'{opening_failures}<div class="story">{render_opening_html(payload,inline,include_trade=False)}</div>{"".join(parts)}{bottom}</div>')
     return head+header+body+'</body></html>'
 
 def claim_delivery(kind,now):
