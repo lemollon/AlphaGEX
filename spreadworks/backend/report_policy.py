@@ -1414,6 +1414,35 @@ _NARRATIVE_BUILDERS = {
     "trade_volatility_scan": _narrative_trade_volatility_scan,
 }
 
+def _narrative_scale(value):
+    """Describe a collection by its size and one example instead of enumerating it.
+
+    Leron, 2026-10-16 UX review item #9: the sections that fall back to the generic summary
+    were still printing raw field dumps wearing a narrative label -- Forward Strikes read
+    "expiration 2026-10-19; expiration 2026-10-19; expiration 2026-10-19 (+35 more)", Engine
+    Consensus ran ~25 lines of "ticker INSG, trade bias Fade extensions, opportunity score
+    8.30, agent summary none...", Horizon Comparison was over 3,000px tall. plain_value is
+    right for a scalar and wrong for a 38-item list: a reader wants the count, not the list.
+
+    Returns None when the value is small enough that plain_value already reads as prose, so
+    the caller falls through to it. Every number here is a real count of real data -- nothing
+    is invented and nothing is rounded away; the full per-field detail stays at /data.
+    """
+    if isinstance(value, list) and len(value) > 3:
+        if all(isinstance(x, dict) for x in value) and value:
+            # Name the collection by the key the entries are actually identified by.
+            for key in ("symbol", "ticker", "setup_id", "expiration", "strike", "name"):
+                if key in value[0]:
+                    sample = plain_value(value[0][key])
+                    return f"{len(value)} entries, the first {field_label(key)} {sample}"
+            return f"{len(value)} entries"
+        return f"{len(value)} values, the first {plain_value(value[0])}"
+    if isinstance(value, dict) and len(value) > 6 and not all(
+            isinstance(k, str) and _SYM_KEY_RE.match(k) for k in value):
+        return f"{len(value)} fields"
+    return None
+
+
 def _generic_narrative_summary(block):
     parts = []
     for field, field_item in block.items():
@@ -1426,7 +1455,10 @@ def _generic_narrative_summary(block):
         # already embedded on the page) — skip it rather than echo the URL as prose.
         if value is None or (isinstance(value, str) and (value.startswith("http") or value.startswith("data:"))):
             continue
-        parts.append(f"{field_label(field)} is {plain_value(value)}")
+        # format_field_value first so a top-level IV field reads "22.0%" and not "0.2202"
+        # (UX review #7) -- the dict branch of plain_value already does this for nested fields.
+        rendered = format_field_value(field, value) or _narrative_scale(value) or plain_value(value)
+        parts.append(f"{field_label(field)} is {rendered}")
     if not parts:
         return "No verified observation yet this checkpoint."
     text = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + ", and " + parts[-1]
