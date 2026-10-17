@@ -6592,6 +6592,220 @@ export async function placeStokeOrderAllAccounts(
 }
 
 /**
+ * QUENCH — SPY 0DTE $1-wide vertical, sold on the side AWAY from whichever of
+ * FLAME's own strikes the market is running at. A down trigger (spot falling
+ * toward FLAME's short put) sells a CALL vertical; an up trigger (spot rising
+ * toward FLINT's short call) sells a PUT vertical. `right` therefore selects
+ * the shape — this is the only order function here that places either.
+ *
+ * Deliberately separate from placeStokeOrderAllAccounts and
+ * placeCallSpreadOrderAllAccounts rather than a generalisation of them: each
+ * sleeve's gates differ, and folding them together is how a gate meant for one
+ * sleeve silently starts governing another.
+ *
+ * ── Size is capped at 1 contract and that is not configurable ─────────────
+ *
+ * QUENCH's record ($4,000.80 over 945 sessions, RESULT_QUENCH_UNRESTRAINED.md)
+ * is a ONE-CONTRACT number on real `nbbo_quotes` bid/ask fills. Every
+ * multi-lot figure in RESULT_QUENCH_SIZING.md was produced by multiplying that
+ * daily series, because `nbbo_quotes` carries no size columns — nothing in
+ * history can say whether a 2-contract order would have filled at the
+ * 1-contract quote. So `contracts` is clamped through
+ * afternoon-spread-live.ts's `clampQuenchContracts`, whose cap is a constant.
+ * Leron, 2026-10-17: "i dont want to dial it up willy nilly we have to test
+ * it." Raising it is a reviewed code change with forward fill evidence in
+ * hand, never an env var.
+ *
+ * ── Gates ─────────────────────────────────────────────────────────────────
+ *
+ * Production requires canPlaceLiveOrders + an unpaused production-pause row +
+ * an unpaused owner, exactly as STOKE does; sandbox is unaffected by all
+ * three. There is no VIX gate: QUENCH's trigger IS its day selection, and the
+ * 2026-09-26 study found the ratio>0.80 population carries the P&L without
+ * being gated on. Buying power must clear QUENCH_BP_FLOOR_PER_CONTRACT, the
+ * $1-wide vertical's undiscounted max loss.
+ *
+ * `opts.close` flips both legs to buy_to_close/sell_to_close and REQUIRES
+ * `opts.targetPerson` — it closes exactly that one account, never "every
+ * eligible account of this type". A close call with no targetPerson returns
+ * zero accounts rather than guessing, and skips the entry gates: a buy-back
+ * must never be blocked by a gate meant for new risk.
+ *
+ * Returns Record<"Name:sandbox"|"Name:production", SandboxOrderInfo>, empty
+ * when nothing was placed. Never throws into the caller — every failure is
+ * logged and that account is simply absent from the result. An EMPTY result
+ * means no order exists, and the caller must not record a fill.
+ */
+export const QUENCH_BP_FLOOR_PER_CONTRACT = 100
+
+export async function placeQuenchOrderAllAccounts(
+  ticker: string,
+  expiration: string,
+  shortStrike: number,
+  longStrike: number,
+  right: 'C' | 'P',
+  contracts: number,
+  entryCredit: number,
+  positionId: string,
+  opts?: { close?: boolean; targetPerson?: string },
+): Promise<Record<string, SandboxOrderInfo>> {
+  const results: Record<string, SandboxOrderInfo> = {}
+  const closing = opts?.close === true
+  const botName = 'flame' // QUENCH anchors on FLAME's own strikes; SPARK's geometry failed its prereg.
+
+  // The cap applies to ENTRIES only. A close must be able to buy back exactly
+  // what is open, so clamping it would strand contracts at the broker.
+  let sized = contracts
+  if (!closing) {
+    const { clampQuenchContracts } = await import('./afternoon-spread-live')
+    const clamp = clampQuenchContracts(contracts)
+    if (clamp.contracts < 1) {
+      console.error(`[tradier] QUENCH: refusing to place — ${clamp.reason ?? 'bad size'}`)
+      return results
+    }
+    if (clamp.clamped) {
+      console.warn(`[tradier] QUENCH: size clamped (${clamp.reason}) — placing ${clamp.contracts}.`)
+    }
+    sized = clamp.contracts
+  }
+
+  const eligibleAccounts = await resolveEligibleAccounts(botName)
+  let productionAccts = eligibleAccounts.filter((a) => a.type === 'production')
+  const sandboxAccts = eligibleAccounts.filter((a) => a.type !== 'production')
+
+  if (productionAccts.length > 0 && !canPlaceLiveOrders(botName)) {
+    productionAccts = []
+  }
+  if (productionAccts.length > 0) {
+    try {
+      const pause = await getProductionPauseState(botName)
+      if (pause.paused) {
+        console.warn(
+          `[tradier] QUENCH production trading PAUSED (reason=${pause.paused_reason ?? 'n/a'}) — ` +
+          `removing ${productionAccts.length} production account(s). Sandbox unaffected.`,
+        )
+        productionAccts = []
+      }
+    } catch { /* pre-migration deploy — matches placeStokeOrderAllAccounts */ }
+  }
+  if (productionAccts.length > 0) {
+    const owners = await getOwnerPauseState(botName)
+    if (!owners.ok) {
+      productionAccts = []
+    } else if (owners.paused.size > 0) {
+      const dropped = productionAccts.filter((a) => owners.paused.has(a.name)).map((a) => a.name)
+      if (dropped.length > 0) {
+        console.warn(`[tradier] QUENCH owner-paused: ${dropped.join(', ')} — removing from this order. Sandbox unaffected.`)
+      }
+      productionAccts = productionAccts.filter((a) => !owners.paused.has(a.name))
+    }
+  }
+
+  let allAccts = [...sandboxAccts, ...productionAccts]
+  if (closing) {
+    if (!opts?.targetPerson) {
+      console.error('[tradier] QUENCH close called with no targetPerson — refusing to close ANY account.')
+      return results
+    }
+    allAccts = allAccts.filter((a) => a.name === opts.targetPerson)
+  }
+  if (allAccts.length === 0) return results
+
+  const occShort = buildOccSymbol(ticker, expiration, shortStrike, right)
+  const occLong = buildOccSymbol(ticker, expiration, longStrike, right)
+  const sides = closing
+    ? { shortSide: 'buy_to_close', longSide: 'sell_to_close' }
+    : { shortSide: 'sell_to_open', longSide: 'buy_to_open' }
+
+  for (const acct of allAccts) {
+    const isProd = acct.type === 'production'
+    const label = `${isProd ? 'PRODUCTION' : 'SANDBOX'} [${acct.name}] QUENCH`
+    try {
+      const accountId = await getAccountIdForKey(acct.apiKey, acct.baseUrl)
+      if (!accountId) {
+        console.error(`${label}: getAccountIdForKey returned null — API key invalid or Tradier unreachable. SKIPPING.`)
+        continue
+      }
+
+      if (!closing) {
+        const bp = await readOptionBuyingPowerWithRetry(acct.apiKey, accountId, acct.baseUrl, label)
+        if (bp == null) {
+          console.error(`${label}: optionBP UNREADABLE after retries — SKIPPING order. This is NOT an insufficient-funds decision.`)
+          if (isProd) await reportProductionBpUnreadable(botName, acct.name)
+          continue
+        }
+        const requiredBp = QUENCH_BP_FLOOR_PER_CONTRACT * sized
+        if (bp < requiredBp) {
+          console.warn(`${label}: skip:quench_insufficient_bp(bp=$${bp.toFixed(0)}<need=$${requiredBp.toFixed(0)})`)
+          continue
+        }
+      }
+
+      const orderBody: Record<string, string> = {
+        class: 'multileg',
+        symbol: ticker,
+        type: 'market',
+        duration: 'day',
+        ...buildLegs(occShort, occLong, '', '', sized, sides, true),
+        tag: `QUENCH-${positionId}`.slice(0, 255),
+      }
+
+      const result = await sandboxPost(`/accounts/${accountId}/orders`, orderBody, acct.apiKey, acct.baseUrl)
+      if (!result) {
+        console.error(`${label}: Order POST returned null (HTTP error)`)
+        continue
+      }
+      if (result.errors) {
+        console.error(`${label}: Order REJECTED at POST: ${JSON.stringify(result.errors)}`)
+        continue
+      }
+      if (!result?.order?.id) {
+        console.error(`${label}: Order POST returned no order.id — full response: ${JSON.stringify(result).slice(0, 500)}`)
+        continue
+      }
+
+      let fillPrice: number | null = null
+      try {
+        fillPrice = await getOrderFillPrice(acct.apiKey, accountId, result.order.id, isProd ? 0 : 90_000, acct.baseUrl)
+      } catch (pollErr: unknown) {
+        console.error(`${label}: fill poll failed: ${pollErr instanceof Error ? pollErr.message : String(pollErr)}`)
+      }
+
+      if (fillPrice == null) {
+        try {
+          const orderCheck = await sandboxGet(`/accounts/${accountId}/orders/${result.order.id}`, undefined, acct.apiKey, acct.baseUrl)
+          const status = orderCheck?.order?.status || 'unknown'
+          if (['rejected', 'canceled', 'expired'].includes(status)) {
+            const reason = orderCheck?.order?.reason_description || orderCheck?.order?.reject_reason || orderCheck?.order?.reason || 'no reason provided'
+            console.error(`${label}: order ${result.order.id} was ${status.toUpperCase()} by Tradier: "${reason}" — NOT recording.`)
+            continue
+          }
+          console.warn(`${label}: order ${result.order.id} status="${status}" with no fill price after polling — recording at modelled credit $${entryCredit.toFixed(4)}.`)
+        } catch (checkErr: unknown) {
+          console.warn(`${label}: could not verify order status: ${checkErr instanceof Error ? checkErr.message : String(checkErr)}`)
+        }
+      }
+
+      const resultKey = `${acct.name}:${acct.type ?? 'sandbox'}`
+      results[resultKey] = {
+        order_id: result.order.id,
+        contracts: sized,
+        fill_price: fillPrice,
+        account_type: acct.type ?? 'sandbox',
+      }
+      console.log(
+        `[tradier] QUENCH ${closing ? 'LIVE CLOSE' : isProd ? 'LIVE FILL' : 'SANDBOX FILL'} [${acct.name}]: ` +
+        `${sized}x ${shortStrike}/${longStrike}${right} order ${result.order.id} ` +
+        `quoted=$${entryCredit.toFixed(4)} fill=${fillPrice != null ? '$' + fillPrice.toFixed(4) : 'unknown'}`,
+      )
+    } catch (err: unknown) {
+      console.error(`${label}: order failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return results
+}
+
+/**
  * FLAME v2 — SPY 0DTE CALL credit spread (FLAME_V2_CALL_SPREAD_MODE=live
  * only; see flame-v2/flags.ts and flame-v2/call-spread-live.ts). 14:05 ET
  * entry, mirrored assignment-guard close at 3:57 PM ET.

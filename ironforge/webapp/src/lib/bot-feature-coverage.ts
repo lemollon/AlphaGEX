@@ -175,11 +175,11 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
         note: "Same function's 'SANDBOX [name] FLINT' label, plus scanner.ts tryOpenFlint's paper/sandbox row insert.",
       },
       customer: {
-        status: 'excluded',
-        reason:
-          "*** THE HEADLINE GAP THIS AUDIT WAS OPENED TO FIND. *** tryOpenFlint (scanner.ts) never calls " +
-          "mirrorOpenToCustomers under any FLINT_MODE value. FLINT has never mirrored a single open to an app customer.",
-        approvedBy: TRACKED_GAP,
+        status: 'covered',
+        note:
+          "tryOpenFlint (scanner.ts:5321) calls mirrorFlintOpenToCustomers (customer-executor/executor.ts) right after " +
+          "the paper-ledger row is written, gated by CUSTOMER_EXECUTOR_ENABLED + CUSTOMER_FLINT. This replaces the " +
+          "2026-09-28 'FLINT has never mirrored a single open' exclusion, which went stale when that mirror shipped.",
       },
     },
   },
@@ -401,6 +401,99 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
     },
   },
   {
+    flag: 'STOKE_MODE',
+    envVars: ['STOKE_MODE', 'STOKE_FLOOR_AMOUNT', 'STOKE_MAX_CONTRACTS', 'STOKE_GUARD_BUFFER', 'STOKE_OTM_OFFSET', 'STOKE_MIN_CREDIT'],
+    description:
+      "STOKE — FLAME-only SPY 0DTE CALL credit spread, fired on EBB's VIX-skip days after a prior-day-DOWN SPY session " +
+      "(stoke.ts). STOKE_MODE off|paper|live gates the whole sleeve; the other vars are its floor/size/guard/strike/credit knobs. " +
+      "Escaped this registry until now because STOKE_ was not in the guard test's scan regex.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "tradier.ts placeStokeOrderAllAccounts places the live leg on FLAME's real production account(s), gated on STOKE_MODE=live plus isFlameLiveArmed().",
+      },
+      sandbox: { status: 'covered', note: "Same function's sandbox accounts, plus scanner.ts tryOpenStoke's paper/sandbox row insert." },
+      customer: {
+        status: 'covered',
+        note:
+          "tryOpenStoke (scanner.ts) calls mirrorStokeOpenToCustomers (customer-executor/executor.ts) right after the paper-ledger " +
+          "row is written, gated by CUSTOMER_EXECUTOR_ENABLED + CUSTOMER_STOKE; hard 1 contract through STOKE's own cushion rule " +
+          "(STOKE_FLOOR_AMOUNT floor, no per-customer realized-P&L ledger so realized P&L is taken as 0) and STOKE_BP_FLOOR_PER_CONTRACT. " +
+          "Like FLINT's mirror, the call is not conditioned on STOKE_MODE=live.",
+      },
+    },
+  },
+  {
+    flag: 'CUSTOMER_STOKE',
+    envVars: ['CUSTOMER_STOKE'],
+    description:
+      "STOKE customer mirroring — hard 1 contract, FLAME customers only, CALL credit spread (leg_kind='call_spread', strategy='stoke'). " +
+      "Ships disarmed behind CUSTOMER_EXECUTOR_ENABLED + CUSTOMER_STOKE both required.",
+    coverage: {
+      production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror." },
+      sandbox: { status: 'n/a', note: "Same — no meaning for internal sandbox accounts." },
+      customer: {
+        status: 'covered',
+        note: "isCustomerStokeEnabled() reads this directly in customer-executor/executor.ts and gates mirrorStokeOpenToCustomers, which tryOpenStoke calls; mirrorCloseToCustomers's shared closeOne() handles the call_spread close. Default-off (CUSTOMER_STOKE unset).",
+      },
+    },
+  },
+  {
+    flag: 'AFTERNOON_SPREAD_MODE',
+    envVars: ['AFTERNOON_SPREAD_MODE'],
+    description:
+      "QUENCH live arming switch (afternoon-spread-live.ts getQuenchLiveMode; only the exact string 'live' arms it) plus the hard " +
+      "1-contract cap (QUENCH_MAX_CONTRACTS, a constant on purpose). The live order function (placeQuenchOrderAllAccounts) is not built yet.",
+    coverage: {
+      production: { status: 'n/a', note: "No order path exists yet — nothing reads this switch to place an order on any internal account." },
+      sandbox: { status: 'n/a', note: "Same — no order path exists yet." },
+      customer: {
+        status: 'excluded',
+        reason:
+          "mirrorQuenchOpenToCustomers is built (customer-executor/executor.ts) but has NO call site: QUENCH has no internal order path " +
+          "to mirror from. A tracked gap that closes when that order path ships and calls the mirror.",
+        approvedBy: "Leron, 2026-10-17 (1-lot QUENCH live scope); mirror wiring pending the order path",
+      },
+    },
+  },
+  {
+    flag: 'CUSTOMER_QUENCH',
+    envVars: ['CUSTOMER_QUENCH'],
+    description:
+      "QUENCH customer mirroring — hard 1 contract (clampQuenchContracts), side down_call -> CALL vertical, up_put -> PUT vertical, " +
+      "$1 wide, strategy='quench'. Exported but UNCALLED: no internal order path exists to mirror from.",
+    coverage: {
+      production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror." },
+      sandbox: { status: 'n/a', note: "Same — no meaning for internal sandbox accounts." },
+      customer: {
+        status: 'excluded',
+        reason:
+          "isCustomerQuenchEnabled() gates mirrorQuenchOpenToCustomers, but nothing calls that function yet (no QUENCH order path). " +
+          "Setting CUSTOMER_QUENCH=on today changes nothing.",
+        approvedBy: "Leron, 2026-10-17 (call site explicitly deferred until QUENCH has an order path)",
+      },
+    },
+  },
+  {
+    flag: 'CUSTOMER_ANVIL',
+    envVars: ['CUSTOMER_ANVIL'],
+    description:
+      "ANVIL customer mirroring — single call diagonal (DEBIT, sized by sizeDiagonalContracts). Exported but UNCALLED, and fail-closed: " +
+      "it throws until customer_positions has a back_expiration column.",
+    coverage: {
+      production: { status: 'n/a', note: "This flag has no meaning for the internal production account — it only ever gates a customer mirror." },
+      sandbox: { status: 'n/a', note: "Same — no meaning for internal sandbox accounts." },
+      customer: {
+        status: 'excluded',
+        reason:
+          "customer_positions has one expiration column, so a diagonal's back leg can be neither recorded nor closed; mirrorAnvilOpenToCustomers " +
+          "refuses by design. Needs: ALTER TABLE customer_positions ADD COLUMN back_expiration DATE NULL (production customer-DB migration, not applied). " +
+          "ANVIL is also a paper tracker with no internal order path.",
+        approvedBy: "Leron, 2026-10-17 (fail-closed until the back_expiration column exists)",
+      },
+    },
+  },
+  {
     flag: 'CUSTOMER_DEPOSIT_FLOOR',
     envVars: ['CUSTOMER_DEPOSIT_FLOOR'],
     description:
@@ -522,6 +615,205 @@ export const BOT_FEATURE_COVERAGE: FeatureCoverage[] = [
           "those SAME contracts.ts functions for production/sandbox rather than the reverse. See executor.ts's " +
           "own module-header paragraph on ONE_STRATEGY for the explicit cross-reference this guard's " +
           "reachability scan finds.",
+      },
+    },
+  },
+  {
+    flag: 'SPARK_CUSTOMER_EXECUTOR_ENABLED',
+    envVars: ['SPARK_CUSTOMER_EXECUTOR_ENABLED'],
+    description:
+      "Per-agent customer arm for SPARK (customer-executor/executor.ts isExecutorArmedForAgent). Arms the SPARK customer " +
+      "mirror independently of the legacy CUSTOMER_EXECUTOR_ENABLED, which arms both agents at once. Unset = off. " +
+      "SPARK's own live-order capability is the separate SPARK_LIVE_ARMED gate, which mirrorOpenToCustomers also requires.",
+    coverage: {
+      production: { status: 'n/a', note: "Gates OPENS into customer accounts only; does not touch SPARK's own production path." },
+      sandbox: { status: 'n/a', note: "Gates OPENS into customer accounts only; does not touch SPARK's sandbox accounts." },
+      customer: {
+        status: 'covered',
+        note: "mirrorOpenToCustomers (executor.ts) returns early unless isExecutorArmedForAgent(m.botName), which reads this var for agent 'spark'.",
+      },
+    },
+  },
+  {
+    flag: 'FLAME_CUSTOMER_EXECUTOR_ENABLED',
+    envVars: ['FLAME_CUSTOMER_EXECUTOR_ENABLED'],
+    description:
+      "Per-agent customer arm for FLAME (customer-executor/executor.ts isExecutorArmedForAgent). Arms the FLAME customer " +
+      "mirror independently of the legacy CUSTOMER_EXECUTOR_ENABLED, which arms both agents at once. Unset = off.",
+    coverage: {
+      production: { status: 'n/a', note: "Gates OPENS into customer accounts only; does not touch FLAME's own production path." },
+      sandbox: { status: 'n/a', note: "Gates OPENS into customer accounts only; does not touch FLAME's sandbox accounts." },
+      customer: {
+        status: 'covered',
+        note: "mirrorOpenToCustomers (executor.ts) returns early unless isExecutorArmedForAgent(m.botName), which reads this var for agent 'flame'.",
+      },
+    },
+  },
+  {
+    flag: 'SPARK_LIVE_ARMED',
+    envVars: ['SPARK_LIVE_ARMED'],
+    description:
+      "SPARK real-money arm switch (tradier.ts isSparkLiveArmed). Must be exactly 'true', plus TRADIER_SPARK_* creds and an " +
+      "unpaused production-pause row. Unset = SPARK places no live order.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "tradier.ts canPlaceLiveOrders('spark') -> isSparkLiveArmed() reads it; it is the production gate for SPARK.",
+      },
+      sandbox: { status: 'n/a', note: "Sandbox accounts do not consult the live-order arm." },
+      customer: {
+        status: 'covered',
+        note: "mirrorOpenToCustomers (executor.ts) returns early for agent 'spark' unless canPlaceLiveOrders('spark'), which is isSparkLiveArmed().",
+      },
+    },
+  },
+  {
+    flag: 'SPARK_MIN_EQUITY',
+    envVars: ['SPARK_MIN_EQUITY'],
+    description:
+      "Per-customer-account equity unlock threshold for SPARK mirroring (tradier.ts getSparkMinEquity, default $5,000). " +
+      "Subscribed + equity >= this is required per customer.",
+    coverage: {
+      production: { status: 'n/a', note: "Per-customer-account threshold; no production account is subject to it." },
+      sandbox: { status: 'n/a', note: "Per-customer-account threshold; no sandbox account is subject to it." },
+      customer: {
+        status: 'covered',
+        note: "mirrorOneOpen (executor.ts) skips with 'spark_not_eligible' unless isSparkCustomerEligible(), which reads getSparkMinEquity().",
+      },
+    },
+  },
+  {
+    flag: 'FLAME_MIN_EQUITY',
+    envVars: ['FLAME_MIN_EQUITY'],
+    description:
+      "Per-customer-account equity unlock threshold for FLAME mirroring (tradier.ts getFlameMinEquity, default $2,000). " +
+      "Subscribed + equity >= this is required per customer.",
+    coverage: {
+      production: { status: 'n/a', note: "Per-customer-account threshold; no production account is subject to it." },
+      sandbox: { status: 'n/a', note: "Per-customer-account threshold; no sandbox account is subject to it." },
+      customer: {
+        status: 'covered',
+        note: "mirrorOneOpen (executor.ts) skips with 'flame_not_eligible' unless isFlameCustomerEligible(), which reads getFlameMinEquity().",
+      },
+    },
+  },
+  {
+    flag: 'FLINT_FLOOR_AMOUNT',
+    envVars: ['FLINT_FLOOR_AMOUNT'],
+    description:
+      "FLINT's own dedicated standing floor, in dollars (flint.ts getFlintFloorAmount, default 500). Caps the per-account " +
+      "floor used by FLINT's profit gate and cushion sizing; independent of FLAME/EBB account equity.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "tradier.ts placeCallSpreadOrderAllAccounts caps the per-account flintFloor at getFlintFloorAmount().",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "scanner.ts tryOpenFlint reads getFlintFloorAmount() for the paper/sandbox profit gate; the sandbox branch of placeCallSpreadOrderAllAccounts shares the tradier.ts floor cap.",
+      },
+      customer: {
+        status: 'excluded',
+        reason:
+          "Nothing under customer-executor/ references FLINT_FLOOR_AMOUNT; customer FLINT sizing runs its own cushion check " +
+          "(evaluateFlintCushion) rather than this floor. Whether customers should use this floor is undecided - pending (tracked).",
+        approvedBy: TRACKED_GAP,
+      },
+    },
+  },
+  {
+    flag: 'FLAME_V2_CALL_SPREAD_MODE',
+    envVars: ['FLAME_V2_CALL_SPREAD_MODE'],
+    description:
+      "FLAME v2 14:05 ET SPY 0DTE CALL credit spread (flame-v2/flags.ts flameCallSpreadMode; flame-v2/call-spread-live.ts). " +
+      "off|shadow|live, default shadow (log only, no order). Live places the paper/sandbox row and a real order if " +
+      "canPlaceLiveOrders('flame').",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "tradier.ts FLAME_V2_CALL_SPREAD live-order path (production label 'PRODUCTION [name] FLAME_V2_CALL_SPREAD'), gated by canPlaceLiveOrders('flame').",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "Same tradier.ts path with the 'SANDBOX [name]' label; scanner.ts runs the entry/guard/settle ticks.",
+      },
+      customer: {
+        status: 'excluded',
+        reason:
+          "flame-v2/call-spread-live.ts never calls mirrorOpenToCustomers and nothing under customer-executor/ references the " +
+          "v2 call spread, so its opens are not mirrored to app customers - pending (tracked).",
+        approvedBy: TRACKED_GAP,
+      },
+    },
+  },
+  {
+    flag: 'FLAME_HEADLINE_0925_LIVE',
+    envVars: ['FLAME_HEADLINE_0925_LIVE'],
+    description:
+      "Default-off live experiment widening FLAME's VIX-decay ceiling from 0.80 to 0.925 (scanner.ts isFlameHeadline0925Mode), " +
+      "admitting only prior-SPY-up days in the added band and requiring a $0.20 credit floor on those days.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "scanner.ts tryOpenFlamePutSpread applies the wider ceiling and credit floor to the master entry that all production orders follow.",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "Same master-entry admission in scanner.ts; sandbox mirrors follow the master open.",
+      },
+      customer: {
+        status: 'excluded',
+        reason:
+          "The admission gate sits upstream of mirrorOpenToCustomers so customers probably inherit it, but the env read lives in " +
+          "isFlameHeadline0925Mode, which does not itself reach any mirror* call, so the guard cannot verify reachability. " +
+          "Customer behaviour not established from code - pending (tracked).",
+        approvedBy: TRACKED_GAP,
+      },
+    },
+  },
+  {
+    flag: 'SPARK_V2_TRAILING_BAND_MODE',
+    envVars: ['SPARK_V2_TRAILING_BAND_MODE'],
+    description:
+      "SPARK v2 D1 relaxed-band trailing winner (flame-v2/flags.ts sparkTrailingBandMode). off|shadow|live, default shadow. " +
+      "Live widens SPARK's VIX-decay ceiling from 0.90 to 0.975 and admits those days only if D1 says so.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "scanner.ts tryOpenFlamePutSpread applies the admission to the master SPARK entry that production orders follow.",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "Same master-entry admission in scanner.ts; sandbox mirrors follow the master open.",
+      },
+      customer: {
+        status: 'covered',
+        note:
+          "tryOpenFlamePutSpread (scanner.ts) applies the gate then calls tryOpenFlameBook, which calls mirrorOpenToCustomers " +
+          "after the master open; customers mirror only days the gate admitted.",
+      },
+    },
+  },
+  {
+    flag: 'SPARK_V2_SIGNAL_FILTER_MODE',
+    envVars: ['SPARK_V2_SIGNAL_FILTER_MODE'],
+    description:
+      "SPARK v2 S1 signal-days filter (CALM or LONGG) on SPARK's core-gate admissions (flame-v2/flags.ts sparkSignalFilterMode). " +
+      "off|shadow|live, default shadow. Live skips SPARK entries that lack the signal.",
+    coverage: {
+      production: {
+        status: 'covered',
+        note: "scanner.ts tryOpenFlamePutSpread returns skip:spark_s1_no_signal for the master SPARK entry production orders follow.",
+      },
+      sandbox: {
+        status: 'covered',
+        note: "Same master-entry skip in scanner.ts; sandbox mirrors follow the master open.",
+      },
+      customer: {
+        status: 'covered',
+        note:
+          "tryOpenFlamePutSpread (scanner.ts) applies the skip then calls tryOpenFlameBook, which calls mirrorOpenToCustomers " +
+          "after the master open; a skipped day produces no master open and therefore no customer mirror.",
       },
     },
   },
