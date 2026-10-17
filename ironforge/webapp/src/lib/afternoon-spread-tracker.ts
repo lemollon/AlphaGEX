@@ -1,5 +1,5 @@
 /**
- * PAPER-ONLY RESEARCH TRACKER — DB + Tradier orchestration for the "dynamic
+ * QUENCH (internally afternoon-spread — env keys, tables, route path and symbols keep that spelling) — PAPER-ONLY RESEARCH TRACKER — DB + Tradier orchestration for the "dynamic
  * hedge V2" lead. See lib/afternoon-spread.ts for the pure trigger/strike/
  * settlement math this drives, and the research docs cited there.
  *
@@ -224,7 +224,7 @@ export async function runAfternoonSpreadTick(ct: Date): Promise<string> {
   }
 
   const said = out.filter(Boolean)
-  return said.length ? `afternoon-spread[${said.join(' ')}]` : ''
+  return said.length ? `QUENCH[${said.join(' ')}]` : ''
 }
 
 async function fireSide(
@@ -355,7 +355,7 @@ export async function settleAfternoonSpreadExpired(ct: Date): Promise<string> {
     )
     out.push(`${r.id}=settled@${pnl.toFixed(2)}`)
   }
-  return out.length ? `afternoon-spread settle[${out.join(' ')}]` : ''
+  return out.length ? `QUENCH settle[${out.join(' ')}]` : ''
 }
 
 /* ------------------------------------------------------------------ */
