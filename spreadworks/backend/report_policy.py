@@ -559,8 +559,28 @@ def display(item, compact=False):
         return text+' ['+label+']'
     stamp=parse_clock(item.get('source_timestamp'))
     clock=stamp.astimezone(CT).strftime('%Y-%m-%d %I:%M:%S %p CT') if stamp else str(item.get('source_timestamp'))
-    age_text=f'{age:.0f}s' if age<120 else f'{age/60:.1f} min' if age<7200 else f'{age/3600:.1f} hours' if age<172800 else f'{age/86400:.1f} days'
+    age_text=_age_text(age)
     return text+' ['+label+'; updated '+clock+'; age '+age_text+']'
+
+def _age_text(age):
+    """How old an observation is, in units a person uses (UX review #11).
+
+    The old ladder printed a decimal minute count well past the point it meant anything --
+    "445.2 min", "104.0 min", "1.4 hours" -- so the same page carried four different grains of
+    the same quantity. Steps now change unit where a reader would: seconds under two minutes,
+    whole minutes under an hour, hours and minutes under a day, then days.
+    """
+    age = float(age or 0)
+    if age < 120:
+        return f"{age:.0f}s"
+    if age < 3600:
+        return f"{age / 60:.0f} min"
+    if age < 86400:
+        hours, minutes = divmod(int(age // 60), 60)
+        return f"{hours}h {minutes:02d}m"
+    days = age / 86400
+    return f"{days:.0f} days" if days >= 2 else "1 day"
+
 
 def _scoreboard_price_rows(blocks):
     """Leron, 2026-10-14 (ChatGPT mockup): live SPY/QQQ/VIX price rows on the 30-second

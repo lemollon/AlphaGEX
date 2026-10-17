@@ -803,6 +803,24 @@ def test_contract_packages_and_entry_watches_story_falls_back_when_both_builders
     story=contract_packages_and_entry_watches_story(blocks)
     assert story=='No qualified contract packages right now.'
 
+def test_age_text_changes_unit_where_a_person_would():
+    """UX review #11: the page carried four different grains of the same quantity -- "14s",
+    "4m", "104m", "445.2m" -- because the old ladder printed a decimal minute count well past
+    the point it meant anything. Units now step where a reader expects."""
+    from backend.report_policy import _age_text
+    assert _age_text(14)=='14s' and _age_text(119)=='119s'
+    assert _age_text(121)=='2 min' and _age_text(3540)=='59 min'
+    # 104 minutes and 445.2 minutes were both printed as minutes; they are hours to a person.
+    assert _age_text(104*60)=='1h 44m'
+    assert _age_text(445.2*60)=='7h 25m'
+    assert _age_text(86399)=='23h 59m'
+    assert _age_text(90000)=='1 day' and _age_text(172800)=='2 days'
+    # No decimal minutes anywhere, at any magnitude.
+    for seconds in (0,1,60,119,120,3599,3600,7199,86400,864000):
+        assert '.' not in _age_text(seconds), seconds
+    assert _age_text(None)=='0s' and _age_text(0)=='0s'
+
+
 def test_generic_summary_counts_a_collection_instead_of_dumping_it():
     """Leron, 2026-10-16 UX review item #9: the sections falling back to the generic summary
     still printed raw field dumps wearing a narrative label -- Forward Strikes read

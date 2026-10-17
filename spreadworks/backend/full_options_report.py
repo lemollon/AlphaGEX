@@ -1209,7 +1209,11 @@ h1,h2,.brand,.card summary{font-family:"Space Grotesk",Inter,-apple-system,syste
    (2026-10-14) specifically because the page itself was too narrow to hold them. Widening
    the page is the real fix; .tablewrap stays below as a safety net for a genuinely
    oversized table on a narrow viewport, but no longer carries the load on desktop. */
+/* UX review #41: a 920px column left 500px+ of dead space each side on a desktop. 1160px
+   helped; on a genuinely wide screen the column can take more without the prose lines
+   getting too long to track, because the widest things on the page are tables. */
 .wrap{max-width:1160px;margin:0 auto;padding:20px 16px 60px}
+@media (min-width:1500px){.wrap{max-width:1360px}}
 .hero{position:relative;overflow:hidden;border-radius:16px;border:1px solid var(--border);
 background:linear-gradient(165deg,var(--surface2) 0%,var(--surface) 55%);margin-bottom:14px}
 .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(640px 320px at 85% -10%,var(--hero-glow,rgba(61,214,196,.10)),transparent 70%)}
@@ -1229,6 +1233,9 @@ border-radius:999px;padding:4px 12px;font-family:Inter,sans-serif}
 .pill-side.bull{color:var(--call);background:var(--call-dim);border:1px solid rgba(74,222,128,.4)}
 .pill-side.bear{color:var(--put);background:var(--put-dim);border:1px solid rgba(251,113,133,.4)}
 .pill-side.warn{color:var(--warn);background:var(--warn-dim);border:1px solid rgba(251,191,36,.4)}
+/* UX review #4: these buttons sat flush left, outside the content column, because the row
+   was emitted before .wrap opened. It now shares the same centred column as everything else. */
+.downloads-wrap{padding-top:0;padding-bottom:0}
 .downloads{display:flex;gap:8px;flex-wrap:wrap;padding:0 0 14px}
 .downloads a{color:var(--muted);text-decoration:none;font-size:.78rem;font-weight:600;border:1px solid var(--border);border-radius:7px;padding:5px 11px;transition:color .15s,border-color .15s}
 .downloads a:hover{color:var(--accent);border-color:var(--accent)}
@@ -1416,7 +1423,7 @@ table.stack td,table.stack th{overflow-wrap:anywhere;vertical-align:top}
            f'<span class="pill-side {side_cls}">{side_text}</span>'
            f'<h1>{html.escape(payload["kind"].title())} Options Report</h1>'
            f'</div></header>'
-           f'<div class="downloads">{downloads}</div>')
+           f'<div class="wrap downloads-wrap"><div class="downloads">{downloads}</div></div>')
     toggle_all=('<div class="toggle-all">'
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=true)">Expand all</button>'
                 '<button type="button" onclick="document.querySelectorAll(\'.card details\').forEach(d=>d.open=false)">Collapse all</button>'
