@@ -75,6 +75,104 @@ export function spreadCloseLegs(p: SpreadLegs, contracts: number): MlegLegSpec[]
   ]
 }
 
+/* ==================================================================== */
+/*  DIAGONALS — two expirations in one position (ANVIL, HEARTH).         */
+/*                                                                      */
+/*  Every builder above stamps ONE expiration on all legs. A diagonal    */
+/*  cannot: its short is near-dated and its long is further out. These   */
+/*  take both dates explicitly rather than inferring one, because a      */
+/*  silently-wrong expiration here places a real order on the wrong      */
+/*  contract.                                                           */
+/* ==================================================================== */
+
+export interface DiagonalLegs {
+  ticker: string
+  /** The SHORT leg's expiration (nearer). YYYY-MM-DD. */
+  frontExpiration: string
+  /** The LONG leg's expiration (further out). YYYY-MM-DD. */
+  backExpiration: string
+  short: number
+  long: number
+  right: 'C' | 'P'
+}
+
+export interface DoubleDiagonalLegs {
+  ticker: string
+  /** Both SHORT legs' expiration (nearer). YYYY-MM-DD. */
+  frontExpiration: string
+  /** Both LONG legs' expiration (further out). YYYY-MM-DD. */
+  backExpiration: string
+  putShort: number
+  putLong: number
+  callShort: number
+  callLong: number
+}
+
+/**
+ * The short leg MUST expire on or before the long leg.
+ *
+ * This is not a style preference. Reduced (spread) margin treatment requires
+ * the short to expire no later than the long; reverse them and the broker
+ * margins the short as NAKED, so a position the sizing math treated as
+ * defined-risk is not. Every builder below calls this first and THROWS rather
+ * than emitting legs — an exception aborts the mirror for this customer and is
+ * logged, which is the safe direction. Returning silently would place the order.
+ */
+function assertFrontBeforeBack(frontExpiration: string, backExpiration: string): void {
+  if (!frontExpiration || !backExpiration) {
+    throw new Error(`diagonal needs both expirations (front=${frontExpiration}, back=${backExpiration})`)
+  }
+  if (frontExpiration > backExpiration) {
+    throw new Error(
+      `diagonal short leg expires AFTER its long leg (front=${frontExpiration}, back=${backExpiration}) — ` +
+      `that forfeits reduced spread margin and margins the short as naked; refusing to build legs`,
+    )
+  }
+}
+
+/** Single diagonal OPEN (ANVIL): sell the near-dated strike, buy the further-dated one. Net debit. */
+export function diagonalOpenLegs(p: DiagonalLegs, contracts: number): MlegLegSpec[] {
+  assertFrontBeforeBack(p.frontExpiration, p.backExpiration)
+  return [
+    { symbol: occSymbol(p.ticker, p.frontExpiration, p.right, p.short), action: 'SELL_TO_OPEN', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, p.right, p.long), action: 'BUY_TO_OPEN', units: contracts },
+  ]
+}
+
+/** Single diagonal CLOSE (ANVIL): buy back the near-dated short, sell the further-dated long. */
+export function diagonalCloseLegs(p: DiagonalLegs, contracts: number): MlegLegSpec[] {
+  assertFrontBeforeBack(p.frontExpiration, p.backExpiration)
+  return [
+    { symbol: occSymbol(p.ticker, p.frontExpiration, p.right, p.short), action: 'BUY_TO_CLOSE', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, p.right, p.long), action: 'SELL_TO_CLOSE', units: contracts },
+  ]
+}
+
+/**
+ * Double diagonal OPEN (HEARTH): short strangle in the FRONT expiry, long
+ * put and call in the BACK expiry beyond each short. Net credit.
+ */
+export function doubleDiagonalOpenLegs(p: DoubleDiagonalLegs, contracts: number): MlegLegSpec[] {
+  assertFrontBeforeBack(p.frontExpiration, p.backExpiration)
+  return [
+    { symbol: occSymbol(p.ticker, p.frontExpiration, 'P', p.putShort), action: 'SELL_TO_OPEN', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, 'P', p.putLong), action: 'BUY_TO_OPEN', units: contracts },
+    { symbol: occSymbol(p.ticker, p.frontExpiration, 'C', p.callShort), action: 'SELL_TO_OPEN', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, 'C', p.callLong), action: 'BUY_TO_OPEN', units: contracts },
+  ]
+}
+
+/** Double diagonal CLOSE (HEARTH): buy back the front strangle, sell the back wings. */
+export function doubleDiagonalCloseLegs(p: DoubleDiagonalLegs, contracts: number): MlegLegSpec[] {
+  assertFrontBeforeBack(p.frontExpiration, p.backExpiration)
+  return [
+    { symbol: occSymbol(p.ticker, p.frontExpiration, 'P', p.putShort), action: 'BUY_TO_CLOSE', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, 'P', p.putLong), action: 'SELL_TO_CLOSE', units: contracts },
+    { symbol: occSymbol(p.ticker, p.frontExpiration, 'C', p.callShort), action: 'BUY_TO_CLOSE', units: contracts },
+    { symbol: occSymbol(p.ticker, p.backExpiration, 'C', p.callLong), action: 'SELL_TO_CLOSE', units: contracts },
+  ]
+}
+
 export interface SizingInput {
   /** Live option buying power at placement time, in cents. NULL/unknown sizes to zero. */
   buyingPowerCents: number | null
@@ -121,6 +219,97 @@ export function sizeContracts(s: SizingInput): SizingResult {
   const contracts = Math.floor(deployable / collateral)
   if (contracts < 1) return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'below_one_contract' }
   return { contracts, collateralPerSpreadCents: collateral }
+}
+
+/**
+ * Shared tail of every sizer below: deployable = min(live buying power,
+ * authorized ceiling), contracts = floor(deployable / per-contract collateral).
+ * Kept in one place so the null-vs-zero buying-power distinction (see
+ * sizeContracts' own note — conflating them hid the 2026-08-31 FLAME live-order
+ * drop) cannot drift between structures.
+ */
+function applyDeployable(
+  s: Pick<SizingInput, 'buyingPowerCents' | 'maxDeploymentCents'>,
+  collateral: number,
+): SizingResult {
+  if (s.buyingPowerCents == null) {
+    return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'buying_power_unreadable' }
+  }
+  if (s.buyingPowerCents <= 0) {
+    return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'no_buying_power' }
+  }
+  const deployable = Math.min(s.buyingPowerCents, Math.max(0, s.maxDeploymentCents))
+  const contracts = Math.floor(deployable / collateral)
+  if (contracts < 1) return { contracts: 0, collateralPerSpreadCents: collateral, reason: 'below_one_contract' }
+  return { contracts, collateralPerSpreadCents: collateral }
+}
+
+export interface DiagonalSizingInput {
+  buyingPowerCents: number | null
+  maxDeploymentCents: number
+  /** Net DEBIT paid per 1-lot, in dollars. A long diagonal is bought, not sold. */
+  debitPerSpread: number
+}
+
+/**
+ * Sizing for a single long diagonal (ANVIL).
+ *
+ * 🚨 DO NOT ROUTE THIS THROUGH sizeContracts(). That function models a
+ * defined-risk CREDIT spread — collateral = width − credit — and rejects
+ * `credit >= width` as bad input. A diagonal is a DEBIT: there is no width to
+ * subtract from, and the capital at risk is the premium paid.
+ *
+ * Collateral = the debit (×100 shares). That is the loss if the long expires
+ * worthless with the short already gone, which is the floor of the structure
+ * once both legs are held to their own expiries. It does NOT cover the tail
+ * where the near short is assigned early and the long cannot be exercised
+ * against it — that tail is bounded by the sleeve's own strike geometry and its
+ * assignment guard, not by this number, so a diagonal must never be sized to
+ * the full authorized ceiling on the strength of this figure alone.
+ */
+export function sizeDiagonalContracts(s: DiagonalSizingInput): SizingResult {
+  const debit = Number(s.debitPerSpread)
+  if (!Number.isFinite(debit) || debit <= 0) {
+    return { contracts: 0, collateralPerSpreadCents: 0, reason: 'bad_inputs' }
+  }
+  const collateral = Math.round(debit * 100) * 100 // dollars → cents, per contract (×100 shares)
+  return applyDeployable(s, collateral)
+}
+
+export interface DoubleDiagonalSizingInput {
+  buyingPowerCents: number | null
+  maxDeploymentCents: number
+  /** Distance from each short to the long beyond it, in dollars (HEARTH: $3). */
+  wingWidth: number
+  /** Net CREDIT received per 1-lot, in dollars. */
+  creditPerSpread: number
+}
+
+/**
+ * Sizing for a double diagonal (HEARTH).
+ *
+ * Collateral = 2 × wing − credit (×100 shares), matching the frozen HEARTH
+ * spec's `collat = 2 * W * 100 - credit`. BOTH sides are charged, not the
+ * larger one: the broker margins a short strangle's two wings separately
+ * because price can only breach one, but the position still ties up both until
+ * it settles, and the backtest that produced HEARTH's numbers charged both.
+ * Sizing to one side would place roughly double the tested position.
+ *
+ * Requires credit < 2 × wing; a credit at or above total width is not a real
+ * fill and sizes to zero rather than being clamped.
+ */
+export function sizeDoubleDiagonalContracts(s: DoubleDiagonalSizingInput): SizingResult {
+  const wing = Number(s.wingWidth)
+  const credit = Number(s.creditPerSpread)
+  const totalWidth = 2 * wing
+  if (
+    !Number.isFinite(wing) || wing <= 0 ||
+    !Number.isFinite(credit) || credit < 0 || credit >= totalWidth
+  ) {
+    return { contracts: 0, collateralPerSpreadCents: 0, reason: 'bad_inputs' }
+  }
+  const collateral = Math.round((totalWidth - credit) * 100) * 100
+  return applyDeployable(s, collateral)
 }
 
 /**

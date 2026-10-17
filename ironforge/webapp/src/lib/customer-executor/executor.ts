@@ -86,7 +86,18 @@ export interface MasterOpen {
    * 'call_spread' explicitly — inferring it from strikes alone would be ambiguous/wrong,
    * since a call spread also has callShort > 0 but putShort/putLong are 0 (not a condor).
    */
-  legKind?: 'condor' | 'put_spread' | 'call_spread'
+  legKind?: 'condor' | 'put_spread' | 'call_spread' | 'diagonal' | 'double_diagonal'
+  /**
+   * The LONG legs' expiration, for the two diagonal leg kinds only (ANVIL's
+   * single diagonal, HEARTH's double diagonal). `expiration` above stays the
+   * SHORT legs' date, so every existing single-expiry call site is untouched.
+   *
+   * Required whenever legKind is 'diagonal' or 'double_diagonal' — the leg
+   * builders throw without it rather than defaulting to `expiration`, because
+   * a diagonal silently collapsed onto one expiry is a different position with
+   * different margin, not a degraded version of the same one.
+   */
+  backExpiration?: string // YYYY-MM-DD
   /**
    * Today's VIX-decay ratio (same signal FLINT's day-eligibility reads), for
    * CUSTOMER_FAST_START (B1) and CUSTOMER_CALM_UPSIZE. Optional/null-safe: every
@@ -106,8 +117,15 @@ export interface MasterOpen {
   xspSwap?: { eligible: boolean; xspCreditPerContract: number | null }
 }
 
-export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): 'condor' | 'put_spread' | 'call_spread' {
+export type CustomerLegKind = 'condor' | 'put_spread' | 'call_spread' | 'diagonal' | 'double_diagonal'
+
+export function resolveLegKind(m: Pick<MasterOpen, 'legKind' | 'callShort'>): CustomerLegKind {
   if (m.legKind) return m.legKind
+  // The inference stays SINGLE-EXPIRY ONLY. A diagonal is never inferred from
+  // strikes — its strikes are indistinguishable from a vertical's, and the
+  // thing that makes it a diagonal (two expirations) is not in this input. Both
+  // diagonal kinds must be set explicitly by their sleeve, same rule FLINT's
+  // 'call_spread' follows.
   return m.callShort > 0 ? 'condor' : 'put_spread'
 }
 
@@ -627,6 +645,18 @@ async function mirrorOneOpen(
     return
   }
 
+  // 🚨 The diagonal kinds are REJECTED here, not fallen through. This chain's
+  // final branch is a single-expiry put vertical, so an unhandled 'diagonal' or
+  // 'double_diagonal' would place a vertical on the SHORT expiry — a different
+  // position with different margin, silently. `customer_positions` has one
+  // `expiration` column and no back-expiry, so the close path could not unwind
+  // it either. Lands when that column does.
+  if (legKind === 'diagonal' || legKind === 'double_diagonal') {
+    throw new Error(
+      `customer mirror cannot place '${legKind}' yet: customer_positions carries a single ` +
+      `expiration, so the back leg could neither be recorded nor closed. Refusing to place.`,
+    )
+  }
   const legs = legKind === 'call_spread'
     ? spreadOpenLegs({ ticker: m.ticker, expiration: m.expiration, short: m.callShort, long: m.callLong, right: 'C' }, mainContracts)
     : legKind === 'condor'
@@ -1138,6 +1168,15 @@ async function closeOne(p: OpenCustomerPosition, reason: string): Promise<void> 
   const exp = typeof p.expiration === 'string' ? p.expiration.slice(0, 10) : String(p.expiration).slice(0, 10)
   const callShort = Number(p.call_short)
   const legKind = p.leg_kind ?? (callShort > 0 ? 'condor' : 'put_spread') // pre-leg_kind rows: old inference is safe (see OpenCustomerPosition doc)
+  // Same fail-closed rule as the open path: this chain also ends in a put
+  // vertical, and a diagonal row cannot be closed from one expiration column.
+  // Unreachable while the open path refuses to create such a row — kept so the
+  // two sides can never disagree if one is wired before the other.
+  if (legKind === 'diagonal' || legKind === 'double_diagonal') {
+    throw new Error(
+      `customer mirror cannot close '${legKind}': no back expiration on customer_positions.`,
+    )
+  }
   const legs = legKind === 'call_spread'
     ? spreadCloseLegs({ ticker: p.ticker, expiration: exp, short: callShort, long: Number(p.call_long), right: 'C' }, p.contracts)
     : legKind === 'condor'
