@@ -10268,6 +10268,28 @@ async function scanBot(bot: BotDef): Promise<void> {
       } catch (e) {
         console.error('[scanner] QUENCH paper tracker failed:', e)
       }
+
+      // QUENCH LIVE — real orders, separate switch (AFTERNOON_SPREAD_MODE=live),
+      // separate module (lib/afternoon-spread-executor.ts) so the paper tracker
+      // above keeps its "imports no order function" guarantee. Both calls no-op
+      // with zero DB and zero broker calls under any other value, so this block
+      // is inert until the switch is set.
+      //
+      // The guard runs BEFORE the entry tick on purpose: within the final three
+      // minutes, buying back an at-risk short matters more than opening a new
+      // one, and a cycle that did both would be racing itself. SPY options
+      // assign rather than cash-settle, so an in-the-money short leg left to
+      // expire becomes 100 short shares per contract — a defined-risk spread
+      // with an undefined overnight equity position attached.
+      try {
+        const { runQuenchLiveTick, closeQuenchAtRiskBeforeBell } = await import('./afternoon-spread-executor')
+        const quenchGuard = await closeQuenchAtRiskBeforeBell(ct, assignmentGuardWindow(ct).endHHMM)
+        if (quenchGuard) console.log(`[scanner] ${quenchGuard}`)
+        const quenchLive = await runQuenchLiveTick(ct)
+        if (quenchLive) console.log(`[scanner] ${quenchLive}`)
+      } catch (e) {
+        console.error('[scanner] QUENCH live executor failed:', e)
+      }
     }
 
     // CALLDIAG — IWM 10d/20d call diagonal, PAPER sleeve unlocked per-account
