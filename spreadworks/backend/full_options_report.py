@@ -4,7 +4,7 @@ Collectors are isolated from the minute market-data pipeline. Read endpoints nev
 trigger trades or send notifications. Every field is mapped to observed evidence.
 """
 from __future__ import annotations
-import asyncio, base64, hashlib, html, json, logging, re
+import asyncio, base64, copy, hashlib, html, json, logging, re
 from datetime import datetime, timedelta, time, timezone
 from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Header, HTTPException, Query
@@ -1106,7 +1106,16 @@ def _supporting_status_line(name,block):
 @router.get('/{report_id}/view',response_class=HTMLResponse)
 def report_view(report_id:str):
     from .report_policy import SECTION_SUMMARY_SECTIONS,section_summary,section_meaning,_side_label
+    from .report_contract import fill_absent_fields
     payload=stored_report(report_id);parts=[];nav=[]
+    # A report stored before a section existed has no block for it, and the narrative builders
+    # reach for sections directly (blocks["market_control"] and friends). Re-apply publication's
+    # own fill on a copy so those lookups resolve to an honest "unavailable" instead of raising
+    # -- this is what made /view return 500 on every archived report older than market_control
+    # while the same report's PDF, built from stored markdown, rendered fine. The stored row is
+    # never written back; stored_report() hands back a fresh parse, and the copy keeps it that way.
+    payload=copy.deepcopy(payload)
+    fill_absent_fields(payload['report_blocks'])
     mission_side=_side_label((payload['report_blocks']['risk_on_defensive']['verdict'] or {}).get('value'))
     _regime_label_item=(payload['report_blocks'].get('risk_on_defensive') or {}).get('regime_label') or {}
     regime_label=_regime_label_item.get('value') if isinstance(_regime_label_item.get('value'),str) else None

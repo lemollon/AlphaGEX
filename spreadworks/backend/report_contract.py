@@ -401,6 +401,36 @@ MORNING_PRE_OPEN_UNAVAILABLE = {
     ("visuals", "surface_png"), ("visuals", "term_structure_png"), ("visuals", "volume_profile_png"),
 }
 
+def fill_absent_fields(blocks):
+    """Give every contract section and field a presence, honestly marked when absent.
+
+    Mutates `blocks` in place and returns the section names it had to touch.
+
+    Publication runs this before storing, so a freshly published report always carries the
+    whole contract. A report stored *before* a section existed carries no block for it, and
+    the renderers reach for sections directly -- `blocks["market_control"]` in
+    `market_story_html`, and the same shape in several other narrative builders. Anything
+    that renders a stored payload afterwards must re-apply this fill or those lookups raise
+    KeyError: that is exactly how ~89 archived reports came to serve HTTP 500 on /view while
+    their report.pdf, built from the stored markdown, stayed fine.
+
+    This never invents a value. An absent field renders as "unavailable", which is the same
+    thing publication would have shown had the section existed that day.
+    """
+    filled = []
+    for name, fields in REQUIREMENTS.items():
+        block = blocks.setdefault(name, {})
+        if not isinstance(block, dict):
+            block = blocks[name] = {}
+        for field in fields:
+            if field not in block:
+                block[field] = {"status": "unavailable",
+                                "reason": "Producer supplied no verified observation."}
+                if name not in filled:
+                    filled.append(name)
+    return filled
+
+
 def validate_report(blocks, kind=None):
     """Validate actual structured output, including explicit per-field disclosures.
 
@@ -469,24 +499,13 @@ def prepare_report_delivery(payload):
     """
     from .report_policy import normalize_blocks, render_markdown, policy_identity, add_integrity
     blocks = normalize_blocks(payload.get("report_blocks") or {})
-    for name, fields in REQUIREMENTS.items():
-        blocks.setdefault(name, {})
-        for field in fields:
-            blocks[name].setdefault(field, {"status": "unavailable", "reason": "Producer supplied no verified observation."})
+    fill_absent_fields(blocks)
     for name in ("day_strategy", "near_forward_strategy", "forward_strategy"):
         if blocks[name]["status"].get("value") == "ENTRY_READY" and blocks[name]["contracts"].get("status") != "live":
             blocks[name]["status"]["value"] = "WATCH"
             blocks[name]["status"]["reason"] = "Executable quotes aged or failed qualification before publication"
     add_integrity(blocks, payload)
-    for name, fields in REQUIREMENTS.items():
-        block = blocks.setdefault(name, {})
-        if not isinstance(block, dict):
-            block = {}
-            blocks[name] = block
-        for field in fields:
-            if field not in block:
-                block[field] = {"status": "unavailable",
-                                "reason": "Producer supplied no verified observation."}
+    fill_absent_fields(blocks)
     check = validate_report(blocks, kind=payload.get("kind"))
     payload["report_validation"] = check
     payload["report_blocks"] = blocks

@@ -807,6 +807,39 @@ def test_report_view_section_summary_sections_get_narrative_divs_not_raw_field_r
     # A promoted block has no card of its own -- its narrative lives in the opening, once.
     assert 'id="sec-surface"' not in view
 
+@freeze_time(NOW)
+def test_report_view_renders_a_report_stored_before_a_section_existed(db):
+    """2026-10-17: ~89 archived reports served HTTP 500 on /view. Reports published before a
+    section was added carry no block for it, and the narrative builders reach for sections
+    directly -- market_story_html does blocks["market_control"] -- so the lookup raised
+    KeyError. Their report.pdf was fine throughout, because that is built from the stored
+    markdown rather than re-rendered from blocks, which is why the breakage went unseen.
+
+    report_view now re-applies publication's own fill_absent_fields on a copy. Absent
+    sections must render as unavailable, never be invented, and the stored row must not be
+    touched."""
+    from backend.report_policy import observed
+    absent={'market_control','trade_volatility_scan'}
+    blocks={n:{f:{'status':'unavailable','reason':'No source observation'} for f in fs}
+            for n,fs in REQUIREMENTS.items() if n not in absent}
+    blocks['risk_on_defensive']['verdict']=observed('Risk-on price confirmation','Observed provider feed',NOW,NOW)
+    report_id='c'*24
+    payload={'report_id':report_id,'kind':'morning','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','markdown_url':'https://example.test/'+report_id+'.md',
+             'report_blocks':blocks,'chart_urls':{}}
+    _store_report(payload)
+    for name in absent:
+        assert name not in blocks, 'the stored payload must genuinely lack the section'
+    view=report.report_view(report_id)          # the regression: this used to raise KeyError
+    assert 'Market story' in view
+    # The stored row keeps its original blocks -- the fill happened on a render copy only.
+    with report.engine.begin() as c:
+        stored=json.loads(c.execute(text('SELECT payload_json FROM sw_full_reports WHERE report_id=:i'),
+                                    {'i':report_id}).scalar_one())
+    assert set(stored['report_blocks'])==set(blocks), 'rendering must not write sections back'
+    for name in absent:
+        assert name not in stored['report_blocks']
+
 def test_report_view_threads_the_flat_regime_label_into_put_call_tie_in(db):
     """2026-10-14: report_view computes mission_side from risk_on_defensive.verdict but, before
     this fix, never read regime_label alongside it -- the live /view page's trade_volatility_

@@ -70,22 +70,13 @@ def rerender_payload(raw):
         return 'skip', 'no stored report_completeness', None
     before = protected_hash(payload)
     try:
-        from .report_contract import REQUIREMENTS
+        from .report_contract import fill_absent_fields
         from .report_policy import render_markdown
         work = copy.deepcopy(payload)
         # Reports published before a section existed carry no block for it. Show it as unavailable,
         # exactly as publication does (prepare_report_delivery), on this render copy only; the stored
-        # blocks are never written back.
-        filled = []
-        for name, fields in REQUIREMENTS.items():
-            block = work['report_blocks'].setdefault(name, {})
-            if not isinstance(block, dict):
-                block = work['report_blocks'][name] = {}
-            for field in fields:
-                if field not in block:
-                    block[field] = {'status': 'unavailable', 'reason': 'Producer supplied no verified observation.'}
-                    if name not in filled:
-                        filled.append(name)
+        # blocks are never written back. Same shared fill /view applies.
+        filled = fill_absent_fields(work['report_blocks'])
         snapshot = protected_hash(work)
         markdown = render_markdown(work)
         if not isinstance(markdown, str) or not markdown.strip():
