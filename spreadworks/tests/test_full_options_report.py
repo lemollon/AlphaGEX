@@ -1059,16 +1059,19 @@ async def test_report_view_is_single_pass_no_narrative_or_chart_appears_twice(db
               ('trade_volatility_scan',),('contract_packages','entry_watches'),('candidate_analysis',),
               ('position_management','trigger_accountability'),('range_stall',),('event_calendar',),('adaptation_rules',)]
     assert sorted(n for sec in sections for n in sec)==sorted(takeaways)
-    # One printed line per (section, distinct text): two sections may legitimately share a canned
-    # sentence (near/forward strategy), but no section prints its takeaway twice.
-    slots={}
-    for sec in sections:
-        for t in {takeaways[n] for n in sec}:
-            slots[t]=slots.get(t,0)+1
-    for t,expected in slots.items():
-        assert view.count(html.escape(t))==expected,f'takeaway printed {view.count(html.escape(t))}x, expected {expected}: {t[:80]}'
-    # 18 promoted-section takeaways + 7 supporting cards that keep the Summary/Means pair.
-    assert view.count('What it means for the day')==25
+    # 2026-10-17 (UX review #21): the box appeared ~20 times, repeatedly saying the same thing.
+    # An exact repeat now prints nothing at all, so each distinct sentence appears exactly once
+    # page-wide -- not once per section that happens to share it.
+    distinct={takeaways[n] for sec in sections for n in sec}
+    for t in distinct:
+        assert view.count(html.escape(t))==1,f'takeaway printed {view.count(html.escape(t))}x, expected once: {t[:80]}'
+    # The count follows from the data rather than a magic number: exactly one box per distinct
+    # sentence on the page. The supporting-detail cards used to add seven more boxes, but their
+    # takeaways repeat sentences the promoted sections already printed, so the de-dupe now
+    # removes them -- which is the point of review item #21.
+    boxes=view.count('What it means for the day')
+    assert boxes==len(distinct),f'{boxes} boxes for {len(distinct)} distinct sentences'
+    assert boxes<25,'the de-dupe must remove at least one repeated box'
     # Charts: every panel embedded at most once (identical base64 payloads => identical image).
     sources=re.findall(r'<img[^>]*\ssrc="([^"]+)"',view)
     assert len(sources)==len(set(sources))==11

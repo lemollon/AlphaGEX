@@ -3076,6 +3076,42 @@ def catalyst_vol_narrative_html(blocks):
             '<p style="font-size:.8rem;color:#8b97a8">Built from today\'s own verified fields above — '
             "never a new number, never an invented strike.</p>")
 
+# Leron, 2026-10-16 UX review items #42 and #43: "Reads as stacked blocks. Each H2 opens with
+# a paragraph and a teal box; the next section starts cold. The only connective text is one
+# line in Today's mission." These are those linking lines -- one fixed sentence per section
+# saying why it follows from the call above it, so the page reads forward instead of resetting
+# at every heading.
+#
+# They are hand-written template strings compiled into the renderer, NOT model output at
+# render time: REPORT_REQUIREMENTS.md requires that every decision-bearing line be templated
+# code, and a re-render has to reproduce an archived report byte-for-byte. No sentence here
+# carries a number or a verdict -- each only says what the reader is about to look at and
+# why -- so none of them can contradict the evidence underneath.
+_SECTION_BRIDGES = {
+    "market_story": "First, the shape of the tape this call is being made into.",
+    "flow": "That is the structure. Now who is actually paying up for it.",
+    "dealer_positioning": "Flow is one side of the trade; here is who has to hedge against it.",
+    "surface": "Positioning explains the pressure. Volatility pricing says what it costs to take.",
+    "expected_move": "If that is what options cost, this is the distance they are paying for.",
+    "breadth": "A move needs participation. This is how broad it is.",
+    "macro": "Breadth is today. Macro and futures are the backdrop it happens against.",
+    "morning_comparison": "All of that is the current read. This is what moved since the open.",
+    "trade_volatility_scan": "Those are the conditions. These are the setups screening well in them.",
+    "contract_packages": "A setup is only real if a contract is executable. These are the live packages.",
+    "candidate_analysis": "Everything still being watched that has not qualified yet.",
+    "position_audit": "What the last checkpoints promised, and whether it held.",
+    "edge_board": "Every competing idea ranked side by side -- including doing nothing.",
+    "traps": "Before acting, the ways this read gets you hurt.",
+    "adaptation_rules": "And the rules for when the day does something else.",
+}
+
+
+def section_bridge_html(key):
+    """The one-line lead-in that ties a section to the one before it (UX review #42)."""
+    text = _SECTION_BRIDGES.get(key)
+    return '<p class="bridge">' + html.escape(text) + '</p>' if text else ""
+
+
 def the_trade_html(blocks):
     """The call, the trigger and what kills it -- first thing on the page, above everything.
 
@@ -3149,14 +3185,14 @@ def render_opening_html(payload, images=None, include_trade=True):
             t=section_meaning(n,blocks.get(n) or {},mission_side,regime_label)
             if t and t not in texts:texts.append(t)
         if not texts:return ""
-        # Rows of one table (day/near/forward) often share one canned sentence; print it once
-        # and have the later rows point at the first.
+        # Leron, 2026-10-16 UX review item #21: this box appeared ~20 times, repeatedly saying
+        # the same thing ("Same as day strategy above." twice). It was meant to be the narrative
+        # thread and read as wallpaper. An exact repeat now prints nothing at all -- a reader
+        # who already saw the sentence does not need a second box pointing at the first.
         key=" ".join(texts)
-        if repeat_of is not None:
-            if key in shown_takeaways:
-                texts=[f"Same as {shown_takeaways[key].replace('_',' ')} above."]
-            else:
-                shown_takeaways[key]=repeat_of
+        if key in shown_takeaways:
+            return ""
+        shown_takeaways[key]=repeat_of or (names[0] if names else "")
         return ('<div class="field decision" style="border-left:2px solid #3dd6c4;padding:8px 0 8px 12px;margin:8px 0;'
                 'background:rgba(61,214,196,.14);border-radius:0 8px 8px 0">'
                 '<div class="fieldname" style="color:#3dd6c4;font-size:.78rem;font-weight:600">What it means for the day</div>'
@@ -3197,28 +3233,41 @@ def render_opening_html(payload, images=None, include_trade=True):
     out+="</table>"
     # Market story already carries market_control's and gamma's takeaways inline
     # (market_story_html calls section_meaning on both), so only premium_selling's is added.
+    out+=section_bridge_html("market_story")
     out+="<h2>🧭 Market story</h2><p>"+escape(market_story_html(blocks,mission_side,regime_label))+"</p>"+takeaway("premium_selling")
     out+=chart_img("gamma_expiry","Gamma exposure by expiration chart")
+    out+=section_bridge_html("flow")
     out+="<h2>📊 Options flow</h2><p>"+escape(options_flow_story(blocks))+"</p>"+takeaway("flow")
     out+=chart_img("flow","Options flow chart")
+    out+=section_bridge_html("dealer_positioning")
     out+="<h2>🏛️ Dealer positioning</h2><p>"+escape(dealer_positioning_story(blocks))+"</p>"
+    out+=section_bridge_html("surface")
     out+="<h2>📐 Surface, smile & term structure</h2><p>"+escape(surface_smile_story(blocks))+"</p>"+takeaway("surface","smile")
     out+=chart_img("surface","Volatility surface chart")+chart_img("smile_term","Smile and term structure chart")
+    out+=section_bridge_html("expected_move")
     out+="<h2>📏 Expected move</h2><p>"+escape(expected_move_story(blocks))+"</p>"+takeaway("expected_move")
     out+=chart_img("market_map","Market map chart")
+    out+=section_bridge_html("breadth")
     out+="<h2>🌐 Breadth, sectors & credit</h2><p>"+escape(breadth_sector_story(blocks))+"</p>"+takeaway("breadth","sector_credit")
     out+=chart_img("sector_credit","Sector and credit relative-strength chart")
+    out+=section_bridge_html("macro")
     out+="<h2>🏦 Macro & futures context</h2><p>"+escape(macro_futures_story(blocks))+"</p>"+takeaway("macro","futures_context")
+    out+=section_bridge_html("morning_comparison")
     out+="<h2>🕒 Since this morning</h2><p>"+escape(since_this_morning_story(blocks))+"</p>"+takeaway("morning_comparison")
     out+=chart_img("baseline_comparison","Since-this-morning baseline comparison chart")
+    out+=section_bridge_html("trade_volatility_scan")
     out+="<h2>🔭 TradingVolatility top setups</h2><p>"+escape(trade_volatility_scan_story(blocks))+"</p>"+takeaway("trade_volatility_scan")
+    out+=section_bridge_html("contract_packages")
     out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"+entry_watches_table_html(blocks)+takeaway("contract_packages","entry_watches")
+    out+=section_bridge_html("candidate_analysis")
     out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"+takeaway("candidate_analysis")
+    out+=section_bridge_html("position_audit")
     out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"+takeaway("position_management","trigger_accountability")
     # Leron, 2026-10-16 UX review item #37: this table was 1,811px wide inside a 317px phone
     # container, and the column that got clipped was Trigger -- the only actionable one. The
     # data-label cells let the stylesheet restack each row as label/value on a narrow screen,
     # so every column survives at any width instead of being scrolled out of reach.
+    out+=section_bridge_html("edge_board")
     out+='<h2>🧩 Edge board</h2><table class="stack">'
     out+=('<tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>')
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
@@ -3229,7 +3278,9 @@ def render_opening_html(payload, images=None, include_trade=True):
               "<td data-label=\"Conflict\">"+escape(conflict)+"</td>"
               "<td data-label=\"Status\">"+escape(status)+"</td></tr>")
     out+="</table>"+takeaway("range_stall")
+    out+=section_bridge_html("traps")
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"+takeaway("event_calendar")
+    out+=section_bridge_html("adaptation_rules")
     out+="<h2>🧮 If/then day plan</h2><table>"
     for k,item in (blocks.get("adaptation_rules") or {}).items():
         out+="<tr><th>"+escape(field_label(k))+"</th><td>"+item_cell_html(item)+"</td></tr>"

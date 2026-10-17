@@ -1336,6 +1336,13 @@ h2.supporting-detail{font-size:1.08rem;margin:28px 0 10px;padding-top:16px;borde
   td{padding-top:0;padding-bottom:10px}
 }
 
+/* ---- Connective lines between sections (UX review #42) ----
+   Each H2 used to open cold; the page read as stacked blocks rather than one argument. The
+   bridge is the one sentence that says why this section follows from the last one, so it is
+   styled as a quieter aside than body copy, not as another headline. */
+p.bridge{color:var(--muted);font-size:.93rem;font-style:italic;margin:16px 0 -2px;
+  padding-left:11px;border-left:2px solid var(--border)}
+
 /* ---- What to do: the call, the trigger, what kills it (UX review #1) ----
    The answer used to be ~6,000px down in the Edge Board, behind the one table column that
    clipped on a phone. Labelled rows, never a table, so nothing can be cut off at any width;
@@ -1398,7 +1405,13 @@ table.stack td,table.stack th{overflow-wrap:anywhere;vertical-align:top}
     header=(f'<header class="hero {side_cls}"><div class="hero-inner">'
            f'<div class="hero-top"><span class="brand"><b>SpreadWorks</b> &middot; Options Sentiment</span>'
            f'<div class="chips"><span class="chip">{html.escape(ct_str(payload.get("generated_at")))}</span>'
-           f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}">{html.escape(payload["report_completeness"])}</span>'
+           # Leron, 2026-10-16 UX review item #3: a bare amber "INCOMPLETE" with no explanation
+           # reads as "do not trust this report". It means some sections had no verified
+           # observation at this checkpoint -- each one says so in place -- not that the
+           # numbers shown are unreliable. Say that, in the badge's own tooltip and label.
+           f'<span class="chip {"warn" if payload["report_completeness"]=="INCOMPLETE" else ""}" '
+           f'title="{"Some sections had no verified data at this checkpoint. Each one is labelled where it appears; the numbers that are shown are still fully sourced." if payload["report_completeness"]=="INCOMPLETE" else "Every required section carried verified, timestamped data at this checkpoint."}">'
+           f'{html.escape("SOME DATA MISSING" if payload["report_completeness"]=="INCOMPLETE" else "FULLY SOURCED")}</span>'
            f'<span class="chip">immutable snapshot</span></div></div>'
            f'<span class="pill-side {side_cls}">{side_text}</span>'
            f'<h1>{html.escape(payload["kind"].title())} Options Report</h1>'
