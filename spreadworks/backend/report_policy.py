@@ -1507,10 +1507,17 @@ def entry_watches_table_html(blocks):
     rows = entry_watch_rows(blocks["entry_watches"])
     if not rows:
         return ""
-    return ('<div class="tablewrap"><table class="wide"><tr><th>Symbol</th><th>Stage</th><th>Activates</th><th>Invalidates</th></tr>'
-            + "".join("<tr><th>" + html.escape(r["symbol"]) + "</th><td>" + html.escape(r["stage"]) + "</td><td>"
-                      + html.escape(r["activates"]) + "</td><td>" + html.escape(r["invalidates"]) + "</td></tr>" for r in rows)
-            + "</table></div>")
+    # Same clipping trap as the Edge Board (UX review #37): inside a horizontally-scrolling
+    # .tablewrap this ran 448px wide in a 332px phone column, and Activates/Invalidates --
+    # the trigger and the stop -- were the columns scrolled out of sight. table.stack restacks
+    # each row as label/value on a narrow screen so no column can be lost.
+    return ('<table class="stack"><tr><th>Symbol</th><th>Stage</th><th>Activates</th><th>Invalidates</th></tr>'
+            + "".join('<tr><th data-label="Symbol">' + html.escape(r["symbol"])
+                      + '</th><td data-label="Stage">' + html.escape(r["stage"])
+                      + '</td><td data-label="Activates">' + html.escape(r["activates"])
+                      + '</td><td data-label="Invalidates">' + html.escape(r["invalidates"])
+                      + "</td></tr>" for r in rows)
+            + "</table>")
 
 def _join_syms(syms):
     syms = list(dict.fromkeys(syms))
@@ -3016,7 +3023,50 @@ def catalyst_vol_narrative_html(blocks):
             '<p style="font-size:.8rem;color:#8b97a8">Built from today\'s own verified fields above — '
             "never a new number, never an invented strike.</p>")
 
-def render_opening_html(payload, images=None):
+def the_trade_html(blocks):
+    """The call, the trigger and what kills it -- first thing on the page, above everything.
+
+    Leron, 2026-10-16 UX review item #1: the top of the report never said what to do, what he
+    was waiting for, or at what price. The answer already existed -- it is the top-ranked row
+    of the Edge Board -- but that board was the 14th section, roughly 6,000px down, and on a
+    phone its Trigger column was the one that got clipped (item #37). Nothing here is new
+    evidence: it is `ranked_edge_board`'s own rank-1 candidate, promoted.
+
+    Rank 1 always carries its trigger and evidence in full -- the "Same trigger as #N"
+    collapsing in ranked_edge_board only ever points *back* at an earlier row, so the first
+    row is never a cross-reference. Rendered as labelled rows rather than a table so there is
+    no column to clip at any width.
+    """
+    escape = html.escape
+    rows = ranked_edge_board(blocks)
+    if not rows:
+        return ""
+    rank, setup, evidence, trigger, conflict, status = rows[0]
+    no_trade = next((r for r in rows if r[1] == "No trade"), None)
+    fallback = no_trade[3] if no_trade and no_trade[0] != rank else (
+        "Stand down and keep the risk off until one of the triggers above actually prints.")
+    side = "warn"
+    upper = (status or "").upper()
+    if "READY" in upper and setup != "No trade":
+        side = "bull"
+    elif setup == "No trade":
+        side = "flat"
+    parts = [f'<section class="thetrade {side}">',
+             '<div class="tt-top"><span class="tt-eyebrow">What to do</span>',
+             f'<span class="tt-status">{escape(status or "—")}</span></div>',
+             f'<h2 class="tt-call">{escape(setup)}</h2>']
+    for label, value in (("Trigger — the price that starts it", trigger),
+                         ("What kills it", conflict),
+                         ("Why", evidence),
+                         ("If it never fires", fallback)):
+        if value:
+            parts.append(f'<div class="tt-row"><div class="tt-label">{escape(label)}</div>'
+                         f'<div class="tt-value">{escape(value)}</div></div>')
+    parts.append('</section>')
+    return "".join(parts)
+
+
+def render_opening_html(payload, images=None, include_trade=True):
     """Leron, 2026-10-16: "add visuals." This page previously carried zero chart images --
     render_markdown's flat !["Name"](url) dump of every chart_urls entry at the very end had
     no equivalent here, so the live /view page and the email both rendered as text only.
@@ -3073,7 +3123,11 @@ def render_opening_html(payload, images=None):
         scoreboard_rows.append(("No-trade condition",'<span>'+escape(no_trade)+'</span>'))
     rows="".join("<tr><th>"+escape(k)+"</th><td>"+v+"</td></tr>" for k,v in scoreboard_rows)
     brief=decision_brief_lines(blocks)
-    out=(('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
+    # include_trade=False when the caller has already placed the block above the chip nav so
+    # it lands on the first phone screen (report_view does); the markdown/HTML opening keeps
+    # emitting it inline for every other consumer.
+    out=((the_trade_html(blocks) if include_trade else "")
+         +('<h2>🧭 Decision brief</h2><p>'+" ".join(escape(l) for l in brief)+'</p>' if brief else "")
          +(_week_ahead_outlook_html(blocks) if payload.get("kind")=="morning" else "")
          +(catalyst_vol_narrative_html(blocks) if payload.get("kind")=="morning" else "")
          +_what_changed_today_html(blocks)
@@ -3108,11 +3162,20 @@ def render_opening_html(payload, images=None):
     out+="<h2>📦 Contract packages & entry watches</h2><p>"+escape(contract_packages_and_entry_watches_story(blocks))+"</p>"+entry_watches_table_html(blocks)+takeaway("contract_packages","entry_watches")
     out+="<h2>🔍 Candidates tracked</h2><p>"+escape(candidates_tracked_story(blocks))+"</p>"+takeaway("candidate_analysis")
     out+="<h2>📋 Position & trigger audit</h2><p>"+escape(position_and_trigger_audit_story(blocks))+"</p>"+takeaway("position_management","trigger_accountability")
-    out+='<h2>🧩 Edge board</h2><div class="tablewrap"><table class="wide"><tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>'
+    # Leron, 2026-10-16 UX review item #37: this table was 1,811px wide inside a 317px phone
+    # container, and the column that got clipped was Trigger -- the only actionable one. The
+    # data-label cells let the stylesheet restack each row as label/value on a narrow screen,
+    # so every column survives at any width instead of being scrolled out of reach.
+    out+='<h2>🧩 Edge board</h2><table class="stack">'
+    out+=('<tr><th>Rank</th><th>Setup</th><th>Evidence</th><th>Trigger</th><th>Conflict</th><th>Status</th></tr>')
     for rank,setup,evidence,trigger,conflict,status in ranked_edge_board(blocks):
-        out+=("<tr><th>"+str(rank)+"</th><td>"+escape(setup)+"</td><td>"+escape(evidence)+"</td>"
-              "<td>"+escape(trigger)+"</td><td>"+escape(conflict)+"</td><td>"+escape(status)+"</td></tr>")
-    out+="</table></div>"+takeaway("range_stall")
+        out+=("<tr><th data-label=\"Rank\">"+str(rank)+"</th>"
+              "<td data-label=\"Setup\">"+escape(setup)+"</td>"
+              "<td data-label=\"Evidence\">"+escape(evidence)+"</td>"
+              "<td data-label=\"Trigger\">"+escape(trigger)+"</td>"
+              "<td data-label=\"Conflict\">"+escape(conflict)+"</td>"
+              "<td data-label=\"Status\">"+escape(status)+"</td></tr>")
+    out+="</table>"+takeaway("range_stall")
     out+="<h2>⚠️ Biggest traps</h2><ul>"+"".join("<li>"+escape(t)+"</li>" for t in biggest_traps(blocks))+"</ul>"+takeaway("event_calendar")
     out+="<h2>🧮 If/then day plan</h2><table>"
     for k,item in (blocks.get("adaptation_rules") or {}).items():

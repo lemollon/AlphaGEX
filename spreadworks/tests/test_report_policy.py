@@ -800,6 +800,57 @@ def test_contract_packages_and_entry_watches_story_falls_back_when_both_builders
     story=contract_packages_and_entry_watches_story(blocks)
     assert story=='No qualified contract packages right now.'
 
+def test_the_trade_block_leads_with_the_call_and_the_trigger():
+    """Leron, 2026-10-16 UX review item #1: the top of the page never said what to do, what he
+    was waiting for, or at what price -- the answer sat ~6,000px down in Edge Board row 1. The
+    block must lead the opening, name the call, and carry the trigger in full (never a "same
+    trigger as #N" cross-reference, which only ever points backwards from a later row)."""
+    from html import escape
+    from backend.report_policy import the_trade_html, ranked_edge_board
+    blocks=empty_blocks()
+    blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'day','state':'WATCH'}])
+    out=the_trade_html(blocks)
+    rank,setup,evidence,trigger,conflict,status=ranked_edge_board(blocks)[0]
+    assert out.startswith('<section class="thetrade')
+    assert 'What to do' in out
+    assert escape(setup) in out and escape(status) in out
+    assert escape(trigger) in out, 'the trigger must appear in full, not as a reference'
+    assert 'Same trigger as #' not in out
+    assert 'Trigger — the price that starts it' in out
+    assert 'If it never fires' in out, 'must say what to do when no trigger prints'
+    # It is a labelled stack, not a table -- there is no column that can clip on a phone.
+    assert '<table' not in out
+
+
+def test_the_trade_block_leads_the_opening_and_is_not_repeated():
+    from backend.report_policy import render_opening_html
+    blocks=empty_blocks()
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    html_out=render_opening_html(payload)
+    assert html_out.count('class="thetrade')==1
+    # empty_blocks() yields no decision-brief lines, so anchor on a heading that always renders.
+    assert html_out.index('class="thetrade') < html_out.index('Today’s mission')
+    # report_view places it above the chip nav itself, so the opening must be able to omit it.
+    assert 'class="thetrade' not in render_opening_html(payload,include_trade=False)
+
+
+def test_edge_board_cells_carry_labels_and_no_scroll_wrapper():
+    """UX review #37: the board was 1,811px wide in a 317px phone container inside a
+    horizontally-scrolling .tablewrap, and Trigger -- the only actionable column -- was the one
+    that got cut. Every cell now carries data-label so table.stack can restack it."""
+    from backend.report_policy import render_opening_html
+    blocks=empty_blocks()
+    payload={'report_blocks':blocks,'kind':'intraday','generated_at':NOW.isoformat(),
+             'report_completeness':'INCOMPLETE','chart_urls':{}}
+    html_out=render_opening_html(payload)
+    board=html_out.split('🧩 Edge board')[1].split('</table>')[0]
+    assert '<table class="stack">' in board
+    for column in ('Rank','Setup','Evidence','Trigger','Conflict','Status'):
+        assert f'data-label="{column}"' in board, column
+    assert 'tablewrap' not in html_out and 'table class="wide"' not in html_out
+
+
 def test_render_markdown_and_html_carry_the_contract_packages_entry_watches_section():
     blocks=empty_blocks()
     blocks['entry_watches']['trigger']=item([{'symbol':'SPY','setup_id':'day','state':'WATCH'}])
@@ -810,7 +861,13 @@ def test_render_markdown_and_html_carry_the_contract_packages_entry_watches_sect
     assert '| Symbol | Stage | Activates | Invalidates |' in md and '| SPY | waiting |' in md
     html_out=render_opening_html(payload)
     assert '<h2>📦 Contract packages & entry watches</h2>' in html_out
-    assert '<th>Activates</th>' in html_out and '<th>SPY</th><td>waiting</td>' in html_out
+    # 2026-10-17: the entry-watch cells carry data-label so table.stack can restack them as
+    # label/value on a phone -- inside the old scrolling .tablewrap, Activates/Invalidates (the
+    # trigger and the stop) were the columns that got clipped. Header row is unchanged.
+    assert '<th>Activates</th>' in html_out and '<table class="stack">' in html_out
+    assert '<th data-label="Symbol">SPY</th><td data-label="Stage">waiting</td>' in html_out
+    assert 'data-label="Activates"' in html_out and 'data-label="Invalidates"' in html_out
+    assert 'tablewrap' not in html_out
 
 def test_candidates_tracked_story_promotes_narrative_candidate_analysis_to_top_level():
     """_narrative_candidate_analysis's symbol-roster + qualified-package-count + registered-
